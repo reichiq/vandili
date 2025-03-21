@@ -21,7 +21,7 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
 
-# Функция для обработки и форматирования ответа
+# Функция для форматирования ответа
 def format_gemini_response(text: str) -> str:
     """
     Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2).
@@ -56,6 +56,7 @@ def is_bot_mentioned(message: types.Message):
 # Команда /start
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
+    logging.info(f"Команда /start от {message.from_user.id}")
     text = f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай что угодно!"
     await message.answer(format_gemini_response(text), parse_mode="MarkdownV2")
 
@@ -63,12 +64,18 @@ async def start_handler(message: types.Message):
 # Обработка текстовых сообщений и запрос в Gemini
 @dp.message()
 async def chat_with_gemini(message: types.Message):
+    logging.info(f"Получено сообщение: {message.text} от {message.from_user.id}")
+
+    # Проверяем, чтобы обработчик не выполнялся дважды
     if message.chat.type != 'private' and not is_bot_mentioned(message):
         return
 
     user_text = message.text
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
+
+    # Показываем "печатает..."
+    await bot.send_chat_action(message.chat.id, "typing")
 
     try:
         response = model.generate_content(user_text).text
@@ -82,8 +89,8 @@ async def chat_with_gemini(message: types.Message):
 
 # Запуск
 async def main():
+    logging.info("Бот запущен")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.info("Бот запущен")
     asyncio.run(main())
