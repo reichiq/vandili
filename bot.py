@@ -1,38 +1,38 @@
-import asyncio
-import google.generativeai as genai
 import logging
 import os
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message
 from aiogram.filters import Command
-from aiogram.client.default import DefaultBotProperties
+import google.generativeai as genai
+import asyncio
 
-# API-ключи из Railway Variables
-TELEGRAM_BOT_TOKEN = os.getenv("7561074770:AAFCd1Gemz_g-mB-0FU0VXJa53BM3Lq41wA")
-GEMINI_API_KEY = os.getenv("AIzaSyAYEQ4CYf9w98CViYyFsnNKu6WK1Eqtfp4")
+# Получаем токены из переменных окружения
+TELEGRAM_BOT_TOKEN = os.getenv('7561074770:AAHrmdKqZqkeK2a1pJETtDY8zcXTMm8XZvk')
+GEMINI_API_KEY = os.getenv('AIzaSyAYEQ4CYf9w98CViYyFsnNKu6WK1Eqtfp4')
 
-# Настройка Gemini
+# Настройка Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-pro")
+model = genai.GenerativeModel('gemini-pro')
 
-# Бот
-bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+# Инициализация бота и диспетчера
+bot = Bot(token=TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
+# Команда /start
 @dp.message(Command("start"))
-async def start_handler(message: Message):
-    await message.answer(f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай!")
+async def start_handler(message: types.Message):
+    await message.answer(f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай что угодно!")
 
+# Обработка текстовых сообщений и запрос в Gemini
 @dp.message()
-async def chat_with_gemini(message: Message):
+async def chat_with_gemini(message: types.Message):
     try:
-        response = model.generate_content([message.text])
+        response = model.generate_content(message.text)
         await message.answer(response.text)
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        await message.answer("Что-то не так, попробуй позже!")
+        await message.answer(f"Ошибка запроса: {e}")
 
+# Запуск
 async def main():
     await dp.start_polling(bot)
 
