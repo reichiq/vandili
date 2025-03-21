@@ -1,10 +1,9 @@
 import logging
 import os
 import asyncio
-import google.generativeai as genai
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.client.default import DefaultBotProperties
+import google.generativeai as genai
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -15,6 +14,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-pro-latest")
 
 # Инициализация бота и диспетчера
+from aiogram.client.default import DefaultBotProperties
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2"))
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 async def start_handler(message: types.Message):
     await message.answer(f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай что угодно!")
 
-# Проверка, был ли бот упомянут или ответ на его сообщение
+# Проверка обращения к боту
 def is_bot_mentioned(message: types.Message):
     triggers = ["vai", "вай", "VAI", "Vai", "Вай"]
     text = message.text.lower()
@@ -33,40 +33,30 @@ def is_bot_mentioned(message: types.Message):
         or (message.reply_to_message and message.reply_to_message.from_user.id == bot.id)
     )
 
-# Функция экранирования символов для MarkdownV2
-def escape_markdown(text: str) -> str:
-    escape_chars = r"\_*[]()~`>#+-=|{}.!"
-    for char in escape_chars:
-        text = text.replace(char, f"\\{char}")
-    return text
+# Функция экранирования спецсимволов для MarkdownV2
+def escape_markdown(text):
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
 
-# Обработка сообщений с AI
+# Обработка сообщений с проверкой обращения
 @dp.message()
 async def chat_with_gemini(message: types.Message):
     if message.chat.type != 'private' and not is_bot_mentioned(message):
         return
 
-    # Убираем триггеры (упоминания) из текста запроса
+    # Убираем триггер из текста для чистоты запроса
     user_text = message.text
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
 
     try:
         response = model.generate_content(user_text)
-
-        # Проверяем, является ли ответ кодом
-        if "```" in response.text or "def " in response.text or "import " in response.text:
-            response_text = f"```\n{response.text}\n```"
-        else:
-            response_text = response.text
-
-        # Экранируем спецсимволы для MarkdownV2
-        response_text = escape_markdown(response_text)
-        
-        await message.answer(response_text, parse_mode="MarkdownV2")
-
+        formatted_response = escape_markdown(response.text)  # Экранируем MarkdownV2
+        await message.answer(f"```\n{formatted_response}\n```", parse_mode="MarkdownV2")
+    except google.generativeai.types.generation_types.GenerationError:
+        await message.answer("Ошибка запроса: превышен лимит использования API Gemini. Попробуйте позже.")
     except Exception as e:
-        await message.answer(f"Ошибка запроса: `{escape_markdown(str(e))}`", parse_mode="MarkdownV2")
+        await message.answer(f"Ошибка запроса: {e}")
 
 # Запуск
 async def main():
