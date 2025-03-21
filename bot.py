@@ -21,25 +21,18 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
 
-# Функция для форматирования ответа от Gemini
+# Функция для обработки и форматирования ответа
 def format_gemini_response(text: str) -> str:
     """
     Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2).
     """
-    # Экранируем только критические символы, но не Markdown-разметку
-    special_chars = r"_[]()~`>#+-=|{}.!"
+    # Обрабатываем кодовые блоки, чтобы они правильно выделялись
+    text = re.sub(r'```(\w+)?\n(.*?)\n```', r'```\1\n\2\n```', text, flags=re.DOTALL)
+
+    # Telegram требует экранирования этих символов в обычном тексте
+    special_chars = r"_[]()~>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
-
-    # Обрабатываем заголовки (### -> ***) и (## -> **)
-    text = re.sub(r'### (.*?)\n', r'***\1***\n', text)
-    text = re.sub(r'## (.*?)\n', r'**\1**\n', text)
-
-    # Жирный текст (делаем так, чтобы **работало правильно**)
-    text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
-
-    # Исправляем кодовые блоки (```python ... ```)
-    text = re.sub(r'```(\w+)?\n(.*?)\n```', r'```\1\n\2\n```', text, flags=re.DOTALL)
 
     return text
 
@@ -67,18 +60,13 @@ async def chat_with_gemini(message: types.Message):
     if message.chat.type != 'private' and not is_bot_mentioned(message):
         return
 
-    # Убираем триггеры из текста перед отправкой запроса
     user_text = message.text
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
 
     try:
         response = model.generate_content(user_text).text
-
-        # Форматируем ответ от Gemini
         formatted_response = format_gemini_response(response)
-
-        # Отправляем отформатированный ответ
         await message.answer(formatted_response, parse_mode="MarkdownV2")
     
     except Exception as e:
