@@ -29,15 +29,15 @@ def format_gemini_response(text: str) -> str:
     """
 
     # Telegram требует экранирования этих символов в обычном тексте (но не в коде!)
-    special_chars = r"_[]()~>#+-=|{}.!"
+    special_chars = r"[]()~>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Убираем HTML-теги, если они вдруг есть (например, <code>)
-    text = text.replace("<code>", "").replace("</code>", "")
+    # Убираем экранирование для `_`, но только внутри кодовых блоков
+    text = re.sub(r'```(\w+)?\n(.*?)\n```', lambda m: f"```\n{m.group(2)}\n```", text, flags=re.DOTALL)
 
-    # Гарантируем, что кодовые блоки выделены корректно
-    text = re.sub(r'```(\w+)?\n(.*?)\n```', r'```\1\n\2\n```', text, flags=re.DOTALL)
+    # Добавляем пустые строки перед списками, чтобы Telegram на телефоне их не сливал
+    text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
 
     return text
 
