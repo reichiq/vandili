@@ -63,11 +63,12 @@ async def chat_with_gemini(message: types.Message):
                     parts[i] = f"```{parts[i]}```"
             response = "".join(parts)
         
-        await message.answer(escape_markdown(response))
+        # Экранируем текст и отправляем с форматированием
+        await message.answer(escape_markdown(response), parse_mode="MarkdownV2")
     
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"Ошибка запроса: `{escape_markdown(str(e))}`")
+        await message.answer(f"Ошибка запроса: `{escape_markdown(str(e))}`", parse_mode="MarkdownV2")
 
 # Запуск
 async def main():
