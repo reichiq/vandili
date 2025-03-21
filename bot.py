@@ -6,8 +6,8 @@ import google.generativeai as genai
 import asyncio
 
 # Получаем токены из переменных окружения
-TELEGRAM_BOT_TOKEN = os.getenv('7561074770:AAHrmdKqZqkeK2a1pJETtDY8zcXTMm8XZvk')
-GEMINI_API_KEY = os.getenv('AIzaSyAYEQ4CYf9w98CViYyFsnNKu6WK1Eqtfp4')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Настройка Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
