@@ -66,6 +66,7 @@ async def chat_with_gemini(message: types.Message):
         await message.answer(escape_markdown(response))
     
     except Exception as e:
+        logging.error(f"Ошибка запроса: {e}")
         await message.answer(f"Ошибка запроса: `{escape_markdown(str(e))}`")
 
 # Запуск
@@ -73,4 +74,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    logging.info("Бот запущен")
     asyncio.run(main())
