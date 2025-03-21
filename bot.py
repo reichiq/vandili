@@ -2,6 +2,7 @@ import logging
 import os
 import asyncio
 import re
+import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import google.generativeai as genai
@@ -53,6 +54,16 @@ def is_bot_mentioned(message: types.Message):
     )
 
 
+# Функция для проверки соединения с интернетом
+async def check_internet():
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://www.google.com", timeout=5) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+
 # Команда /start
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
@@ -66,7 +77,6 @@ async def start_handler(message: types.Message):
 async def chat_with_gemini(message: types.Message):
     logging.info(f"Получено сообщение: {message.text} от {message.from_user.id}")
 
-    # Проверяем, чтобы обработчик не выполнялся дважды
     if message.chat.type != 'private' and not is_bot_mentioned(message):
         return
 
@@ -74,17 +84,26 @@ async def chat_with_gemini(message: types.Message):
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
 
-    # Показываем "печатает..."
     await bot.send_chat_action(message.chat.id, "typing")
 
     try:
+        # Проверяем подключение перед запросом
+        if not await check_internet():
+            raise ConnectionError("Нет подключения к интернету")
+
         response = model.generate_content(user_text).text
         formatted_response = format_gemini_response(response)
         await message.answer(formatted_response, parse_mode="MarkdownV2")
     
+    except aiohttp.ClientConnectionError:
+        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode="MarkdownV2")
+
+    except ConnectionError:
+        await message.answer("⚠️ Ошибка: Нет подключения к интернету. Проверьте соединение и попробуйте снова.", parse_mode="MarkdownV2")
+    
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"Ошибка запроса: `{format_gemini_response(str(e))}`", parse_mode="MarkdownV2")
+        await message.answer(f"❌ Ошибка запроса: `{format_gemini_response(str(e))}`", parse_mode="MarkdownV2")
 
 
 # Запуск
@@ -94,3 +113,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
