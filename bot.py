@@ -19,11 +19,24 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Mar
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# Функция экранирования специальных символов в MarkdownV2
-def escape_markdown(text: str) -> str:
+# Функция для обработки текста от Gemini
+def format_gemini_response(text: str) -> str:
+    """
+    Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2).
+    """
+    # Экранируем специальные символы, которые не используются для форматирования
     special_chars = r"_*[]()~`>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
+
+    # Обрабатываем блоки кода (если они есть)
+    if "```" in text:
+        parts = text.split("```")
+        for i in range(len(parts)):
+            if i % 2 == 1:  # Это блок кода
+                parts[i] = f"```{parts[i]}```"
+        text = "".join(parts)
+
     return text
 
 # Проверка, обращаются ли к боту
@@ -39,7 +52,7 @@ def is_bot_mentioned(message: types.Message):
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     text = f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай что угодно!"
-    await message.answer(escape_markdown(text))
+    await message.answer(format_gemini_response(text), parse_mode="MarkdownV2")
 
 # Обработка текстовых сообщений и запрос в Gemini
 @dp.message()
@@ -55,20 +68,15 @@ async def chat_with_gemini(message: types.Message):
     try:
         response = model.generate_content(user_text).text
 
-        # Разделение текста на код и обычный текст
-        if "```" in response:
-            parts = response.split("```")
-            for i in range(len(parts)):
-                if i % 2 == 1:
-                    parts[i] = f"```{parts[i]}```"
-            response = "".join(parts)
-        
-        # Экранируем текст и отправляем с форматированием
-        await message.answer(escape_markdown(response), parse_mode="MarkdownV2")
+        # Форматируем ответ от Gemini
+        formatted_response = format_gemini_response(response)
+
+        # Отправляем отформатированный ответ
+        await message.answer(formatted_response, parse_mode="MarkdownV2")
     
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"Ошибка запроса: `{escape_markdown(str(e))}`", parse_mode="MarkdownV2")
+        await message.answer(f"Ошибка запроса: `{format_gemini_response(str(e))}`", parse_mode="MarkdownV2")
 
 # Запуск
 async def main():
