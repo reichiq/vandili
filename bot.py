@@ -4,6 +4,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import google.generativeai as genai
+from aiogram.utils.markdown import hcode
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -26,7 +27,7 @@ async def start_handler(message: types.Message):
 
 # Проверка обращения к боту
 def is_bot_mentioned(message: types.Message):
-    triggers = ["vai", "вай", "VAI", "Vai", "Вай"]
+    triggers = ["vai", "вай"]
     text = message.text.lower()
     return (
         any(trigger in text for trigger in triggers)
@@ -39,14 +40,15 @@ async def chat_with_gemini(message: types.Message):
     if message.chat.type != 'private' and not is_bot_mentioned(message):
         return
 
-    # Убираем триггер из текста для чистоты запроса
+    # Убираем триггер из текста
     user_text = message.text
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
 
     try:
         response = model.generate_content(user_text)
-        await message.answer(response.text)
+        safe_response = hcode(response.text)
+        await message.answer(safe_response)
     except Exception as e:
         await message.answer(f"Ошибка запроса: {e}")
 
