@@ -14,7 +14,8 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 
 # Инициализация бота и диспетчера
-bot = Bot(token=TELEGRAM_BOT_TOKEN, parse_mode="HTML")
+from aiogram.client.default import DefaultBotProperties
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
