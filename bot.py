@@ -57,7 +57,11 @@ async def chat_with_gemini(message: types.Message):
 
         # Разделение текста на код и обычный текст
         if "```" in response:
-            response = response.replace("```", "```\n")
+            parts = response.split("```")
+            for i in range(len(parts)):
+                if i % 2 == 1:
+                    parts[i] = f"```{parts[i]}```"
+            response = "".join(parts)
         
         await message.answer(escape_markdown(response))
     
