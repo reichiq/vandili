@@ -2,8 +2,8 @@ import logging
 import os
 import asyncio
 import re
-import aiohttp
 import random
+import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import google.generativeai as genai
@@ -22,10 +22,11 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Mar
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# ⚡ Память диалогов (словарь)
+# Память бота для хранения имен пользователей
 user_memory = {}
 
-# 🛠 Функция для форматирования текста
+# Функция для форматирования ответа
+
 def format_gemini_response(text: str) -> str:
     special_chars = r"_[]()~>#+-=|{}.!"
     for ch in special_chars:
@@ -37,37 +38,18 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
     return text
 
-# ⚡ Проверка, спрашивает ли пользователь про создателя
-def is_owner_question(text: str) -> bool:
-    owner_keywords = [
-        "чей это бот", "кто владелец бота", "чей ии", "кому принадлежит бот",
-        "кто сделал этот бот", "кто его создал", "для кого этот бот", "кому он служит",
-        "кем был разработан этот бот", "кто его разрабатывал", "кто тебя создал", "кто твой создатель",
-        "кем ты был создан", "кем ты разработан", "разработчик этого бота", "кто разрабатывал этот бот"
-    ]
-    return any(re.search(rf"\b{re.escape(keyword)}\b", text.lower()) for keyword in owner_keywords)
+# Функция запоминания пользователей
+def remember_user(user: types.User):
+    if user.id not in user_memory:
+        user_memory[user.id] = user.first_name or user.username
 
-# 🏆 Ответы на вопросы про создателя
-@dp.message()
-async def handle_owner_question(message: types.Message):
-    if is_owner_question(message.text):
-        responses = [
-            "🤖 Этот бот был создан специально для Vandili.",
-            "🔧 Vandili — мой создатель и разработчик!",
-            "⚙️ Я создан для Vandili и только для него!",
-            "📌 Vandili — мой разработчик, я служу только ему!",
-            "🛠️ Vandili мой единственный создатель!",
-            "🤖 Vandili знает всё обо мне, он мой хозяин!",
-            "💡 Моё существование — заслуга Vandili!",
-            "🧠 Vandili меня тренировал, я служу только ему!"
-        ]
-        await message.answer(format_gemini_response(random.choice(responses)), parse_mode="MarkdownV2")
-        return
+# Проверка, упомянули ли бота
+def is_bot_mentioned(message: types.Message):
+    triggers = ["vai", "вай", "VAI", "Vai", "Вай"]
+    text = message.text.lower()
+    return any(trigger in text for trigger in triggers) or (message.reply_to_message and message.reply_to_message.from_user.id == bot.id)
 
-    # Если вопрос не про создателя, передаём в чат с Gemini
-    await chat_with_gemini(message)
-
-# 📡 Проверка соединения с интернетом
+# Функция проверки соединения с интернетом
 async def check_internet():
     try:
         async with aiohttp.ClientSession() as session:
@@ -76,85 +58,62 @@ async def check_internet():
     except Exception:
         return False
 
-# 🎯 Команда /start
+# Функция для определения вопросов о владельце
+def is_owner_question(text: str) -> bool:
+    owner_keywords = [
+        "чей это бот", "кто владелец бота", "чей ии", "кому принадлежит бот", "кто сделал этот бот", "кто его создал",
+        "для кого этот бот", "кому он служит", "кем был разработан этот бот", "кто его разрабатывал", "кто тебя создал",
+        "кто твой создатель", "кем ты был создан", "кем ты разработан", "разработчик этого бота", "кто разрабатывал этот бот"
+    ]
+    return any(re.search(rf"\b{re.escape(keyword)}\b", text.lower()) for keyword in owner_keywords)
+
+# Обработчик команды /start
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
-    logging.info(f"Команда /start от {message.from_user.id}")
+    remember_user(message.from_user)
     text = f"Привет, {message.from_user.full_name}! 🤖 Я AI от Vandili. Спрашивай что угодно!"
     await message.answer(format_gemini_response(text), parse_mode="MarkdownV2")
 
-# 💬 Запоминание сообщений и ответ в контексте
+# Обработчик вопросов о владельце
+@dp.message()
+async def handle_owner_question(message: types.Message):
+    remember_user(message.from_user)
+    if is_owner_question(message.text):
+        responses = [
+            "Этот бот был создан для Vandili. 🤖", "Искусственный интеллект этого бота предназначен для Vandili. ✅",
+            "Vandili — единственный владелец и создатель этого бота. 🚀", "Этот бот обслуживает только Vandili. 💡",
+            "Я создан для Vandili. Все вопросы к нему! 👀", "Разработан специально для Vandili, больше ни для кого! 🏆",
+            "Меня разрабатывал Vandili, так что только он знает все мои секреты! 🔥", "Я создан Vandili и работаю исключительно для него. 👑"
+        ]
+        await message.answer(format_gemini_response(random.choice(responses)), parse_mode="MarkdownV2")
+        return
+    await chat_with_gemini(message)
+
+# Обработчик текстовых сообщений
 @dp.message()
 async def chat_with_gemini(message: types.Message):
-    logging.info(f"Получено сообщение: {message.text} от {message.from_user.id}")
-
-    # Если это не личные сообщения и бот не упомянут — игнорируем
-    if message.chat.type != 'private' and not is_bot_mentioned(message):
-        return
-
-    user_text = message.text.strip()
-    user_id = message.from_user.id
-    user_name = message.from_user.full_name or message.from_user.username
-
-    # Убираем триггеры упоминания бота из текста
+    remember_user(message.from_user)
+    user_text = message.text
     for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
         user_text = user_text.replace(trigger, "").strip()
-
-    # Если сообщение — просто "Привет", не запоминаем контекст
-    if user_text.lower() in ["привет", "хай", "hello", "здарова", "алло"]:
-        greeting_responses = [
-            f"Привет, {user_name}! 😊 Как дела?",
-            f"Здравствуй, {user_name}! 🚀",
-            f"Хэй, {user_name}! Как твои дела? 🔥",
-        ]
-        await message.answer(format_gemini_response(random.choice(greeting_responses)), parse_mode="MarkdownV2")
-        return
-
-    # Включаем "печатает..."
     await bot.send_chat_action(message.chat.id, "typing")
-
     try:
-        # Проверяем подключение перед запросом
         if not await check_internet():
             raise ConnectionError("Нет подключения к интернету")
-
-        # Проверяем, есть ли предыдущие сообщения от пользователя
-        if user_id in user_memory:
-            past_messages = user_memory[user_id]
-        else:
-            past_messages = []
-
-        # Добавляем новое сообщение в историю (ограничиваем 5 сообщениями)
-        past_messages.append(user_text)
-        past_messages = past_messages[-5:]  # Храним не более 5 последних сообщений
-
-        # Формируем запрос к Gemini
-        full_conversation = "\n".join(past_messages)
-        response = model.generate_content(full_conversation).text
-
-        # Сохраняем обновлённую историю диалога
-        user_memory[user_id] = past_messages
-
-        # Форматируем ответ
+        response = model.generate_content(user_text).text
         formatted_response = format_gemini_response(response)
-
-        # Добавляем имя юзера только в первом ответе, а не каждый раз
-        if len(past_messages) == 1:
-            formatted_response = f"{user_name}, {formatted_response}"
-
+        if message.from_user.id in user_memory and random.random() < 0.3:
+            formatted_response = f"{user_memory[message.from_user.id]}, {formatted_response}"
         await message.answer(formatted_response, parse_mode="MarkdownV2")
-
     except aiohttp.ClientConnectionError:
         await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode="MarkdownV2")
-
     except ConnectionError:
         await message.answer("⚠️ Ошибка: Нет подключения к интернету. Проверьте соединение и попробуйте снова.", parse_mode="MarkdownV2")
-
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"❌ Ошибка запроса: {format_gemini_response(str(e))}", parse_mode="MarkdownV2")
+        await message.answer(f"❌ Ошибка запроса: `{format_gemini_response(str(e))}`", parse_mode="MarkdownV2")
 
-# 🚀 Запуск бота
+# Запуск
 async def main():
     logging.info("Бот запущен")
     await dp.start_polling(bot)
