@@ -25,7 +25,8 @@ logging.basicConfig(level=logging.INFO)
 # Функция для форматирования ответа
 def format_gemini_response(text: str) -> str:
     """
-    Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2).
+    Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2),
+    предотвращая ошибки с жирным текстом.
     """
 
     # Telegram требует экранирования этих символов в обычном тексте (но не в коде!)
@@ -33,10 +34,13 @@ def format_gemini_response(text: str) -> str:
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Убираем экранирование для `_`, но только внутри кодовых блоков
+    # Убираем возможные ошибки с `*` (жирный текст)
+    text = re.sub(r'(?<!\*)\*\*(?!\*)', '', text)  # Убираем незакрытые `**`
+
+    # Убираем экранирование `_`, но только внутри кодовых блоков
     text = re.sub(r'```(\w+)?\n(.*?)\n```', lambda m: f"```\n{m.group(2)}\n```", text, flags=re.DOTALL)
 
-    # Добавляем пустые строки перед списками, чтобы Telegram на телефоне их не сливал
+    # Добавляем пустые строки перед списками, чтобы Telegram не ломал их
     text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
 
     return text
