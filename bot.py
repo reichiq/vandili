@@ -88,37 +88,61 @@ async def start_handler(message: types.Message):
 async def chat_with_gemini(message: types.Message):
     logging.info(f"Получено сообщение: {message.text} от {message.from_user.id}")
 
+    # Если это не личные сообщения и бот не упомянут — игнорируем
+    if message.chat.type != 'private' and not is_bot_mentioned(message):
+        return
+
+    user_text = message.text.strip()
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.full_name
+    user_name = message.from_user.full_name or message.from_user.username
 
-    # 🧠 Создаём или обновляем память о пользователе
-    if user_id not in user_memory:
-        user_memory[user_id] = {
-            "name": username,
-            "history": []
-        }
+    # Убираем триггеры упоминания бота из текста
+    for trigger in ["vai", "вай", "VAI", "Vai", "Вай"]:
+        user_text = user_text.replace(trigger, "").strip()
 
-    # 💬 Ограничиваем историю (не более 5 последних сообщений)
-    user_memory[user_id]["history"].append(message.text)
-    if len(user_memory[user_id]["history"]) > 5:
-        user_memory[user_id]["history"].pop(0)
+    # Если сообщение — просто "Привет", не запоминаем контекст
+    if user_text.lower() in ["привет", "хай", "hello", "здарова", "алло"]:
+        greeting_responses = [
+            f"Привет, {user_name}! 😊 Как дела?",
+            f"Здравствуй, {user_name}! 🚀",
+            f"Хэй, {user_name}! Как твои дела? 🔥",
+        ]
+        await message.answer(format_gemini_response(random.choice(greeting_responses)), parse_mode="MarkdownV2")
+        return
 
-    # 🛠️ Формируем запрос с контекстом
-    history_text = "\n".join(user_memory[user_id]["history"])
-    user_text = f"{history_text}\n\nОтветь пользователю {username}:"
-
+    # Включаем "печатает..."
     await bot.send_chat_action(message.chat.id, "typing")
 
     try:
+        # Проверяем подключение перед запросом
         if not await check_internet():
             raise ConnectionError("Нет подключения к интернету")
 
-        response = model.generate_content(user_text).text
+        # Проверяем, есть ли предыдущие сообщения от пользователя
+        if user_id in user_memory:
+            past_messages = user_memory[user_id]
+        else:
+            past_messages = []
+
+        # Добавляем новое сообщение в историю (ограничиваем 5 сообщениями)
+        past_messages.append(user_text)
+        past_messages = past_messages[-5:]  # Храним не более 5 последних сообщений
+
+        # Формируем запрос к Gemini
+        full_conversation = "\n".join(past_messages)
+        response = model.generate_content(full_conversation).text
+
+        # Сохраняем обновлённую историю диалога
+        user_memory[user_id] = past_messages
+
+        # Форматируем ответ
         formatted_response = format_gemini_response(response)
 
-        # 👤 Добавляем обращение по имени
-        final_response = f"{user_memory[user_id]['name']}, {formatted_response}"
-        await message.answer(final_response, parse_mode="MarkdownV2")
+        # Добавляем имя юзера только в первом ответе, а не каждый раз
+        if len(past_messages) == 1:
+            formatted_response = f"{user_name}, {formatted_response}"
+
+        await message.answer(formatted_response, parse_mode="MarkdownV2")
 
     except aiohttp.ClientConnectionError:
         await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode="MarkdownV2")
@@ -128,7 +152,7 @@ async def chat_with_gemini(message: types.Message):
 
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"❌ Ошибка запроса: `{format_gemini_response(str(e))}`", parse_mode="MarkdownV2")
+        await message.answer(f"❌ Ошибка запроса: {format_gemini_response(str(e))}", parse_mode="MarkdownV2")
 
 # 🚀 Запуск бота
 async def main():
