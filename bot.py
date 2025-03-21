@@ -27,19 +27,17 @@ def format_gemini_response(text: str) -> str:
     """
     Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2).
     """
-    # Обрабатываем кодовые блоки отдельно, чтобы не экранировать их внутри
-    code_blocks = re.findall(r'```(?:\w+)?\n.*?\n```', text, re.DOTALL)
-    
-    for block in code_blocks:
-        text = text.replace(block, f"<code>{block}</code>")
 
     # Telegram требует экранирования этих символов в обычном тексте (но не в коде!)
     special_chars = r"_[]()~>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Возвращаем нормальный код
-    text = text.replace("<code>", "```").replace("</code>", "```")
+    # Убираем HTML-теги, если они вдруг есть (например, <code>)
+    text = text.replace("<code>", "").replace("</code>", "")
+
+    # Гарантируем, что кодовые блоки выделены корректно
+    text = re.sub(r'```(\w+)?\n(.*?)\n```', r'```\1\n\2\n```', text, flags=re.DOTALL)
 
     return text
 
