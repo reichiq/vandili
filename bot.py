@@ -10,7 +10,6 @@ from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, Message
 from html import escape
 from dotenv import load_dotenv
-import google.generativeai as genai
 from pathlib import Path
 import asyncio
 
@@ -25,6 +24,11 @@ logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+import google.generativeai as genai
+
+# Настройка API-ключа
+genai.configure(api_key=GEMINI_API_KEY)
 
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
