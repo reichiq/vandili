@@ -1,86 +1,98 @@
-import os
 import logging
-import re
 import aiohttp
-import google.generativeai as genai
+import asyncio
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-from aiogram.types import Message
+from aiogram.types import FSInputFile
 from dotenv import load_dotenv
+from openai import OpenAI
+from urllib.parse import quote
 
+# Загружаем ключи из .env
 load_dotenv()
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
-if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not UNSPLASH_ACCESS_KEY:
-    raise ValueError("Проверь .env: отсутствует токен Telegram, Gemini или Unsplash.")
+# Проверка переменных
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY or not UNSPLASH_ACCESS_KEY:
+    raise ValueError("Один или несколько API ключей отсутствуют в .env")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("models/gemini-1.5-pro-latest")
-
-bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+# Настройка логов
 logging.basicConfig(level=logging.INFO)
 
-# Функция очистки текста от HTML
-def clean_html(text: str) -> str:
-    return re.sub(r"<.*?>", "", text)
+# Инициализация бота
+bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
 
-# Запрос к Unsplash API
-async def fetch_unsplash_image(query: str) -> str | None:
-    url = f"https://api.unsplash.com/photos/random?query={query}&orientation=landscape&client_id={UNSPLASH_ACCESS_KEY}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("urls", {}).get("regular")
+# ===== Gemini client =====
+client = OpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/models")
+
+async def ask_gemini(prompt: str) -> str:
+    try:
+        response = await client.text.generate(
+            prompt=prompt,
+            temperature=0.7,
+            max_tokens=500
+        )
+        return response.text.strip()
+    except Exception as e:
+        logging.error(f"Gemini error: {e}")
+        return "Произошла ошибка при обработке запроса."
+
+# ===== Unsplash search =====
+async def fetch_image(query: str) -> str | None:
+    url = f"https://api.unsplash.com/photos/random?query={quote(query)}&client_id={UNSPLASH_ACCESS_KEY}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data["urls"]["regular"]
+    except Exception as e:
+        logging.error(f"Ошибка при получении изображения: {e}")
     return None
 
-# Определение, есть ли в запросе просьба показать фото
-def is_photo_request(text: str) -> bool:
-    return any(kw in text.lower() for kw in ["покажи", "покажи фото", "изображение", "покажи картинку", "покажи арт"])
+# ===== Команда start =====
+@dp.message(commands=["start"])
+async def cmd_start(message: types.Message):
+    await message.answer("Привет! Я VAI — бот с интеллектом Gemini и изображениями из Unsplash. Просто напиши что угодно!")
 
-# Обработка запроса
+# ===== Обработка всех сообщений =====
 @dp.message()
-async def handle_message(message: Message):
-    user_text = message.text.strip()
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.full_name
+async def handle_message(message: types.Message):
+    user_input = message.text.strip().lower()
+    await message.chat.do("upload_photo")
 
-    try:
-        # Запрос в Gemini
-        gemini_response = await model.generate_content_async(user_text)
-        gemini_text = gemini_response.text.strip()
+    # Если запрос содержит "покажи", "изображение", "фото", ищем картинку
+    keywords = ["покажи", "изображение", "фото", "картинку", "арт"]
+    needs_image = any(word in user_input for word in keywords)
 
-        # Проверка запроса на фото
-        if is_photo_request(user_text):
-            image_query = user_text.replace("покажи", "").strip()
-            photo_url = await fetch_unsplash_image(image_query)
+    img_url = await fetch_image(user_input) if needs_image else None
+    gemini_reply = await ask_gemini(user_input)
 
-            if photo_url:
-                # Обрезаем caption если слишком длинный
-                if len(gemini_text) > 900:
-                    short_text = gemini_text[:900].rsplit(".", 1)[0] + "..."
-                    await bot.send_photo(message.chat.id, photo_url, caption=short_text)
-                    await message.answer(gemini_text)  # Полный текст отдельно
-                else:
-                    await bot.send_photo(message.chat.id, photo_url, caption=gemini_text)
-            else:
-                await message.answer("😕 Не удалось найти подходящее изображение.")
+    # Сжимаем подпись, чтобы Telegram не выдал "caption too long"
+    caption_text = gemini_reply[:1020] + "..." if len(gemini_reply) > 1020 else gemini_reply
 
-        else:
-            await message.answer(gemini_text)
+    if img_url:
+        try:
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=img_url,
+                caption=caption_text,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logging.warning(f"❗ Ошибка отправки фото: {e}")
+            # если что-то не так — просто отправим текст
+            await message.answer(caption_text)
+    else:
+        await message.answer(gemini_reply)
 
-    except aiohttp.ClientConnectionError:
-        await message.answer("🚫 Не удаётся подключиться к интернету.")
-    except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        await message.answer(f"❌ Ошибка: {clean_html(str(e))}")
+# ===== Запуск бота =====
+async def main():
+    await dp.start_polling(bot)
 
-# Запуск
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(dp.start_polling(bot))
+    asyncio.run(main())
