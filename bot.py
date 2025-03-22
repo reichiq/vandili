@@ -43,24 +43,28 @@ async def check_internet():
     except:
         return False
 
-# Форматирование MarkdownV2 с кодовыми блоками и безопасным экранированием
+# Форматирование MarkdownV2 с сохранением кода и стилей
 
 def format_gemini_response(text: str) -> str:
-    # Экранируем спецсимволы для MarkdownV2
+    # Сначала находим и временно вытаскиваем все блоки кода
+    code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
+    placeholders = []
+    for i, (lang, code) in enumerate(code_blocks):
+        placeholder = f"__CODE_BLOCK_{i}__"
+        placeholders.append((placeholder, f"```{lang}\n{code}```"))
+        text = text.replace(f"```{lang}\n{code}```", placeholder)
+
+    # Экранируем MarkdownV2-символы вне кода
     escape_chars = r"_*[]()~`>#+=|{}.!"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис в начале строки, избегая look-behind
+    # Экранируем дефис в начале строки
     text = re.sub(r"(?m)^\s*-(?!-)", lambda m: m.group(0).replace("-", "\\-"), text)
 
-    # Обработка многострочных блоков кода
-    code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
-    for lang, code in code_blocks:
-        escaped = code.replace("\\", "\\\\")
-        for ch in escape_chars:
-            escaped = escaped.replace(ch, f"\\{ch}")
-        text = text.replace(f"```{lang}\n{code}```", f"```{lang}\n{escaped}```")
+    # Возвращаем кодовые блоки обратно без экранирования
+    for placeholder, code_block in placeholders:
+        text = text.replace(placeholder, code_block)
 
     return text
 
