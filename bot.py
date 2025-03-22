@@ -46,15 +46,15 @@ async def check_internet():
 # Форматирование MarkdownV2 с сохранением кода и стилей
 
 def format_gemini_response(text: str) -> str:
-    # Сохраняем и вытаскиваем все блоки кода
+    # Сначала находим и временно вытаскиваем все блоки кода
     code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
     placeholders = []
-    for i, (lang, code) in enumerate(code_blocks):
+    for i, (lang, code_block) in enumerate(code_blocks):
         placeholder = f"__CODE_BLOCK_{i}__"
-        placeholders.append((placeholder, f"```{lang}\n{code}```"))
-        text = text.replace(f"```{lang}\n{code}```", placeholder)
+        placeholders.append((placeholder, f"```{lang or ''}\n{code_block}```"))
+        text = text.replace(f"```{lang}\n{code_block}```", placeholder)
 
-    # Экранируем спецсимволы MarkdownV2 вне кода
+    # Экранируем символы MarkdownV2
     escape_chars = r"_*[]()~`>#+=|{}.!-"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
@@ -134,7 +134,8 @@ async def handle_message(message: Message):
         await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
-        await message.answer(f"❌ Ошибка запроса: {format_gemini_response(str(e))}", parse_mode=ParseMode.MARKDOWN_V2)
+        error_text = format_gemini_response(str(e))
+        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.MARKDOWN_V2)
 
 # Запуск
 if __name__ == '__main__':
