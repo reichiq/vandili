@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message
 from aiogram.client.default import DefaultBotProperties
 
-# === Загрузка ключей из переменных окружения ===
+# 🔐 Загрузка токенов из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
@@ -18,18 +18,18 @@ UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not UNSPLASH_ACCESS_KEY:
     raise ValueError("Не установлены необходимые переменные окружения")
 
-# === Настройка логов и моделей ===
+# 🔧 Логгирование и модель Gemini
 logging.basicConfig(level=logging.INFO)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
-# === Настройка бота ===
+# 🤖 Telegram Bot
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 chat_history = {}
 
-# === Проверка интернета ===
+# 🌐 Проверка интернета
 async def check_internet():
     try:
         async with aiohttp.ClientSession() as session:
@@ -38,7 +38,7 @@ async def check_internet():
     except:
         return False
 
-# === Форматирование ответа Gemini для Telegram (HTML) ===
+# 🧼 HTML-форматирование ответа Gemini
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
@@ -61,7 +61,7 @@ def format_gemini_response(text: str) -> str:
 
     return text
 
-# === Поиск картинки на Unsplash ===
+# 🔍 Поиск изображения через Unsplash
 async def search_unsplash_image(query: str) -> str | None:
     url = "https://api.unsplash.com/search/photos"
     params = {
@@ -78,7 +78,7 @@ async def search_unsplash_image(query: str) -> str | None:
                 return results[0]["urls"]["regular"]
             return None
 
-# === Проверка, упомянули ли бота ===
+# 🤔 Проверка, вызвали ли бота
 async def is_bot_called(message: Message) -> bool:
     if message.chat.type == "private":
         return True
@@ -87,24 +87,30 @@ async def is_bot_called(message: Message) -> bool:
     names = [(await bot.get_me()).username.lower(), "вай", "vai", "вай бот", "vai bot", "vaibot"]
     return any(name in message.text.lower() for name in names)
 
-# === Проверка: спрашивают ли про владельца ===
+# 👤 Узнают про владельца?
 def is_owner_question(text: str) -> bool:
     return any(k in text.lower() for k in [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик",
         "кем ты создан", "кто твой создатель", "кто твой разработчик", "кто хозяин"
     ])
 
-# === Главный обработчик сообщений ===
+# 📩 Обработка входящих сообщений
 @dp.message()
 async def handle_message(message: Message):
     if not await is_bot_called(message):
         return
 
+    # 🛡️ Предотвращение повторной обработки
+    if message.message_id in getattr(bot, "_handled_messages", set()):
+        return
+    bot._handled_messages = getattr(bot, "_handled_messages", set())
+    bot._handled_messages.add(message.message_id)
+
     user_id = message.from_user.id
     user_text = message.text.strip()
     username = message.from_user.username or message.from_user.full_name
 
-    # --- Ответ на вопрос о владельце
+    # 👨‍💻 Ответ на вопрос о владельце
     if is_owner_question(user_text):
         answer = random.choice([
             "🤖 Этот бот был создан лично Vandili!",
@@ -114,7 +120,7 @@ async def handle_message(message: Message):
         await message.answer(format_gemini_response(answer))
         return
 
-    # --- Обработка запросов на арт/фото
+    # 🖼️ Обработка фото/арт/картинка
     if "арт" in user_text.lower() or "фото" in user_text.lower() or "картинку" in user_text.lower():
         try:
             gemini_prompt = f"Пользователь написал: '{user_text}'. Что он хочет увидеть? Сгенерируй краткое описание к изображению."
@@ -134,7 +140,7 @@ async def handle_message(message: Message):
             await message.answer(f"⚠️ Ошибка при поиске изображения: <code>{escape(str(e))}</code>")
         return
 
-    # --- Обычные запросы к Gemini
+    # 🤖 Стандартный ответ Gemini
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_text]})
     if len(chat_history[user_id]) > 5:
         chat_history[user_id].pop(0)
@@ -160,7 +166,7 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
-# === Запуск ===
+# 🚀 Запуск
 if __name__ == "__main__":
     import asyncio
     asyncio.run(dp.start_polling(bot))
