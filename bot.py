@@ -46,7 +46,7 @@ async def check_internet():
 # Форматирование MarkdownV2 с сохранением кода и стилей
 
 def format_gemini_response(text: str) -> str:
-    # Сначала находим и временно вытаскиваем все блоки кода
+    # Сохраняем и вытаскиваем все блоки кода
     code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
     placeholders = []
     for i, (lang, code) in enumerate(code_blocks):
@@ -54,15 +54,12 @@ def format_gemini_response(text: str) -> str:
         placeholders.append((placeholder, f"```{lang}\n{code}```"))
         text = text.replace(f"```{lang}\n{code}```", placeholder)
 
-    # Экранируем MarkdownV2-символы вне кода
-    escape_chars = r"_*[]()~`>#+=|{}.!"
+    # Экранируем спецсимволы MarkdownV2 вне кода
+    escape_chars = r"_*[]()~`>#+=|{}.!-"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис в начале строки
-    text = re.sub(r"(?m)^\s*-(?!-)", lambda m: m.group(0).replace("-", "\\-"), text)
-
-    # Возвращаем кодовые блоки обратно без экранирования
+    # Возвращаем кодовые блоки обратно
     for placeholder, code_block in placeholders:
         text = text.replace(placeholder, code_block)
 
