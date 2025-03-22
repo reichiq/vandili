@@ -43,23 +43,24 @@ async def check_internet():
     except:
         return False
 
-# Форматирование MarkdownV2
+# Форматирование MarkdownV2 с кодовыми блоками и безопасным экранированием
 
 def format_gemini_response(text: str) -> str:
-    # Удаляем markdown-разметку, которая может сбить Telegram
-    text = text.replace("**", "").replace("__", "").replace("`", "")
-
     # Экранируем спецсимволы для MarkdownV2
     escape_chars = r"_*[]()~`>#+=|{}.!"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис в начале строки (исправлено для совместимости)
-    text = re.sub(r"(?m)^-", r"\\-", text)
+    # Экранируем дефис в начале строки
+    text = re.sub(r"(?m)^(\s*)-", r"\1\\-", text)
 
-    # Удаляем лишние \n и форматируем списки
-    text = re.sub(r"(\\n)+", "\n", text)
-    text = re.sub(r"(\d+\\.) ", r"\n\1 ", text)
+    # Обработка многострочных блоков кода
+    code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
+    for lang, code in code_blocks:
+        escaped = code.replace("\\", "\\\\")
+        for ch in escape_chars:
+            escaped = escaped.replace(ch, f"\\{ch}")
+        text = text.replace(f"```{lang}\n{code}```", f"```{lang}\n{escaped}```")
 
     return text
 
