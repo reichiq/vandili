@@ -28,7 +28,7 @@ model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 # Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
 dp = Dispatcher()
-logging.basicConfig(level=logging.INFO, filename="bot.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, filename="/home/khan_770977/vandili/bot.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Словари для хранения истории сообщений и имён
 chat_history = {}
@@ -46,13 +46,17 @@ async def check_internet():
 # Форматирование MarkdownV2
 
 def format_gemini_response(text: str) -> str:
-    special_chars = r"_[]()~>#+-=|{}.!"
+    special_chars = "_[]()~>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
     text = text.replace("**", "")
-    text = re.sub(r'```\\w*\\n', '```\n', text)
-    text = re.sub(r'\n```', '\n```', text)
-    text = re.sub(r'```(\\w+)?\n(.*?)\n```', lambda m: f"```\n{m.group(2)}\n```", text, flags=re.DOTALL)
+    text = re.sub(r'```\\w*\\n', '```
+', text)
+    text = re.sub(r'\n```', '
+```', text)
+    text = re.sub(r'```(\\w+)?\n(.*?)\n```', lambda m: f"```
+{m.group(2)}
+```", text, flags=re.DOTALL)
     text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
     return text
 
@@ -94,7 +98,7 @@ async def handle_message(message: Message):
             "🛠️ Меня написал Vandili. Все вопросы — к нему!",
             "📡 Создан и запрограммирован Vandili."
         ]
-        await message.answer(random.choice(responses), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(format_gemini_response(random.choice(responses)), parse_mode=ParseMode.MARKDOWN_V2)
         return
 
     if user_id not in chat_history:
