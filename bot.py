@@ -46,16 +46,16 @@ async def check_internet():
 # Форматирование MarkdownV2
 
 def format_gemini_response(text: str) -> str:
-    # Удаляем все Bold и прочие Markdown элементы
+    # Удаляем markdown-разметку, которая может сбить Telegram
     text = text.replace("**", "").replace("__", "").replace("`", "")
 
-    # Экранируем специальные символы
-    special_chars = r"_*[]()~`>#+-=|{}.!\\"
-    for ch in special_chars:
+    # Экранируем спецсимволы для MarkdownV2
+    escape_chars = r"\\_*[]()~`>#+-=|{}.!"
+    for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Удаляем недопарсенные конструкции
-    text = re.sub(r"(\\n)+", r"\n", text)
+    # Удаляем лишние \n
+    text = re.sub(r"(\\n)+", "\n", text)
     text = re.sub(r"(\d+\.) ", r"\n\1 ", text)
 
     return text
