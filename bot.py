@@ -3,6 +3,7 @@ import os
 import re
 import random
 import aiohttp
+from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, Message
@@ -19,7 +20,10 @@ UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+from aiogram.client.default import DefaultBotProperties
+
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
 dp = Dispatcher()
 
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
