@@ -8,7 +8,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message
-from aiogram.utils.markdown import hbold
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # Получаем токены из переменных окружения
@@ -21,16 +20,19 @@ if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
 
 # Настройка Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-
-# Инициализация модели
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 # Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
 dp = Dispatcher()
-logging.basicConfig(level=logging.INFO, filename="/home/khan_770977/vandili/bot.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    filename="/home/khan_770977/vandili/bot.log",
+    filemode="a",
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
-# Словари для хранения истории сообщений и имён
+# История сообщений
 chat_history = {}
 user_names = {}
 
@@ -43,21 +45,12 @@ async def check_internet():
     except:
         return False
 
-# Форматирование MarkdownV2
-
+# Формат MarkdownV2
 def format_gemini_response(text: str) -> str:
     special_chars = "_[]()~>#+-=|{}.!"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
     text = text.replace("**", "")
-    text = re.sub(r'```\\w*\\n', '```
-', text)
-    text = re.sub(r'\n```', '
-```', text)
-    text = re.sub(r'```(\\w+)?\n(.*?)\n```', lambda m: f"```
-{m.group(2)}
-```", text, flags=re.DOTALL)
-    text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
     return text
 
 # Проверка, был ли вызван бот
@@ -70,8 +63,7 @@ async def is_bot_called(message: Message) -> bool:
         return True
     return False
 
-# Вопросы про владельца
-
+# Проверка, спрашивает ли пользователь про разработчика
 def is_owner_question(text: str) -> bool:
     keywords = [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик", "кем ты создан",
@@ -79,7 +71,7 @@ def is_owner_question(text: str) -> bool:
     ]
     return any(k in text.lower() for k in keywords)
 
-# Обработка входящих сообщений
+# Обработка сообщений
 @dp.message()
 async def handle_message(message: Message):
     if not await is_bot_called(message):
@@ -99,7 +91,7 @@ async def handle_message(message: Message):
             "📡 Создан и запрограммирован Vandili."
         ]
         await message.answer(format_gemini_response(random.choice(responses)), parse_mode=ParseMode.MARKDOWN_V2)
-        return
+        return  # 🔥 Важно! Прерываем выполнение, чтобы не дублировался ответ
 
     if user_id not in chat_history:
         chat_history[user_id] = []
