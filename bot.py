@@ -44,24 +44,22 @@ async def check_internet():
         return False
 
 # Форматирование MarkdownV2 с сохранением кода и стилей
-
 def format_gemini_response(text: str) -> str:
-    # Сначала находим и временно вытаскиваем все блоки кода
     code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
     placeholders = []
     for i, (lang, code_block) in enumerate(code_blocks):
         placeholder = f"__CODE_BLOCK_{i}__"
-        placeholders.append((placeholder, f"```{lang or ''}\n{code_block}```"))
-        text = text.replace(f"```{lang}\n{code_block}```", placeholder)
+        placeholders.append((placeholder, lang, code_block))
+        text = text.replace(f"```{lang or ''}\n{code_block}``", placeholder)
 
-    # Экранируем символы MarkdownV2
-    escape_chars = r"_*[]()~`>#+=|{}.!-"
+    escape_chars = r"\_*[]()~`>#+-=|{}.!?"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Возвращаем кодовые блоки обратно
-    for placeholder, code_block in placeholders:
-        text = text.replace(placeholder, code_block)
+    for placeholder, lang, code_block in placeholders:
+        escaped_code_block = code_block.replace('\\', '\\\\').replace('`', '\\`')
+        code_md = f"```{lang or ''}\n{escaped_code_block}\n```"
+        text = text.replace(placeholder, code_md)
 
     return text
 
@@ -77,7 +75,6 @@ async def is_bot_called(message: Message) -> bool:
     return False
 
 # Вопросы про владельца
-
 def is_owner_question(text: str) -> bool:
     keywords = [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик", "кем ты создан",
@@ -137,7 +134,6 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.MARKDOWN_V2)
 
-# Запуск
 if __name__ == '__main__':
     import asyncio
     asyncio.run(dp.start_polling(bot))
