@@ -23,7 +23,7 @@ if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Инициализация модели
-model = genai.GenerativeModel(model_name="models/gemini-pmodel = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
+model = genai.GenerativeModel(model_name="models/gemini-1.5-pro")
 
 # Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
