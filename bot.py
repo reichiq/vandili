@@ -41,26 +41,27 @@ async def check_internet():
     except:
         return False
 
-# Корректное форматирование MarkdownV2 с сохранением кода и стилей
-
+# Корректное форматирование MarkdownV2 с экранированием
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
+    # 1. Извлекаем все блоки кода и временно заменяем на плейсхолдеры
     def extract_code_blocks(match):
         lang = match.group(1) or ""
         code = match.group(2)
         placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
-        code_blocks[placeholder] = f"```{lang}\n{code}\n```"
+        # Экранируем спецсимволы внутри кода
+        escaped_code = re.sub(r'([\\`*_{}\[\]()#+\-!|>])', r'\\\1', code)
+        code_blocks[placeholder] = f"```{lang}\n{escaped_code}\n```"
         return placeholder
 
-    # Сохраняем кодовые блоки
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code_blocks, text)
 
-    # Экранируем MarkdownV2 спецсимволы в обычном тексте
-    special_chars = r'_\*\[\]()~`>#+\-=|{}.!'
-    text = re.sub(f"([{special_chars}])", r"\\\1", text)
+    # 2. Экранируем спецсимволы MarkdownV2 в обычном тексте
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    text = re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
-    # Возвращаем кодовые блоки на место
+    # 3. Возвращаем кодовые блоки на место
     for placeholder, block in code_blocks.items():
         text = text.replace(placeholder, block)
 
