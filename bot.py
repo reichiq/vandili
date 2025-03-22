@@ -43,8 +43,8 @@ async def check_internet():
 
 # Корректное форматирование MarkdownV2 с сохранением кода и стилей
 def format_gemini_response(text: str) -> str:
-    # Замена блоков кода на безопасные временные метки
     code_blocks = {}
+
     def code_replacer(match):
         placeholder = f"CODEBLOCK_{len(code_blocks)}"
         code_blocks[placeholder] = match.group(0)
@@ -52,13 +52,18 @@ def format_gemini_response(text: str) -> str:
 
     text = re.sub(r'```(.*?)```', code_replacer, text, flags=re.DOTALL)
 
-    # Экранирование текста вне блоков кода
     escape_chars = '_*[]()~`>#+-=|{}.!'
     text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
-    # Восстановление блоков кода обратно в текст
+    text = text.replace("**", "")  # удаляем жирный текст
+
     for placeholder, code in code_blocks.items():
         text = text.replace(placeholder, code)
+
+    text = re.sub(r'\s*```\w*\n', '```\n', text)
+    text = re.sub(r'\n```\s*', '\n```', text)
+    text = re.sub(r'```(\w+)?\n(.*?)\n```', lambda m: f"```{m.group(1) or ''}\n{m.group(2)}\n```", text, flags=re.DOTALL)
+    text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
 
     return text
 
