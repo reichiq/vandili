@@ -8,8 +8,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message
-from aiogram.utils.markdown import hbold, code
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -43,25 +41,29 @@ async def check_internet():
     except:
         return False
 
-# Форматирование MarkdownV2 с сохранением кода и стилей
+# Корректное форматирование MarkdownV2 с сохранением кода и стилей
 def format_gemini_response(text: str) -> str:
-    code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
-    placeholders = []
-    for i, (lang, code_block) in enumerate(code_blocks):
-        placeholder = f"__CODE_BLOCK_{i}__"
-        placeholders.append((placeholder, lang, code_block))
-        text = text.replace(f"```{lang or ''}\n{code_block}``", placeholder)
+    # Экранирование спецсимволов кроме блоков кода
+    def escape_markdown(text):
+        escape_chars = '_*[]()~`>#+-=|{}.!'
+        return ''.join(['\\' + c if c in escape_chars else c for c in text])
 
-    escape_chars = r"\_*[]()~`>#+-=|{}.!?"
-    for ch in escape_chars:
-        text = text.replace(ch, f"\\{ch}")
+    # Обработка блоков кода
+    def replace_code_blocks(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'```{lang}\n{code}\n```'
 
-    for placeholder, lang, code_block in placeholders:
-        escaped_code_block = code_block.replace('\\', '\\\\').replace('`', '\\`')
-        code_md = f"```{lang or ''}\n{escaped_code_block}\n```"
-        text = text.replace(placeholder, code_md)
+    # Замена блоков кода
+    text = re.sub(r'```(\w+)?\n([\s\S]+?)```', replace_code_blocks, text)
 
-    return text
+    # Экранирование текста вне блоков кода
+    parts = re.split(r'(```[\s\S]+?```)', text)
+    for i, part in enumerate(parts):
+        if not part.startswith('```'):
+            parts[i] = escape_markdown(part)
+
+    return ''.join(parts)
 
 # Проверка, был ли вызван бот
 async def is_bot_called(message: Message) -> bool:
@@ -70,9 +72,7 @@ async def is_bot_called(message: Message) -> bool:
     if message.reply_to_message and message.reply_to_message.from_user.id == (await bot.get_me()).id:
         return True
     bot_usernames = [(await bot.get_me()).username.lower(), "вай", "vai", "вай бот", "вайбот", "vai bot", "vaibot"]
-    if any(name in message.text.lower() for name in bot_usernames):
-        return True
-    return False
+    return any(name in message.text.lower() for name in bot_usernames)
 
 # Вопросы про владельца
 def is_owner_question(text: str) -> bool:
@@ -104,12 +104,7 @@ async def handle_message(message: Message):
         await message.answer(format_gemini_response(random.choice(responses)), parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    if user_id not in chat_history:
-        chat_history[user_id] = []
-    if user_id not in user_names:
-        user_names[user_id] = username
-
-    chat_history[user_id].append({"role": "user", "parts": [user_text]})
+    chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_text]})
     if len(chat_history[user_id]) > 5:
         chat_history[user_id].pop(0)
 
