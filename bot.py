@@ -44,25 +44,20 @@ async def check_internet():
 # Корректное форматирование MarkdownV2 с сохранением кода и стилей
 
 def format_gemini_response(text: str) -> str:
-    """
-    Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2),
-    предотвращая ошибки с жирным текстом и кодовыми блоками.
-    """
+    # Замена блоков кода на временные плейсхолдеры
     code_blocks = {}
-
-    # 1. Временно удаляем блоки кода и заменяем на плейсхолдеры
-    def code_replacer(match):
-        placeholder = f"CODE_BLOCK_{len(code_blocks)}"
+    def extract_code_block(match):
+        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
         code_blocks[placeholder] = match.group(0)
         return placeholder
 
-    text = re.sub(r'```[\s\S]*?```', code_replacer, text)
+    text = re.sub(r'```[\s\S]*?```', extract_code_block, text)
 
-    # 2. Экранируем спецсимволы MarkdownV2 во всём остальном тексте
-    special_chars = r'_\*\[\]()~`>#+-=|{}.!'
-    text = re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
+    # Экранирование спецсимволов Telegram MarkdownV2
+    escape_chars = r'_\*\[\]()~`>#+\-=|{}.!'
+    text = re.sub(f'([{escape_chars}])', r'\\\1', text)
 
-    # 3. Возвращаем блоки кода обратно
+    # Вставляем блоки кода обратно без экранирования
     for placeholder, block in code_blocks.items():
         text = text.replace(placeholder, block)
 
