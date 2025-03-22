@@ -43,27 +43,24 @@ async def check_internet():
 
 # Корректное форматирование MarkdownV2 с сохранением кода и стилей
 def format_gemini_response(text: str) -> str:
-    # Экранирование спецсимволов кроме блоков кода
-    def escape_markdown(text):
-        escape_chars = '_*[]()~`>#+-=|{}.!'
-        return ''.join(['\\' + c if c in escape_chars else c for c in text])
+    # Замена блоков кода на безопасные временные метки
+    code_blocks = {}
+    def code_replacer(match):
+        placeholder = f"CODEBLOCK_{len(code_blocks)}"
+        code_blocks[placeholder] = match.group(0)
+        return placeholder
 
-    # Обработка блоков кода
-    def replace_code_blocks(match):
-        lang = match.group(1) or ''
-        code = match.group(2)
-        return f'```{lang}\n{code}\n```'
-
-    # Замена блоков кода
-    text = re.sub(r'```(\w+)?\n([\s\S]+?)```', replace_code_blocks, text)
+    text = re.sub(r'```(.*?)```', code_replacer, text, flags=re.DOTALL)
 
     # Экранирование текста вне блоков кода
-    parts = re.split(r'(```[\s\S]+?```)', text)
-    for i, part in enumerate(parts):
-        if not part.startswith('```'):
-            parts[i] = escape_markdown(part)
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
-    return ''.join(parts)
+    # Восстановление блоков кода обратно в текст
+    for placeholder, code in code_blocks.items():
+        text = text.replace(placeholder, code)
+
+    return text
 
 # Проверка, был ли вызван бот
 async def is_bot_called(message: Message) -> bool:
