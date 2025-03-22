@@ -1,98 +1,123 @@
 import logging
-import aiohttp
-import asyncio
 import os
+import re
+import random
+import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, Message
+from html import escape
 from dotenv import load_dotenv
-from openai import OpenAI
-from urllib.parse import quote
+import google.generativeai as genai
 
-# Загружаем ключи из .env
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
-# Проверка переменных
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY or not UNSPLASH_ACCESS_KEY:
-    raise ValueError("Один или несколько API ключей отсутствуют в .env")
-
-# Настройка логов
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота
-bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
-# ===== Gemini client =====
-client = OpenAI(api_key=GEMINI_API_KEY, base_url="https://generativelanguage.googleapis.com/v1beta/models")
+model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
-async def ask_gemini(prompt: str) -> str:
-    try:
-        response = await client.text.generate(
-            prompt=prompt,
-            temperature=0.7,
-            max_tokens=500
-        )
-        return response.text.strip()
-    except Exception as e:
-        logging.error(f"Gemini error: {e}")
-        return "Произошла ошибка при обработке запроса."
+chat_history = {}
 
-# ===== Unsplash search =====
-async def fetch_image(query: str) -> str | None:
-    url = f"https://api.unsplash.com/photos/random?query={quote(query)}&client_id={UNSPLASH_ACCESS_KEY}"
+INFO_COMMANDS = [
+    "кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
+    "кто твой создатель", "чей ты бот", "кем ты был создан", "кто хозяин"
+]
+
+# Преобразуем Markdown / спец-формат Gemini в HTML Telegram
+
+def format_gemini_response(text: str) -> str:
+    code_blocks = {}
+
+    def extract_code(match):
+        lang = match.group(1) or "text"
+        code = escape(match.group(2))
+        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
+        code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
+        return placeholder
+
+    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
+    text = escape(text)
+
+    for placeholder, block in code_blocks.items():
+        text = text.replace(escape(placeholder), block)
+
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
+
+    return text
+
+# Безопасный prompt для запроса к Unsplash (оставляем только ключевые слова)
+def get_safe_prompt(text: str) -> str:
+    text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
+    match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
+    return match.group(1) if match else re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", "", text).strip().split(" ")[0]
+
+async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
+    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
+            async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return data["urls"]["regular"]
+                    return data['urls']['regular']
     except Exception as e:
-        logging.error(f"Ошибка при получении изображения: {e}")
+        logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
-# ===== Команда start =====
-@dp.message(commands=["start"])
-async def cmd_start(message: types.Message):
-    await message.answer("Привет! Я VAI — бот с интеллектом Gemini и изображениями из Unsplash. Просто напиши что угодно!")
-
-# ===== Обработка всех сообщений =====
 @dp.message()
-async def handle_message(message: types.Message):
-    user_input = message.text.strip().lower()
-    await message.chat.do("upload_photo")
+async def handle_message(message: Message):
+    user_input = message.text.strip()
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.full_name
 
-    # Если запрос содержит "покажи", "изображение", "фото", ищем картинку
-    keywords = ["покажи", "изображение", "фото", "картинку", "арт"]
-    needs_image = any(word in user_input for word in keywords)
+    if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
+        await message.answer("Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>. Моя основа — <u>Gemini</u> от Google и изображения от <u>Unsplash</u>.", parse_mode=ParseMode.HTML)
+        return
 
-    img_url = await fetch_image(user_input) if needs_image else None
-    gemini_reply = await ask_gemini(user_input)
+    chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_input]})
+    if len(chat_history[user_id]) > 5:
+        chat_history[user_id].pop(0)
 
-    # Сжимаем подпись, чтобы Telegram не выдал "caption too long"
-    caption_text = gemini_reply[:1020] + "..." if len(gemini_reply) > 1020 else gemini_reply
+    try:
+        response = model.generate_content(chat_history[user_id])
+        gemini_text = format_gemini_response(response.text)
 
-    if img_url:
-        try:
-            await bot.send_photo(
-                chat_id=message.chat.id,
-                photo=img_url,
-                caption=caption_text,
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            logging.warning(f"❗ Ошибка отправки фото: {e}")
-            # если что-то не так — просто отправим текст
-            await message.answer(caption_text)
-    else:
-        await message.answer(gemini_reply)
+        image_prompt = get_safe_prompt(user_input)
+        image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
 
-# ===== Запуск бота =====
-async def main():
-    await dp.start_polling(bot)
+        if image_url:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(image_url) as resp:
+                        if resp.status == 200:
+                            photo = await resp.read()
+                            file = FSInputFile(path_or_bytesio=photo, filename="image.jpg")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+                            caption = gemini_text[:950] if gemini_text else ""
+                            await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
+                            return
+            except Exception as e:
+                logging.warning(f"Ошибка при отправке изображения: {e}")
+
+        await message.answer(gemini_text, parse_mode=ParseMode.HTML)
+
+    except aiohttp.ClientConnectionError:
+        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.HTML)
+    except ConnectionError:
+        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logging.error(f"Ошибка запроса: {e}")
+        error_text = format_gemini_response(str(e))
+        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
+
+if __name__ == '__main__':
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
