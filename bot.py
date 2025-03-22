@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message
+from html import escape
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -23,12 +24,12 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Инициализация модели
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
-# Инициализация бота
-bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
+# Инициализация бота с HTML-разметкой
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO, filename="/home/khan_770977/vandili/bot.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Словари для хранения истории сообщений и имён
+# История сообщений
 chat_history = {}
 user_names = {}
 
@@ -41,33 +42,35 @@ async def check_internet():
     except:
         return False
 
-# Корректное форматирование MarkdownV2 с экранированием
+# Форматирование текста для Telegram HTML
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
-    # 1. Извлекаем все блоки кода и временно заменяем на плейсхолдеры
-    def extract_code_blocks(match):
-        lang = match.group(1) or ""
-        code = match.group(2)
+    # Вырезаем блоки кода
+    def extract_code(match):
+        lang = match.group(1) or "text"
+        code = escape(match.group(2))
         placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
-        # Экранируем спецсимволы внутри кода
-        escaped_code = re.sub(r'([\\`*_{}\[\]()#+\-!|>])', r'\\\1', code)
-        code_blocks[placeholder] = f"```{lang}\n{escaped_code}\n```"
+        code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code_blocks, text)
+    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
 
-    # 2. Экранируем спецсимволы MarkdownV2 в обычном тексте
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    text = re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
+    # Экранируем остальной текст
+    text = escape(text)
 
-    # 3. Возвращаем кодовые блоки на место
+    # Возвращаем кодовые блоки
     for placeholder, block in code_blocks.items():
-        text = text.replace(placeholder, block)
+        text = text.replace(escape(placeholder), block)
+
+    # Применяем HTML-теги форматирования
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
 
     return text
 
-# Проверка, был ли вызван бот
+# Проверка, вызван ли бот
 async def is_bot_called(message: Message) -> bool:
     if message.chat.type == "private":
         return True
@@ -76,7 +79,7 @@ async def is_bot_called(message: Message) -> bool:
     bot_usernames = [(await bot.get_me()).username.lower(), "вай", "vai", "вай бот", "вайбот", "vai bot", "vaibot"]
     return any(name in message.text.lower() for name in bot_usernames)
 
-# Вопросы про владельца
+# Распознавание вопроса о владельце
 def is_owner_question(text: str) -> bool:
     keywords = [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик", "кем ты создан",
@@ -103,7 +106,7 @@ async def handle_message(message: Message):
             "🛠️ Меня написал Vandili. Все вопросы — к нему!",
             "📡 Создан и запрограммирован Vandili."
         ]
-        await message.answer(format_gemini_response(random.choice(responses)), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(format_gemini_response(random.choice(responses)), parse_mode=ParseMode.HTML)
         return
 
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_text]})
@@ -120,17 +123,18 @@ async def handle_message(message: Message):
         if random.random() < 0.3 and username:
             result = f"@{username}, {result}"
 
-        await message.answer(result, parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(result, parse_mode=ParseMode.HTML)
 
     except aiohttp.ClientConnectionError:
-        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.HTML)
     except ConnectionError:
-        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.HTML)
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
         error_text = format_gemini_response(str(e))
-        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
+# Запуск
 if __name__ == '__main__':
     import asyncio
     asyncio.run(dp.start_polling(bot))
