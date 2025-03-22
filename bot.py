@@ -10,25 +10,25 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message
 from aiogram.client.default import DefaultBotProperties
 
-# 🔐 Токены из переменных окружения
+# 🔐 Загрузка токенов
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
 if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not UNSPLASH_ACCESS_KEY:
-    raise ValueError("Не установлены необходимые переменные окружения")
+    raise ValueError("Не установлены TELEGRAM_BOT_TOKEN, GEMINI_API_KEY или UNSPLASH_ACCESS_KEY")
 
-# 🔧 Логгирование и конфигурация Gemini
+# 🔧 Логирование и конфигурация Gemini
 logging.basicConfig(level=logging.INFO)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
-# 🤖 Бот
+# 🤖 Telegram Bot
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 chat_history = {}
 
-# ✅ Проверка подключения
+# 🌐 Проверка подключения
 async def check_internet():
     try:
         async with aiohttp.ClientSession() as session:
@@ -37,7 +37,7 @@ async def check_internet():
     except:
         return False
 
-# ✨ HTML-форматирование
+# 🧼 HTML-форматирование
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
@@ -74,7 +74,7 @@ async def search_unsplash_image(query: str) -> str | None:
                 return results[0]["urls"]["regular"]
             return None
 
-# 🧠 Вызван ли бот?
+# 🤔 Вызван ли бот?
 async def is_bot_called(message: Message) -> bool:
     if message.chat.type == "private":
         return True
@@ -83,7 +83,7 @@ async def is_bot_called(message: Message) -> bool:
     names = [(await bot.get_me()).username.lower(), "вай", "vai", "вай бот", "vai bot", "vaibot"]
     return any(name in message.text.lower() for name in names)
 
-# 👤 Узнают ли про автора?
+# 👤 Вопрос про владельца
 def is_owner_question(text: str) -> bool:
     return any(k in text.lower() for k in [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик",
@@ -105,7 +105,7 @@ async def handle_message(message: Message):
     user_text = message.text.strip()
     username = message.from_user.username or message.from_user.full_name
 
-    # 🔧 Ответ на вопрос о владельце
+    # 👨‍💻 Про владельца
     if is_owner_question(user_text):
         answer = random.choice([
             "🤖 Этот бот был создан лично Vandili!",
@@ -115,32 +115,37 @@ async def handle_message(message: Message):
         await message.answer(format_gemini_response(answer))
         return
 
-    # 🖼️ Обработка запросов на изображение + рассказ
+    # 🖼️ Если есть фото + текст
     if any(k in user_text.lower() for k in ["арт", "фото", "картинку", "изображение"]) or (
-        "покажи" in user_text.lower() and any(x in user_text.lower() for x in ["история", "расскажи", "про", "немного"])
+        "покажи" in user_text.lower() and any(x in user_text.lower() for x in ["история", "расскажи", "про", "немного", "фактов"])
     ):
         try:
             prompt = (
                 f"Пользователь попросил: «{user_text}». "
-                "Ответь как умный Telegram-бот: дай нормальный текст без описания изображения в скобках. Просто расскажи суть."
+                "Ответь понятно и по теме. Не добавляй описаний изображения в скобках. "
+                "Просто дай ответ, подходящий к теме."
             )
             gemini_response = model.generate_content(prompt)
             description = format_gemini_response(gemini_response.text.strip())
 
-            keywords = re.sub(r"(покажи|арт|фото|картинку|изображение|пожалуйста|нарисуй|расскажи|немного|про|историю)", "", user_text, flags=re.IGNORECASE).strip()
+            keywords = re.sub(r"(покажи|арт|фото|картинку|изображение|пожалуйста|нарисуй|расскажи|немного|про|историю|фактов)", "", user_text, flags=re.IGNORECASE).strip()
             if not keywords:
                 keywords = "art"
 
             image_url = await search_unsplash_image(keywords)
             if image_url:
-                await message.answer_photo(image_url, caption=description)
+                if len(description) <= 1024:
+                    await message.answer_photo(image_url, caption=description)
+                else:
+                    await message.answer_photo(image_url)
+                    await message.answer(description)
             else:
                 await message.answer("😔 Не удалось найти подходящее изображение.")
         except Exception as e:
             await message.answer(f"⚠️ Ошибка при поиске изображения: <code>{escape(str(e))}</code>")
         return
 
-    # 💬 Обычный ответ Gemini
+    # 💬 Обычный запрос к Gemini
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_text]})
     if len(chat_history[user_id]) > 5:
         chat_history[user_id].pop(0)
@@ -156,15 +161,15 @@ async def handle_message(message: Message):
         await message.answer(reply)
 
     except aiohttp.ClientConnectionError:
-        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.HTML)
+        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.")
 
     except ConnectionError:
-        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.HTML)
+        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.")
 
     except Exception as e:
         logging.error(f"Ошибка запроса: {e}")
         error_text = format_gemini_response(str(e))
-        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
+        await message.answer(f"❌ Ошибка запроса: {error_text}")
 
 # 🚀 Запуск
 if __name__ == "__main__":
