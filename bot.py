@@ -23,12 +23,12 @@ if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Инициализация модели
-model = genai.GenerativeModel(model_name="models/gemini-1.5-pro")
+model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 # Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2))
 dp = Dispatcher()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, filename="bot.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Словари для хранения истории сообщений и имён
 chat_history = {}
@@ -44,6 +44,7 @@ async def check_internet():
         return False
 
 # Форматирование MarkdownV2
+
 def format_gemini_response(text: str) -> str:
     special_chars = r"_[]()~>#+-=|{}.!"
     for ch in special_chars:
@@ -66,6 +67,7 @@ async def is_bot_called(message: Message) -> bool:
     return False
 
 # Вопросы про владельца
+
 def is_owner_question(text: str) -> bool:
     keywords = [
         "чей это бот", "кто владелец", "кто сделал", "кто создал", "разработчик", "кем ты создан",
@@ -85,12 +87,12 @@ async def handle_message(message: Message):
 
     if is_owner_question(user_text):
         responses = [
-            "🤖 Этот бот создан специально для Vandili!",
-            "👨‍💻 Разработан Vandili и работает только для него!",
+            "🤖 Этот бот был создан лично Vandili!",
+            "👨‍💻 Разработан Vandili и работает исключительно для него!",
             "🧠 Я служу только Vandili — он мой создатель и хозяин!",
-            "💡 Меня сделал Vandili, и я запрограммирован помогать только ему!",
-            "🛠️ Моим разработчиком был Vandili. Все вопросы — к нему!",
-            "📡 Vandili — мой автор и вдохновитель."
+            "💡 Моим автором является Vandili, и я создан помогать именно ему!",
+            "🛠️ Меня написал Vandili. Все вопросы — к нему!",
+            "📡 Создан и запрограммирован Vandili."
         ]
         await message.answer(random.choice(responses), parse_mode=ParseMode.MARKDOWN_V2)
         return
@@ -111,8 +113,8 @@ async def handle_message(message: Message):
         response = model.generate_content(chat_history[user_id])
         result = format_gemini_response(response.text)
 
-        if random.random() < 0.5:
-            result = f"{user_names[user_id]}, {result}"
+        if random.random() < 0.3 and username:
+            result = f"@{username}, {result}"
 
         await message.answer(result, parse_mode=ParseMode.MARKDOWN_V2)
 
