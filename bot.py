@@ -10,8 +10,10 @@ from aiogram.types import FSInputFile, Message
 from html import escape
 from dotenv import load_dotenv
 import google.generativeai as genai
-
 from pathlib import Path
+import asyncio
+
+# Загрузка переменных из .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -20,10 +22,7 @@ UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
 logging.basicConfig(level=logging.INFO)
 
-from aiogram.client.default import DefaultBotProperties
-
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-
 dp = Dispatcher()
 
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
@@ -36,7 +35,6 @@ INFO_COMMANDS = [
 ]
 
 # Преобразуем Markdown / спец-формат Gemini в HTML Telegram
-
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
@@ -84,7 +82,11 @@ async def handle_message(message: Message):
     username = message.from_user.username or message.from_user.full_name
 
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
-        await message.answer("Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>. Моя основа — <u>Gemini</u> от Google и изображения от <u>Unsplash</u>.", parse_mode=ParseMode.HTML)
+        await message.answer(
+            "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>. "
+            "Моя основа — <u>Gemini</u> от Google и изображения от <u>Unsplash</u>.",
+            parse_mode=ParseMode.HTML
+        )
         return
 
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_input]})
@@ -123,6 +125,9 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
+# 👇 Новый способ запуска для aiogram 3.x
+async def main():
+    await dp.start_polling(bot)
+
 if __name__ == '__main__':
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
