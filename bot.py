@@ -51,8 +51,8 @@ def format_gemini_response(text: str) -> str:
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис в начале строки
-    text = re.sub(r"(?m)^(\s*)-", r"\1\\-", text)
+    # Экранируем дефис в начале строки, избегая look-behind
+    text = re.sub(r"(?m)^\s*-(?!-)", lambda m: m.group(0).replace("-", "\\-"), text)
 
     # Обработка многострочных блоков кода
     code_blocks = re.findall(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
