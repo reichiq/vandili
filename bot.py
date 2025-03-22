@@ -42,28 +42,29 @@ async def check_internet():
         return False
 
 # Корректное форматирование MarkdownV2 с сохранением кода и стилей
+
 def format_gemini_response(text: str) -> str:
+    """
+    Форматирует текст от Gemini для корректного отображения в Telegram (MarkdownV2),
+    предотвращая ошибки с жирным текстом и кодовыми блоками.
+    """
     code_blocks = {}
 
+    # 1. Временно удаляем блоки кода и заменяем на плейсхолдеры
     def code_replacer(match):
-        placeholder = f"CODEBLOCK_{len(code_blocks)}"
+        placeholder = f"CODE_BLOCK_{len(code_blocks)}"
         code_blocks[placeholder] = match.group(0)
         return placeholder
 
-    text = re.sub(r'```(.*?)```', code_replacer, text, flags=re.DOTALL)
+    text = re.sub(r'```[\s\S]*?```', code_replacer, text)
 
-    escape_chars = '_*[]()~`>#+-=|{}.!'
-    text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    # 2. Экранируем спецсимволы MarkdownV2 во всём остальном тексте
+    special_chars = r'_\*\[\]()~`>#+-=|{}.!'
+    text = re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
-    text = text.replace("**", "")  # удаляем жирный текст
-
-    for placeholder, code in code_blocks.items():
-        text = text.replace(placeholder, code)
-
-    text = re.sub(r'\s*```\w*\n', '```\n', text)
-    text = re.sub(r'\n```\s*', '\n```', text)
-    text = re.sub(r'```(\w+)?\n(.*?)\n```', lambda m: f"```{m.group(1) or ''}\n{m.group(2)}\n```", text, flags=re.DOTALL)
-    text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
+    # 3. Возвращаем блоки кода обратно
+    for placeholder, block in code_blocks.items():
+        text = text.replace(placeholder, block)
 
     return text
 
