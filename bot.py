@@ -106,7 +106,8 @@ async def handle_message(message: Message):
                     async with session.get(image_url) as resp:
                         if resp.status == 200:
                             photo = await resp.read()
-                            file = FSInputFile(path_or_bytesio=photo, filename="image.jpg")
+                            from io import BytesIO
+                            file = FSInputFile(BytesIO(photo), filename="image.jpg")
 
                             caption = gemini_text[:950] if gemini_text else ""
                             await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
