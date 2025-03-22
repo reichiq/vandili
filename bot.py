@@ -54,8 +54,8 @@ def format_gemini_response(text: str) -> str:
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис только если он стоит в начале строки или после пробела
-    text = re.sub(r"(?<=^|\s)-", r"\\-", text)
+    # Экранируем дефис только если он стоит в начале строки или после пробела (исправлено для Python)
+    text = re.sub(r"(^|\s)-", r"\1\\-", text)
 
     # Удаляем лишние \n
     text = re.sub(r"(\\n)+", "\n", text)
