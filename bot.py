@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message
-from aiogram.utils.markdown import hbold
+from aiogram.utils.markdown import hbold, code
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # Получаем токены из переменных окружения
@@ -50,16 +50,16 @@ def format_gemini_response(text: str) -> str:
     text = text.replace("**", "").replace("__", "").replace("`", "")
 
     # Экранируем спецсимволы для MarkdownV2
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
+    escape_chars = r"_*[]()~`>#+=|{}.!"
     for ch in escape_chars:
         text = text.replace(ch, f"\\{ch}")
 
-    # Экранируем дефис только если он стоит в начале строки или после пробела (исправлено для Python)
-    text = re.sub(r"(^|\s)-", r"\1\\-", text)
+    # Экранируем дефис в начале строки (исправлено для совместимости)
+    text = re.sub(r"(?m)^-", r"\\-", text)
 
-    # Удаляем лишние \n
+    # Удаляем лишние \n и форматируем списки
     text = re.sub(r"(\\n)+", "\n", text)
-    text = re.sub(r"(\d+\.) ", r"\n\1 ", text)
+    text = re.sub(r"(\d+\\.) ", r"\n\1 ", text)
 
     return text
 
