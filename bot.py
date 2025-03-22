@@ -3,6 +3,7 @@ import os
 import re
 import random
 import aiohttp
+from io import BytesIO
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
