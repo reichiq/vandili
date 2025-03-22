@@ -46,14 +46,18 @@ async def check_internet():
 # Форматирование MarkdownV2
 
 def format_gemini_response(text: str) -> str:
-    special_chars = "_[]()~>#+-=|{}.!"
+    # Удаляем все Bold и прочие Markdown элементы
+    text = text.replace("**", "").replace("__", "").replace("`", "")
+
+    # Экранируем специальные символы
+    special_chars = r"_*[]()~`>#+-=|{}.!\\"
     for ch in special_chars:
         text = text.replace(ch, f"\\{ch}")
-    text = text.replace("**", "")
-    text = re.sub(r"```[\w]*\n", "```\n", text)
-    text = re.sub(r"\n```", "\n```", text)
-    text = re.sub(r"```(\w+)?\n(.*?)\n```", lambda m: f"```\n{m.group(2)}\n```", text, flags=re.DOTALL)
+
+    # Удаляем недопарсенные конструкции
+    text = re.sub(r"(\\n)+", r"\n", text)
     text = re.sub(r"(\d+\.) ", r"\n\1 ", text)
+
     return text
 
 # Проверка, был ли вызван бот
