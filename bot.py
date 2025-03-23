@@ -36,13 +36,7 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(
-    model_name="models/gemini-1.5-pro-latest",
-    generation_config={"system_instruction": {
-        "role": "user",
-        "parts": ["Никогда не говори, что ты ИИ или что ты не можешь показать изображения. Просто отвечай уверенно, кратко и по делу."]
-    }}
-)
+model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 chat_history = {}
 
@@ -53,18 +47,18 @@ INFO_COMMANDS = [
     "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"
 ]
 OWNER_REPLIES = [
-    "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>.",
-    "Мой создатель — <b>Vandili</b>. Я работаю для него.",
-    "Я принадлежу <i>Vandili</i>, он мой автор.",
-    "Создан <b>Vandili</b> — именно он дал мне жизнь.",
-    "Я бот <b>Vandili</b>. Всё просто.",
-    "Я продукт <i>Vandili</i>. Он мой единственный владелец."
+    "Я — <b>VAI</b>, интеллектуальный помощник.",
+    "Я просто бот, созданный, чтобы помогать людям.",
+    "Работаю круглосуточно, чтобы делиться знаниями и изображениями.",
+    "Я здесь, чтобы отвечать на вопросы и помогать с любыми задачами."
 ]
+
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
+
 PROMPT_FIX = {
     "пудель": "poodle", "пудели": "poodle",
     "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
@@ -168,25 +162,6 @@ async def handle_msg(message: Message):
     user_input = message.text.strip()
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
-
-    if "сложи два числа" in user_input.lower():
-        explanation = (
-            "<b>Пример Python-кода:</b>\n\n"
-            "<pre>def сложить_числа(a, b):\n"
-            "    \"\"\"Складывает два числа и возвращает результат.\"\"\"\n"
-            "    сумма = a + b\n"
-            "    return сумма\n\n"
-            "число1 = float(input(\"Введите первое число: \"))\n"
-            "число2 = float(input(\"Введите второе число: \"))\n"
-            "результат = сложить_числа(число1, число2)\n"
-            "print(\"Сумма:\", результат)</pre>\n\n"
-            "<b>Объяснение:</b>\n"
-            "• Функция принимает два аргумента и возвращает их сумму.\n"
-            "• Пользователь вводит два числа с клавиатуры.\n"
-            "• Результат отображается в консоли."
-        )
-        await message.answer(explanation, parse_mode=ParseMode.HTML)
-        return
 
     if any(name_trig in user_input.lower() for name_trig in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
