@@ -38,7 +38,10 @@ dp = Dispatcher()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(
     model_name="models/gemini-1.5-pro-latest",
-    system_instruction="Не упоминай, что ты ИИ, и не говори, что не можешь показать изображение. Просто предоставь полезный ответ."
+    generation_config={"system_instruction": {
+        "role": "user",
+        "parts": ["Никогда не говори, что ты ИИ или что ты не можешь показать изображения. Просто отвечай уверенно, кратко и по делу."]
+    }}
 )
 
 chat_history = {}
@@ -57,13 +60,11 @@ OWNER_REPLIES = [
     "Я бот <b>Vandili</b>. Всё просто.",
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
-
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
-
 PROMPT_FIX = {
     "пудель": "poodle", "пудели": "poodle",
     "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
@@ -105,7 +106,8 @@ def format_gemini_response(text: str, user_input: str) -> str:
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
     text = remove_unwanted_phrases(text)
-    return maybe_shorten_text(text.strip(), user_input)
+    text = maybe_shorten_text(text.strip(), user_input)
+    return text.strip()
 
 def get_safe_prompt(user_input: str) -> str:
     text = user_input.lower()
@@ -167,6 +169,25 @@ async def handle_msg(message: Message):
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
+    if "сложи два числа" in user_input.lower():
+        explanation = (
+            "<b>Пример Python-кода:</b>\n\n"
+            "<pre>def сложить_числа(a, b):\n"
+            "    \"\"\"Складывает два числа и возвращает результат.\"\"\"\n"
+            "    сумма = a + b\n"
+            "    return сумма\n\n"
+            "число1 = float(input(\"Введите первое число: \"))\n"
+            "число2 = float(input(\"Введите второе число: \"))\n"
+            "результат = сложить_числа(число1, число2)\n"
+            "print(\"Сумма:\", результат)</pre>\n\n"
+            "<b>Объяснение:</b>\n"
+            "• Функция принимает два аргумента и возвращает их сумму.\n"
+            "• Пользователь вводит два числа с клавиатуры.\n"
+            "• Результат отображается в консоли."
+        )
+        await message.answer(explanation, parse_mode=ParseMode.HTML)
+        return
+
     if any(name_trig in user_input.lower() for name_trig in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
         return
@@ -204,7 +225,8 @@ async def handle_msg(message: Message):
                         try:
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
-                            await bot.send_photo(cid, file, caption=parts[0] if parts else "...")
+                            cpt = parts[0] if parts else "..."
+                            await bot.send_photo(cid, file, caption=cpt)
                             for chunk in parts[1:]:
                                 await message.answer(chunk)
                         finally:
