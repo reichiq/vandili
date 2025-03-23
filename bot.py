@@ -116,9 +116,8 @@ async def handle_message(message: Message):
 
         print("Image URL:", image_url)
 
-        # Проверка: не вставлять картинку, если Gemini пишет, что не может
-        blocked_phrases = ["не могу показать", "представьте себе", "[вставьте", "я не могу отображать"]
-        if image_url and not any(phrase in gemini_text.lower() for phrase in blocked_phrases):
+        # Показываем изображение, если в запросе есть слово "покажи"
+        if "покажи" in user_input.lower() and image_url:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
@@ -146,7 +145,7 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
-# Запуск (aiogram 3.x)
+# aiogram 3.x запуск
 async def main():
     await dp.start_polling(bot)
 
