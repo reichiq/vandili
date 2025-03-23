@@ -28,20 +28,23 @@ logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
-
 morph = pymorphy2.MorphAnalyzer()
 
+# Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 chat_history = {}
+
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
 
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
 
 NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
-INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор", "кто твой создатель", "чей ты бот", "кем ты был создан", "кто хозяин", "кто твой владелец"]
+INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
+                 "кто твой создатель", "чей ты бот", "кем ты был создан",
+                 "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"]
 OWNER_REPLIES = [
     "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>.",
     "Мой создатель — <b>Vandili</b>. Я работаю для него.",
@@ -59,7 +62,7 @@ RU_EN_DICT = {
     "пейзаж": "landscape",
     "чайка": "seagull",
     "париж": "paris",
-    "утконос": "platypus",
+    "утконос": "platypus"
 }
 
 def format_gemini_response(text: str) -> str:
@@ -80,34 +83,57 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
 
-    text = re.sub(r"(I can’t show images directly\.|I am a text-based model.*?graphics\.|Я являюсь текстовым ассистентом.*?)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
     lines = text.split('\n')
-    text = '\n'.join((' ' * (len(l) - len(l.lstrip())) + '• ' + l.lstrip()[2:] if l.lstrip().startswith('* ') else l) for l in lines)
-
-    return text.strip()
+    new_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        prefix_len = len(line) - len(stripped)
+        if stripped.startswith('* ') and not stripped.startswith('**'):
+            replaced_line = (' ' * prefix_len) + '• ' + stripped[2:]
+            new_lines.append(replaced_line)
+        else:
+            new_lines.append(line)
+    return '\n'.join(new_lines).strip()
 
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
     start = 0
-    while start < len(text):
-        chunk = text[start:start+limit]
-        cut = chunk.rfind('. ')
-        if cut == -1:
-            cut = chunk.rfind(' ')
-        if cut == -1:
-            cut = limit
-        results.append(text[start:start+cut].strip())
-        start += cut
-    return results
+    length = len(text)
+    while start < length:
+        remain = length - start
+        if remain <= limit:
+            results.append(text[start:].strip())
+            break
+        candidate = text[start : start+limit]
+        cut_pos = candidate.rfind('. ')
+        if cut_pos == -1:
+            cut_pos = candidate.rfind(' ')
+            if cut_pos == -1:
+                cut_pos = len(candidate)
+        else:
+            cut_pos += 1
+        chunk = text[start : start+cut_pos].strip()
+        if chunk:
+            results.append(chunk)
+        start += cut_pos
+    return [x for x in results if x]
 
 def parse_russian_show_request(user_text: str):
-    lower = user_text.lower()
-    if not any(t in lower for t in IMAGE_TRIGGERS_RU):
+    lower_text = user_text.lower()
+    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
+    if not triggered:
         return (False, "", "", user_text)
-    match = re.search(r"(покажи|хочу увидеть|пришли фото)\s+([\w\d]+)", lower)
-    rus_word = match.group(2) if match else ""
-    leftover = re.sub(rf"(покажи|хочу увидеть|пришли фото)\s+{rus_word}", "", user_text, flags=re.IGNORECASE).strip()
+    match = re.search(r"(покажи|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
+    if match:
+        rus_word = match.group(2)
+    else:
+        rus_word = ""
+    pattern_remove = rf"(покажи|хочу увидеть|пришли фото)\s+{rus_word}"
+    leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     en_word = RU_EN_DICT.get(rus_word, rus_word)
     return (True, rus_word, en_word, leftover)
 
@@ -115,91 +141,114 @@ def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
     if not parsed:
         return rus_word
-    form = parsed[0].inflect({"loct"})
-    return form.word if form else rus_word
+    p = parsed[0]
+    loct = p.inflect({'loct'})
+    return loct.word if loct else rus_word
 
-def replace_pronouns_morph(text: str, word: str) -> str:
-    prep = get_prepositional_form(word)
-    text = re.sub(r"\bо\s+(н[её]м|ней)\b", f"о {prep}", text, flags=re.IGNORECASE)
-    return text
+def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
+    word_prep = get_prepositional_form(rus_word)
+    pronoun_map = {
+        r"\bо\s+нем\b":  f"о {word_prep}",
+        r"\bо\s+нём\b":  f"о {word_prep}",
+        r"\bо\s+ней\b":  f"о {word_prep}",
+    }
+    for pattern, repl in pronoun_map.items():
+        leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
+    return leftover
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
+    if not prompt:
+        return None
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
                     return data['urls']['regular']
     except Exception as e:
-        logging.warning(f"[Unsplash] error: {e}")
+        logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    await message.answer(
+    greet = (
         "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
         "Напиши: «покажи Париж и расскажи о нём» — я покажу фото и факты.\n"
-        "Теперь я умею склонять слова и грамотно отвечать :)"
+        "Теперь я умею более правильно склонять слова (спасибо pymorphy2!).\n\n"
+        "Всегда рад помочь!"
     )
+    await message.answer(greet)
 
 @dp.message()
 async def handle_msg(message: Message):
-    text = message.text.strip()
-    cid = message.chat.id
-    lower = text.lower()
-
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        if not (f"@{BOT_USERNAME.lower()}" in lower or any(k in lower for k in ["vai", "вай", "вэй"])):
+        text_lower = (message.text or "").lower()
+        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
+        is_reply_to_bot = (
+            message.reply_to_message and
+            message.reply_to_message.from_user and
+            (message.reply_to_message.from_user.id == bot.id)
+        )
+        mention_keywords = ["vai", "вай", "вэй"]
+        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
 
-    if any(q in lower for q in NAME_COMMANDS):
-        return await message.answer("Меня зовут <b>VAI</b>!")
-    if any(q in lower for q in INFO_COMMANDS):
-        return await message.answer(random.choice(OWNER_REPLIES))
+    user_input = message.text.strip()
+    cid = message.chat.id
+    logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    show_image, rus_word, image_en, leftover = parse_russian_show_request(text)
-    if show_image:
+    lower_inp = user_input.lower()
+    if any(nc in lower_inp for nc in NAME_COMMANDS):
+        await message.answer("Меня зовут <b>VAI</b>!")
+        return
+    if any(ic in lower_inp for ic in INFO_COMMANDS):
+        await message.answer(random.choice(OWNER_REPLIES))
+        return
+
+    show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
+    if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
 
     gemini_text = ""
+    leftover = leftover.strip()
     if leftover:
         chat_history.setdefault(cid, []).append({"role": "user", "parts": [leftover]})
-        chat_history[cid] = chat_history[cid][-5:]
+        if len(chat_history[cid]) > 5:
+            chat_history[cid].pop(0)
         try:
             await bot.send_chat_action(cid, "typing")
-            response = model.generate_content(chat_history[cid])
-            gemini_text = format_gemini_response(response.text)
+            resp = model.generate_content(chat_history[cid])
+            gemini_text = format_gemini_response(resp.text)
         except Exception as e:
-            gemini_text = f"<i>Ошибка: {escape(str(e))}</i>"
+            logging.error(f"[BOT] Error from Gemini: {e}")
+            gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
-    photo_sent = False
-    if show_image and image_en:
-        url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
-        if url:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(url) as r:
-                    if r.status == 200:
-                        photo = await r.read()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                            tmp.write(photo)
-                            tmp_path = tmp.name
-                        try:
-                            file = FSInputFile(tmp_path, filename="image.jpg")
-                            await bot.send_chat_action(cid, "upload_photo")
-                            if gemini_text and len(gemini_text) <= CAPTION_LIMIT:
-                                await bot.send_photo(cid, file, caption=gemini_text)
-                                gemini_text = ""
-                            else:
-                                await bot.send_photo(cid, file, caption="Вот изображение:")
-                            photo_sent = True
-                        finally:
-                            os.remove(tmp_path)
+    image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
+
+    if image_url:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(image_url) as r:
+                if r.status == 200:
+                    photo_bytes = await r.read()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
+                        tmpf.write(photo_bytes)
+                        tmp_path = tmpf.name
+                    try:
+                        await bot.send_chat_action(cid, "upload_photo")
+                        file = FSInputFile(tmp_path, filename="image.jpg")
+                        if gemini_text and len(gemini_text) <= CAPTION_LIMIT:
+                            await bot.send_photo(cid, file, caption=gemini_text)
+                            gemini_text = ""
+                        else:
+                            await bot.send_photo(cid, file, caption="...")
+                    finally:
+                        os.remove(tmp_path)
 
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-        for ch in chunks:
-            await message.answer(ch)
+        for c in chunks:
+            await message.answer(c)
 
 async def main():
     await dp.start_polling(bot)
