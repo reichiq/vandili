@@ -1,3 +1,7 @@
-aiogram
-google-generativeai
+aiohttp
+aiofiles
+aiogram==3.0.0b7
 python-dotenv
+pymorphy2
+google-generativeai
+requests
