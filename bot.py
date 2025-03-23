@@ -16,14 +16,6 @@ import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
 
-try:
-    from googletrans import Translator
-    translator = Translator()
-    USE_TRANSLATOR = True
-except ImportError:
-    translator = None
-    USE_TRANSLATOR = False
-
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -59,78 +51,44 @@ IMAGE_TRIGGERS = [
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
-PROMPT_FIX = {
-    "пудель": "poodle", "пудели": "poodle",
-    "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
-    "собака": "dog", "собаки": "dogs",
-    "орхидею": "orchid", "орхидеи": "orchids", "орхидея": "orchid",
-    "персики": "peaches", "обезьяна": "monkey", "обезьяну": "monkey"
-}
 
-UNWANTED_REGEX = [
-    r"(?is)(к\s+сожалению.*?непосредственно.*?показать.*?(\.|$))",
-    r"(?is)(\bне\s+могу\s+(?:непосредственно\s+)?показать\b.*?(\.|$))",
-    r"(?is)(\bя\s+(?:текстов\w*|большая\s+языковая\s+модель|language\s+model).{0,50}(\.|$))",
-    r"(?is)(\bне\s+могу\s+показывать\s+изображени.*?(\.|$))",
-    r"(?is)(\bвоспользоваться\s+поисков.*?(\.|$))",
-    r"(?is)(\bя\s+могу\s+помочь.*?\sнайти.*?(изображени|картинки).*?(\.|$))",
-    r"(?is)(https?:\/\/[^\s)]+)",
-    r"(?is)(google|yandex|bing|yahoo|поисковик|search\s+engine)",
-    r"(?is)(\b(?:рекомендую|советую)\s+поиск.*?(\.|$))",
-    r"(?is)(\bвы\s+можете\s+найти\b.*?(\.|$))",
-]
+def format_gemini_response(text: str) -> str:
+    code_blocks = {}
 
-def remove_unwanted_phrases(text: str) -> str:
-    for pattern in UNWANTED_REGEX:
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
-    return text
+    def extract_code(match):
+        lang = match.group(1) or "text"
+        code = escape(match.group(2))
+        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
+        code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
+        return placeholder
 
-def maybe_shorten_text(original: str, user_input: str) -> str:
-    if re.search(r"\bпокажи\b", user_input.lower()) and not re.search(r"(расскажи|опиши|факты|пару\s+фактов)", user_input.lower()):
-        sents = re.split(r'(?<=[.!?])\s+', original)
-        return " ".join(sents[:2]).strip()
-    return original
-
-def format_gemini_response(text: str, user_input: str) -> str:
-    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)
-    text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     text = escape(text)
+
+    for placeholder, block in code_blocks.items():
+        text = text.replace(escape(placeholder), block)
+
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-    text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
-    text = remove_unwanted_phrases(text)
-    text = maybe_shorten_text(text.strip(), user_input)
+
     return text.strip()
 
-def get_safe_prompt(user_input: str) -> str:
-    text = user_input.lower()
-    text = re.sub(r'[.,!?\-\n]', ' ', text)
-    text = re.sub(r"\b(расскажи|покажи|мне|про|факт|фото|изображение|прикрепи|дай|и|о|об|отправь|что|такое|интересное)\b", "", text)
-    words = text.strip().split()
-    for i, w in enumerate(words):
-        if w in PROMPT_FIX:
-            words[i] = PROMPT_FIX[w]
-    cleaned = " ".join(words).strip()
-    if not cleaned:
-        return "random"
-    if USE_TRANSLATOR:
-        result = translator.translate(cleaned, src="ru", dest="en").text
-        logging.info(f"[BOT] RU->EN: '{cleaned}' => '{result}'")
-        return result.strip() or "random"
-    return cleaned
+def get_safe_prompt(text: str) -> str:
+    text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
+    match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
+    return match.group(1) if match else re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", "", text).strip().split(" ")[0]
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                logging.info(f"[UNSPLASH] Status={resp.status}")
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data["urls"]["regular"]
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['urls']['regular']
     except Exception as e:
-        logging.warning(f"Unsplash error: {e}")
+        logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
 def split_text(text: str, max_len=950):
@@ -179,18 +137,13 @@ async def handle_msg(message: Message):
     try:
         await bot.send_chat_action(cid, "typing")
         resp = model.generate_content(chat_history[cid])
-        text = resp.text.strip()
+        gemini_text = format_gemini_response(resp.text)
+        logging.info(f"[GEMINI] => {gemini_text[:200]}")
 
-        # Если это Python-код, форматируем его красиво
-        if re.search(r"\bdef\b.+\):", text) and "```" not in text:
-            text = f"<pre><code class='language-python'>{escape(text)}</code></pre>"
-            await message.answer(text, parse_mode=ParseMode.HTML)
-            return
-
-        gemini_text = format_gemini_response(text, user_input)
         prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
         triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
+        logging.info(f"[BOT] triggered={triggered}, image={image_url}")
 
         if image_url and triggered:
             async with aiohttp.ClientSession() as sess:
@@ -205,12 +158,13 @@ async def handle_msg(message: Message):
                         try:
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
-                            caption = parts[0] if parts else "Вот изображение:"
-                            await bot.send_photo(cid, file, caption=caption)
+                            cpt = parts[0] if parts else "..."
+                            await bot.send_photo(cid, file, caption=cpt)
                             for chunk in parts[1:]:
                                 await message.answer(chunk)
                         finally:
-                            os.remove(tmp_path)
+                            if os.path.exists(tmp_path):
+                                os.remove(tmp_path)
                         return
 
         for chunk in split_text(gemini_text):
