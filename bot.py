@@ -17,7 +17,7 @@ import tempfile
 from aiogram.filters import Command
 
 ############################
-# Попробуем подключить переводчик googletrans
+# Попробуем подключить googletrans
 ############################
 try:
     from googletrans import Translator
@@ -43,10 +43,13 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 ############################
-# ПАМЯТЬ ДЛЯ КАЖДОГО ЧАТА
+# Память для каждого чата
 ############################
 chat_history = {}
 
+############################
+# Вопросы про создателя
+############################
 INFO_COMMANDS = [
     "кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
     "кто твой создатель", "чей ты бот", "кем ты был создан",
@@ -62,14 +65,31 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
-# Триггеры "покажи"
+############################
+# Вопросы про имя бота
+############################
+NAME_COMMANDS = [
+    "как тебя зовут",
+    "твое имя",
+    "твоё имя",
+    "what is your name",
+    "who are you"
+]
+
+NAME_REPLY = "Меня зовут <b>VAI</b>. Рад познакомиться!"
+
+############################
+# Триггеры для показа фото
+############################
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
 
-# Словарь для auto-fix (рус->англ)
+############################
+# Автозамена RU->EN
+############################
 PROMPT_FIX = {
     "пудель": "poodle",
     "пудели": "poodle",
@@ -88,16 +108,21 @@ PROMPT_FIX = {
 }
 
 ############################
-# Расширенные регэкспы
+# Расширенные рег. выражения, вырезаем отговорки
 ############################
 UNWANTED_REGEX = [
-    r"(извини.*?не могу (?:напрямую\s+)?показать.*?изображени.*?(\.|$))",
+    # «извини, я не могу показать…»
+    r"(извини.*?не могу (?:напрямую\s+)?показать.*?(\.|$))",
     r"(я\s+не\s+могу\s+показать\s+.*?(\.|$))",
     r"(я\s+текстова\w+\s+модель.*?(\.|$))",
     r"(не\s+име\w+\s+возмож\w+\s+взаимодейств\w+.*?(\.|$))",
+    # «я могу помочь вам найти...»
+    r"(?:я могу помочь (?:вам\s+)?найти\s+(изображени|картинки).*?(\.|$))",
+    # Google/Bing/Yandex упоминания
     r"(google\s*(images)?|yandex\s*(картинк(и|ах))|bing)",
-    r"(https?:\/\/[^\s)]+)",  # убираем все ссылки
-    r"(вы\s+можете\s+найти\s+.*?(google|yandex|bing).*)"
+    r"(вы\s+можете\s+найти\s+.*?(google|yandex|bing).*)",
+    # Любые ссылки
+    r"(https?:\/\/[^\s)]+)",
 ]
 
 def remove_unwanted_phrases(text: str) -> str:
@@ -106,49 +131,45 @@ def remove_unwanted_phrases(text: str) -> str:
     return text
 
 ############################
-# Сократить текст, если только "покажи"
+# Сократить текст, если чисто "покажи"
 ############################
 def maybe_shorten_text(original_text: str, user_input: str) -> str:
-    """
-    Если пользователь не просит "рассказать", "опиши", "факты" и т.п.,
-    а только "покажи" — даём 1-2 предложения, чтобы не было длинной портянки.
-    """
-    # Если нет слов "расскажи", "факты", "опиши", "пару фактов"
-    # но есть "покажи"
     if re.search(r"\bпокажи\b", user_input.lower()) and not re.search(r"(расскажи|опиши|факты|пару\s+фактов)", user_input.lower()):
-        # Возьмём первые 2 предложения
         sentences = re.split(r'(?<=[.!?])\s+', original_text)
-        short_text = " ".join(sentences[:2])
-        return short_text.strip()
+        return " ".join(sentences[:2]).strip()
     return original_text
 
 ############################
 # format_gemini_response
 ############################
 def format_gemini_response(text: str, user_input: str) -> str:
-    # 1) code-block → placeholder
+    """Убираем код-блоки, вставки, ссылки, отговорки, Google…"""
     def extract_code(match):
-        code = escape(match.group(2))
         return ""
-
+    # 1) code-block
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-    # 2) убираем [вставить...]
+
+    # 2) [вставьте фото...]
     text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
-    # 3) экранируем HTML
+
+    # 3) HTML-escape
     text = escape(text)
-    # 4) markdown → html
+
+    # 4) markdown => html
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
-    # 5) вырезаем лишние фразы (регэксп)
+
+    # 5) вырезаем «не могу показать» и т.п. + ссылки
     text = remove_unwanted_phrases(text)
-    # 6) если пользователь просил только "покажи" — укорачиваем
+
+    # 6) укорачиваем, если только «покажи»
     text = maybe_shorten_text(text.strip(), user_input)
     return text.strip()
 
 ############################
-# Генерация prompt
+# Ген. prompt для Unsplash
 ############################
 def get_safe_prompt(user_input: str) -> str:
     text = user_input.lower()
@@ -161,7 +182,6 @@ def get_safe_prompt(user_input: str) -> str:
     cleaned = " ".join(words).strip()
     if not cleaned:
         return "random"
-
     if USE_TRANSLATOR:
         translated = translator.translate(cleaned, src="ru", dest="en").text
         logging.info(f"[BOT] Translate RU->EN: '{cleaned}' -> '{translated}'")
@@ -170,7 +190,7 @@ def get_safe_prompt(user_input: str) -> str:
         return cleaned
 
 ############################
-# Запрос к Unsplash
+# Unsplash запрос
 ############################
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
@@ -187,7 +207,7 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 ############################
-# Разделить длинный текст
+# Длина > 950 => режем
 ############################
 def split_text(text: str, max_length: int = 950):
     parts = []
@@ -204,8 +224,6 @@ def split_text(text: str, max_length: int = 950):
 ############################
 # /start
 ############################
-from aiogram.filters import Command
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet_text = (
@@ -214,13 +232,13 @@ async def cmd_start(message: Message):
         "Например:\n"
         "• «покажи кота»\n"
         "• «расскажи про Париж»\n\n"
-        "Если хочешь узнать обо мне — спроси «кто тебя создал».\n\n"
+        "Если хочешь узнать обо мне — спроси «кто тебя создал» или «как тебя зовут».\n\n"
         "Приятного общения! 🦾"
     )
     await message.answer(greet_text, parse_mode=ParseMode.HTML)
 
 ############################
-# Основная логика
+# Основной обработчик
 ############################
 @dp.message()
 async def handle_message(message: Message):
@@ -228,7 +246,14 @@ async def handle_message(message: Message):
     chat_id = message.chat.id
     logging.info(f"[BOT] Получено: '{user_input}', chat_id={chat_id}")
 
-    # Проверка на инфо-команды
+    # Если спрашивают про имя
+    if any(name_trigger in user_input.lower() for name_trigger in NAME_COMMANDS):
+        await bot.send_chat_action(chat_id, action="typing")
+        await asyncio.sleep(1)
+        await message.answer("Меня зовут <b>VAI</b>!", parse_mode=ParseMode.HTML)
+        return
+
+    # Если спрашивают про создателя
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
         await asyncio.sleep(1)
@@ -243,12 +268,12 @@ async def handle_message(message: Message):
 
     try:
         await bot.send_chat_action(chat_id, action="typing")
-
+        # Генерируем ответ
         response = model.generate_content(chat_history[chat_id])
         gemini_text = format_gemini_response(response.text, user_input)
         logging.info(f"[GEMINI] => {gemini_text[:200]}...")
 
-        # Генерим prompt
+        # Prompt Unsplash
         prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
 
@@ -256,6 +281,7 @@ async def handle_message(message: Message):
         logging.info(f"[BOT] triggered => {triggered} | image_url => {image_url}")
 
         if image_url and triggered:
+            # Присылаем фото
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
@@ -263,21 +289,24 @@ async def handle_message(message: Message):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
                             tmpfile.write(photo_bytes)
                             tmp_path = tmpfile.name
+
                         chunks = split_text(gemini_text)
                         try:
                             await bot.send_chat_action(chat_id, action="upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
                             cap = chunks[0] if chunks else "..."
                             await bot.send_photo(chat_id, photo=file, caption=cap, parse_mode=ParseMode.HTML)
+
                             for chunk in chunks[1:]:
                                 await message.answer(chunk, parse_mode=ParseMode.HTML)
+
                         finally:
                             import os
                             if os.path.exists(tmp_path):
                                 os.remove(tmp_path)
                         return
 
-        # Если нет фотки — просто текст
+        # Иначе — текст
         for chunk in split_text(gemini_text):
             await message.answer(chunk, parse_mode=ParseMode.HTML)
 
