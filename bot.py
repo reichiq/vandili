@@ -7,7 +7,7 @@ from io import BytesIO
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import FSInputFile, Message
-from aiogram.client.default import DefaultBotProperties
+from aiogram.client.default_bot import DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
