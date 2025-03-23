@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
 
-# Загрузка переменных из .env
+# Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -52,7 +52,7 @@ IMAGE_TRIGGERS = [
     "пришли картинку", "прикрепи фото", "покажи картинку", "дай фото", "дай изображение", "картинка"
 ]
 
-# Преобразуем Markdown / спец-формат Gemini в HTML Telegram
+# Преобразуем Markdown Gemini → HTML Telegram
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
@@ -63,19 +63,30 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
+    # Код-блоки
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
+
+    # Удалить изображения типа [Изображение ...]
+    text = re.sub(r"\[Изображение.*?\]", "", text)
+
+    # Экранируем HTML
     text = escape(text)
 
+    # Восстановим код-блоки
     for placeholder, block in code_blocks.items():
         text = text.replace(escape(placeholder), block)
 
+    # Форматирование
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
 
-    return text
+    # Заменим * в начале строки на маркер списка
+    text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
 
-# Безопасный prompt для запроса к Unsplash
+    return text.strip()
+
+# Безопасный prompt для Unsplash
 def get_safe_prompt(text: str) -> str:
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
@@ -133,8 +144,6 @@ async def handle_message(message: Message):
                             print("Отправка изображения...")
                             await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
                             return
-                        else:
-                            logging.warning(f"Не удалось получить изображение. Код: {resp.status}")
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
