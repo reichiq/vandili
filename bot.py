@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
-translator = Translator()  # создаём экземпляр переводчика
+translator = Translator()
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
@@ -57,7 +57,6 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
-# Ключи — это нормальные формы слов, которые выдаёт pymorphy3
 RU_EN_DICT = {
     "обезьяна": "monkey",
     "тигр": "tiger",
@@ -70,13 +69,7 @@ RU_EN_DICT = {
     "пудель": "poodle"
 }
 
-
 def split_smart(text: str, limit: int) -> list[str]:
-    """Разбивает текст на куски, стараясь не рвать предложение:
-       - Сначала пытается найти точку + пробел ('. ').
-       - Если не находит, ищет просто пробел.
-       - Если тоже не находит, режет жёстко.
-    """
     results = []
     start = 0
     length = len(text)
@@ -92,31 +85,23 @@ def split_smart(text: str, limit: int) -> list[str]:
             if cut_pos == -1:
                 cut_pos = len(candidate)
         else:
-            cut_pos += 1  # включаем точку, но убираем пробел
+            cut_pos += 1
         chunk = text[start : start+cut_pos].strip()
         if chunk:
             results.append(chunk)
         start += cut_pos
     return [x for x in results if x]
 
-
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
-    """
-    Первую часть (Caption) - умно обрезаем до 950 символов,
-    стараясь не рвать предложение. Остаток делим на куски <= 4096.
-    """
     if len(text) <= CAPTION_LIMIT:
         return text, []
-
     chunks_950 = split_smart(text, CAPTION_LIMIT)
     caption = chunks_950[0]
     leftover = " ".join(chunks_950[1:]).strip()
     if not leftover:
         return caption, []
-
     rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
-
 
 def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
@@ -125,7 +110,6 @@ def get_prepositional_form(rus_word: str) -> str:
     p = parsed[0]
     loct = p.inflect({"loct"})
     return loct.word if loct else rus_word
-
 
 def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     word_prep = get_prepositional_form(rus_word)
@@ -138,10 +122,8 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
     return leftover
 
-
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
-
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
@@ -149,27 +131,20 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # Обработка блоков кода
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-
     text = escape(text)
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
 
-    # Жирный, курсив, инлайн-код
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-
-    # Убираем "[изображение]" и подобные вставки
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
 
-    # Убираем служебные фразы, которые Gemini иногда добавляет
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
-    # Список - заменяем '* ' на '• '
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -180,9 +155,7 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(replaced_line)
         else:
             new_lines.append(line)
-
     return '\n'.join(new_lines).strip()
-
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     if not prompt:
@@ -203,20 +176,15 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
         logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
-
 def fallback_translate_to_english(rus_word: str) -> str:
-    """Переводит слово с русского на английский через googletrans."""
     try:
         result = translator.translate(rus_word, src='ru', dest='en')
         return result.text
     except Exception as e:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
-        return rus_word  # возвращаем исходное слово, если перевод не удался
-
+        return rus_word
 
 def parse_russian_show_request(user_text: str):
-    """Ищем триггеры, извлекаем русское слово, убираем пунктуацию,
-       приводим к нормальной форме, ищем в словаре RU_EN_DICT или переводим."""
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
@@ -244,15 +212,12 @@ def parse_russian_show_request(user_text: str):
     else:
         leftover = user_text
 
-    # Если слово есть в словаре, используем его перевод,
-    # иначе пробуем перевести через Google Translate
     if rus_word in RU_EN_DICT:
         en_word = RU_EN_DICT[rus_word]
     else:
         en_word = fallback_translate_to_english(rus_word)
 
     return (True, rus_word, en_word, leftover)
-
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -263,7 +228,6 @@ async def cmd_start(message: Message):
         "Всегда рад помочь!"
     )
     await message.answer(greet)
-
 
 @dp.message()
 async def handle_msg(message: Message):
@@ -296,7 +260,6 @@ async def handle_msg(message: Message):
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
 
-    gemini_text = ""
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
@@ -306,24 +269,35 @@ async def handle_msg(message: Message):
 
     has_image = bool(image_url)
 
-    # Логируем
     logging.info(
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    # Генерируем ответ от Gemini, если есть текст
-    if full_prompt:
-        chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
-        if len(chat_history[cid]) > 5:
-            chat_history[cid].pop(0)
-        try:
-            await bot.send_chat_action(cid, "typing")
-            resp = model.generate_content(chat_history[cid])
-            gemini_text = format_gemini_response(resp.text)
-        except Exception as e:
-            logging.error(f"[BOT] Error from Gemini: {e}")
-            gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
+    gemini_text = ""
+
+    # --- ВАЖНАЯ ПРАВКА ---
+    # Если leftover пустой, значит юзер просто сказал «покажи X» без «и расскажи...»
+    # => Не вызываем LLM, а делаем короткий caption
+    # Если leftover есть (или rus_word вообще пуст), делаем как раньше.
+    if show_image and rus_word and not leftover:
+        # Просто короткая подпись, например: «Страус 🦩» (или «Straus 🦩»)
+        # Можно подобрать эмоджи к разным животным, но тут оставим упрощённо:
+        gemini_text = rus_word.capitalize()
+    else:
+        # leftover не пустой (или вообще нет show_image),
+        # тогда вызываем LLM, как было раньше
+        if full_prompt:
+            chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
+            if len(chat_history[cid]) > 5:
+                chat_history[cid].pop(0)
+            try:
+                await bot.send_chat_action(cid, "typing")
+                resp = model.generate_content(chat_history[cid])
+                gemini_text = format_gemini_response(resp.text)
+            except Exception as e:
+                logging.error(f"[BOT] Error from Gemini: {e}")
+                gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
     # Отправляем фото, если есть
     if has_image:
@@ -339,6 +313,7 @@ async def handle_msg(message: Message):
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         # Делим текст на caption и остаток
                         caption, rest = split_caption_and_text(gemini_text)
+                        # Если caption пуст, поставим «...»
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
                             await message.answer(c)
@@ -346,16 +321,14 @@ async def handle_msg(message: Message):
                     finally:
                         os.remove(tmp_path)
 
-    # Если текст остался (нет картинки или пустой caption) - отправляем
+    # Если текст остался (нет картинки или caption пуст), отправляем
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
 
-
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
