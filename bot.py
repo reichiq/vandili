@@ -65,17 +65,51 @@ RU_EN_DICT = {
     "утконос": "platypus"
 }
 
+def split_smart(text: str, limit: int) -> list[str]:
+    results = []
+    start = 0
+    length = len(text)
+    while start < length:
+        remain = length - start
+        if remain <= limit:
+            results.append(text[start:].strip())
+            break
+        candidate = text[start : start+limit]
+        cut_pos = candidate.rfind('. ')
+        if cut_pos == -1:
+            cut_pos = candidate.rfind(' ')
+            if cut_pos == -1:
+                cut_pos = len(candidate)
+        else:
+            cut_pos += 1
+        chunk = text[start : start+cut_pos].strip()
+        if chunk:
+            results.append(chunk)
+        start += cut_pos
+    return [x for x in results if x]
+
+# -------------------------- #
+# 1) Изменили эту функцию    #
+# -------------------------- #
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
     if len(text) <= CAPTION_LIMIT:
         return text, []
-    chunks = split_smart(text, TELEGRAM_MSG_LIMIT)
-    caption = ""
-    rest = []
-    for chunk in chunks:
-        if not caption and len(chunk) <= CAPTION_LIMIT:
-            caption = chunk
-        else:
-            rest.append(chunk)
+
+    # Ищем в первых 950 символах «логическую» границу (точка, перевод строки, пробел).
+    chunk_end = text[:CAPTION_LIMIT].rfind('. ')
+    if chunk_end == -1:
+        chunk_end = text[:CAPTION_LIMIT].rfind('\n')
+    if chunk_end == -1:
+        chunk_end = text[:CAPTION_LIMIT].rfind(' ')
+    if chunk_end == -1:
+        # Если ничего не нашли, обрезаем ровно 950
+        chunk_end = CAPTION_LIMIT
+
+    caption = text[:chunk_end].strip()
+    rest_text = text[chunk_end:].strip()
+
+    # Оставшийся текст разбиваем "умно" на chunks <= 4096
+    rest = split_smart(rest_text, TELEGRAM_MSG_LIMIT)
     return caption, rest
 
 def get_prepositional_form(rus_word: str) -> str:
@@ -132,35 +166,34 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     return '\n'.join(new_lines).strip()
 
-def split_smart(text: str, limit: int) -> list[str]:
-    results = []
-    start = 0
-    length = len(text)
-    while start < length:
-        remain = length - start
-        if remain <= limit:
-            results.append(text[start:].strip())
-            break
-        candidate = text[start : start+limit]
-        cut_pos = candidate.rfind('. ')
-        if cut_pos == -1:
-            cut_pos = candidate.rfind(' ')
-            if cut_pos == -1:
-                cut_pos = len(candidate)
-        else:
-            cut_pos += 1
-        chunk = text[start : start+cut_pos].strip()
-        if chunk:
-            results.append(chunk)
-        start += cut_pos
-    return [x for x in results if x]
+# -------------------------- #
+# 2) Добавили логирование    #
+# -------------------------- #
+async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
+    if not prompt:
+        return None
+    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
+                    return None
+                data = await response.json()
+                # Проверяем, есть ли ключ 'urls' и 'regular'
+                if "urls" not in data or "regular" not in data["urls"]:
+                    logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
+                    return None
+                return data["urls"]["regular"]
+    except Exception as e:
+        logging.warning(f"Ошибка при получении изображения: {e}")
+    return None
 
 def parse_russian_show_request(user_text: str):
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
         return (False, "", "", user_text)
-    # Позволяем "покажи" или "покажи мне", а также "хочу увидеть", "пришли фото"
     match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
         rus_word = match.group(3)
@@ -170,20 +203,6 @@ def parse_russian_show_request(user_text: str):
     leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     en_word = RU_EN_DICT.get(rus_word, rus_word)
     return (True, rus_word, en_word, leftover)
-
-async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
-    if not prompt:
-        return None
-    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['urls']['regular']
-    except Exception as e:
-        logging.warning(f"Ошибка при получении изображения: {e}")
-    return None
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
