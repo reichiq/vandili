@@ -17,7 +17,11 @@ import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
-from googletrans import Translator  # для fallback-перевода
+
+# ---------------------
+# Google Cloud Translation
+# ---------------------
+from google.cloud import translate_v2 as translate
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -31,7 +35,9 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
-translator = Translator()
+
+# Инициализируем клиент перевода (использует GOOGLE_APPLICATION_CREDENTIALS)
+translate_client = translate.Client()
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
@@ -71,6 +77,7 @@ RU_EN_DICT = {
 
 
 def split_smart(text: str, limit: int) -> list[str]:
+    """Разбивает текст на куски, стараясь не рвать предложение."""
     results = []
     start = 0
     length = len(text)
@@ -95,6 +102,7 @@ def split_smart(text: str, limit: int) -> list[str]:
 
 
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
+    """Первую часть (до 950 символов) используем как caption, остальное разбиваем."""
     if len(text) <= CAPTION_LIMIT:
         return text, []
     chunks_950 = split_smart(text, CAPTION_LIMIT)
@@ -183,21 +191,20 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 
+# ---------------------
+# Используем Google Cloud Translation
+# ---------------------
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
-        result = translator.translate(rus_word, src='ru', dest='en')
-        return result.text
+        result = translate_client.translate(rus_word, target_language="en")
+        # result — словарь вида {"translatedText": "...", ...}
+        return result["translatedText"]
     except Exception as e:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
 
 
 def generate_short_caption(rus_word: str) -> str:
-    """
-    Обращаемся к модели одним user-сообщением (без role=system),
-    т.к. Gemini не поддерживает system-роль и отвечает 400.
-    """
-    # Формируем инструкцию + запрос в одном user-сообщении:
     short_prompt = (
         "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
         "на русском языке. Не упоминай, что ты ИИ. Старайся не превышать 15 слов.\n\n"
@@ -246,6 +253,7 @@ def parse_russian_show_request(user_text: str):
     else:
         leftover = user_text
 
+    # Смотрим, есть ли слово в словаре. Если нет — вызываем Google Cloud Translation.
     if rus_word in RU_EN_DICT:
         en_word = RU_EN_DICT[rus_word]
     else:
@@ -310,11 +318,11 @@ async def handle_msg(message: Message):
 
     gemini_text = ""
 
-    # Если show_image=True, есть rus_word, и leftover пустой => генерируем короткую подпись
+    # Генерация короткого caption, если leftover пустой
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
     else:
-        # Иначе (есть leftover или нет картинки) вызываем полноценную логику LLM
+        # Если leftover не пуст, вызываем LLM как обычно
         if full_prompt:
             chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
             if len(chat_history[cid]) > 5:
@@ -327,6 +335,7 @@ async def handle_msg(message: Message):
                 logging.error(f"[BOT] Error from Gemini: {e}")
                 gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
+    # Отправляем фото, если есть
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -346,6 +355,7 @@ async def handle_msg(message: Message):
                     finally:
                         os.remove(tmp_path)
 
+    # Если текст остался, отправляем
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
