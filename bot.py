@@ -12,6 +12,7 @@ from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
+import tempfile
 
 # Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -121,14 +122,18 @@ async def handle_message(message: Message):
         response = model.generate_content(chat_history[user_id])
         full_text = format_gemini_response(response.text)
 
-        # Отправка изображения + текст
         if image_url:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
                         if resp.status == 200:
-                            photo = await resp.read()
-                            file = FSInputFile(BytesIO(photo), filename="image.jpg")
+                            photo_bytes = await resp.read()
+
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+                                tmp_file.write(photo_bytes)
+                                tmp_file_path = tmp_file.name
+
+                            file = FSInputFile(tmp_file_path, filename="image.jpg")
                             caption = full_text[:950] if len(full_text) > 0 else " "
 
                             await bot.send_chat_action(message.chat.id, action="upload_photo")
@@ -137,11 +142,12 @@ async def handle_message(message: Message):
                             if len(full_text) > 950:
                                 await asyncio.sleep(0.5)
                                 await message.answer(full_text[950:], parse_mode=ParseMode.HTML)
+
+                            os.remove(tmp_file_path)
                             return
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
-        # Если не удалось загрузить изображение — просто текст
         await message.answer(full_text[:4096], parse_mode=ParseMode.HTML)
 
     except Exception as e:
