@@ -160,12 +160,13 @@ def parse_russian_show_request(user_text: str):
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
         return (False, "", "", user_text)
-    match = re.search(r"(покажи|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
+    # Позволяем "покажи" или "покажи мне", а также "хочу увидеть", "пришли фото"
+    match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
-        rus_word = match.group(2)
+        rus_word = match.group(3)
     else:
         rus_word = ""
-    pattern_remove = rf"(покажи|хочу увидеть|пришли фото)\s+{rus_word}"
+    pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{rus_word}"
     leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     en_word = RU_EN_DICT.get(rus_word, rus_word)
     return (True, rus_word, en_word, leftover)
@@ -200,9 +201,9 @@ async def handle_msg(message: Message):
         text_lower = (message.text or "").lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
-            message.reply_to_message and
-            message.reply_to_message.from_user and
-            (message.reply_to_message.from_user.id == bot.id)
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and (message.reply_to_message.from_user.id == bot.id)
         )
         mention_keywords = ["vai", "вай", "вэй"]
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
