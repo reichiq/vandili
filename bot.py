@@ -21,7 +21,10 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from google.cloud import translate_v2 as translate
+from googletrans import Translator
+
+translator = Translator()
+result = translator.translate(text, dest='en').text
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
