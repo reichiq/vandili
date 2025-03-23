@@ -14,6 +14,7 @@ from pathlib import Path
 import asyncio
 import google.generativeai as genai
 import tempfile
+from aiogram.filters import Command  # <-- нужно для @dp.message(Command("start"))
 
 # Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -53,7 +54,6 @@ IMAGE_TRIGGERS = [
     "дай фото", "дай изображение", "картинка"
 ]
 
-# Уберём повторяющиеся оправдания Gemini
 UNWANTED_GEMINI_PHRASES = [
     "Извини, я не могу показывать изображения",
     "я не могу показывать изображения",
@@ -72,7 +72,7 @@ def format_gemini_response(text: str) -> str:
         placeholder = f"__CODE_BLOCK__"
         return placeholder
 
-    # Удаляем код-блоки (Telegram не всегда дружит с ними)
+    # Удаляем код-блоки
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     # Удаляем вставочные заглушки от Gemini
     text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
@@ -85,10 +85,9 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
 
-    # Удаляем нежелательные фразы, если Gemini пишет "не могу показать"
+    # Удаляем нежелательные фразы: «я не могу показывать изображения» и т.п.
     for phrase in UNWANTED_GEMINI_PHRASES:
         if phrase.lower() in text.lower():
-            # Чтоб убрать независимо от регистра, используем re.sub
             text = re.sub(phrase, "", text, flags=re.IGNORECASE)
 
     return text.strip()
@@ -128,6 +127,28 @@ def split_text(text: str, max_length: int = 950):
         parts.append(text)
     return parts
 
+#######################################
+# Обработчик /start (приветственное)
+#######################################
+from aiogram.filters import Command
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Отправляем приветствие и короткую инструкцию."""
+    greet_text = (
+        "Привет! Я <b>VAI</b> — бот, созданный <i>Vandili</i>.\n\n"
+        "Я умею:\n"
+        "• Отвечать на твои вопросы (Gemini)\n"
+        "• Присылать картинки (Unsplash)\n\n"
+        "Просто напиши «покажи кота» или «расскажи про Париж»!\n"
+        "Если хочешь узнать обо мне — спроси «кто тебя создал».\n\n"
+        "Приятного общения! 🦾"
+    )
+    await message.answer(greet_text, parse_mode=ParseMode.HTML)
+
+#######################################
+# Основной обработчик текстовых сообщений
+#######################################
 @dp.message()
 async def handle_message(message: Message):
     user_input = message.text.strip()
@@ -176,7 +197,6 @@ async def handle_message(message: Message):
                             size = len(photo_bytes)
                             logging.info(f"[BOT] скачано {size} байт.")
                             # Сохраним во временный файл
-                            tmp_path = None
                             import os
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
                                 tmpfile.write(photo_bytes)
