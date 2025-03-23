@@ -15,7 +15,7 @@ import asyncio
 import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
-import pymorphy2
+from pymorphy3 import MorphAnalyzer  # заменили pymorphy2 на pymorphy3
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
-morph = pymorphy2.MorphAnalyzer()
+morph = MorphAnalyzer()  # заменили pymorphy2.MorphAnalyzer()
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
@@ -175,7 +175,7 @@ async def cmd_start(message: Message):
     greet = (
         "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
         "Напиши: «покажи Париж и расскажи о нём» — я покажу фото и факты.\n"
-        "Теперь я умею более правильно склонять слова (спасибо pymorphy2!).\n\n"
+        "Теперь я умею более правильно склонять слова (спасибо pymorphy3!).\n\n"
         "Всегда рад помочь!"
     )
     await message.answer(greet)
