@@ -47,6 +47,11 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
+IMAGE_TRIGGERS = [
+    "покажи", "покажи мне", "фото", "изображение", "отправь фото",
+    "пришли картинку", "прикрепи фото", "покажи картинку", "дай фото", "дай изображение", "картинка"
+]
+
 # Преобразуем Markdown / спец-формат Gemini в HTML Telegram
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
@@ -116,8 +121,7 @@ async def handle_message(message: Message):
 
         print("Image URL:", image_url)
 
-        # Показываем изображение, если в запросе есть слово "покажи"
-        if "покажи" in user_input.lower() and image_url:
+        if image_url and any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
