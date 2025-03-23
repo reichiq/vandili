@@ -63,7 +63,7 @@ def format_gemini_response(text: str) -> str:
         return placeholder
 
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-    text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[.*?(image|photo|фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
     text = escape(text)
 
     for placeholder, block in code_blocks.items():
@@ -76,7 +76,6 @@ def format_gemini_response(text: str) -> str:
 
     return text.strip()
 
-# ✅ get_safe_prompt с fallback
 def get_safe_prompt(text: str) -> str:
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     words = re.findall(r'\w+', text)
@@ -101,7 +100,6 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
 async def handle_message(message: Message):
     user_input = message.text.strip()
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.full_name
 
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
@@ -117,44 +115,40 @@ async def handle_message(message: Message):
     try:
         await bot.send_chat_action(message.chat.id, action="typing")
 
-        response = model.generate_content(chat_history[user_id])
-        gemini_text = format_gemini_response(response.text)
-
         image_prompt = get_safe_prompt(user_input)
-        if not image_prompt or len(image_prompt) < 3:
-            image_prompt = "paris"
-        print(f"[DEBUG] image_prompt = {image_prompt}")
-
         image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
-        print(f"[DEBUG] image_url = {image_url}")
 
-        if image_url and any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS):
+        response = model.generate_content(chat_history[user_id])
+        full_text = format_gemini_response(response.text)
+
+        # Отправка изображения + текст
+        if image_url:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
                         if resp.status == 200:
                             photo = await resp.read()
                             file = FSInputFile(BytesIO(photo), filename="image.jpg")
-                            caption = gemini_text[:950] if gemini_text else ""
+                            caption = full_text[:950] if len(full_text) > 0 else " "
 
+                            await bot.send_chat_action(message.chat.id, action="upload_photo")
                             await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
+
+                            if len(full_text) > 950:
+                                await asyncio.sleep(0.5)
+                                await message.answer(full_text[950:], parse_mode=ParseMode.HTML)
                             return
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
-        # если не удалось загрузить картинку — просто текст
-        await message.answer(gemini_text, parse_mode=ParseMode.HTML)
+        # Если не удалось загрузить изображение — просто текст
+        await message.answer(full_text[:4096], parse_mode=ParseMode.HTML)
 
-    except aiohttp.ClientConnectionError:
-        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.HTML)
-    except ConnectionError:
-        await message.answer("⚠️ Нет подключения к интернету. Попробуйте позже.", parse_mode=ParseMode.HTML)
     except Exception as e:
-        logging.error(f"Ошибка запроса: {e}")
+        logging.error(f"Ошибка обработки запроса: {e}")
         error_text = format_gemini_response(str(e))
-        await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
+        await message.answer(f"❌ Ошибка: {error_text}", parse_mode=ParseMode.HTML)
 
-# aiogram 3.x запуск
 async def main():
     await dp.start_polling(bot)
 
