@@ -48,17 +48,15 @@ INFO_COMMANDS = [
 ]
 OWNER_REPLIES = [
     "Я — <b>VAI</b>, интеллектуальный помощник.",
-    "Я просто бот, созданный, чтобы помогать людям.",
-    "Работаю круглосуточно, чтобы делиться знаниями и изображениями.",
-    "Я здесь, чтобы отвечать на вопросы и помогать с любыми задачами."
+    "Я создан, чтобы помогать. Просто зови меня <b>VAI</b>.",
+    "Я помощник <b>VAI</b>, всегда рядом для твоих вопросов.",
+    "Моя цель — быть полезным. Просто <b>VAI</b>."
 ]
-
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
-
 PROMPT_FIX = {
     "пудель": "poodle", "пудели": "poodle",
     "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
@@ -92,8 +90,7 @@ def maybe_shorten_text(original: str, user_input: str) -> str:
     return original
 
 def format_gemini_response(text: str, user_input: str) -> str:
-    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)
-    text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", r"<pre><code>\1</code></pre>", text)
     text = escape(text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
@@ -185,7 +182,6 @@ async def handle_msg(message: Message):
         prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
         triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
-        logging.info(f"[BOT] triggered={triggered}, image={image_url}")
 
         if image_url and triggered:
             async with aiohttp.ClientSession() as sess:
