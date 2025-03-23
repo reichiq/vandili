@@ -14,7 +14,6 @@ from pathlib import Path
 import asyncio
 import google.generativeai as genai
 import tempfile
-import shutil
 
 # Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -50,7 +49,19 @@ OWNER_REPLIES = [
 
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
-    "пришли картинку", "прикрепи фото", "покажи картинку", "дай фото", "дай изображение", "картинка"
+    "пришли картинку", "прикрепи фото", "покажи картинку", 
+    "дай фото", "дай изображение", "картинка"
+]
+
+# Уберём повторяющиеся оправдания Gemini
+UNWANTED_GEMINI_PHRASES = [
+    "Извини, я не могу показывать изображения",
+    "я не могу показывать изображения",
+    "I cannot display images",
+    "I can't display images",
+    "I am a text-based model",
+    "I'm a text-based model",
+    "I can't show images"
 ]
 
 def format_gemini_response(text: str) -> str:
@@ -61,15 +72,25 @@ def format_gemini_response(text: str) -> str:
         placeholder = f"__CODE_BLOCK__"
         return placeholder
 
+    # Удаляем код-блоки (Telegram не всегда дружит с ними)
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
+    # Удаляем вставочные заглушки от Gemini
     text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
+    # Экранируем HTML
     text = escape(text)
 
-    # Преобразуем Markdown-style в HTML
+    # Markdown → HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
+
+    # Удаляем нежелательные фразы, если Gemini пишет "не могу показать"
+    for phrase in UNWANTED_GEMINI_PHRASES:
+        if phrase.lower() in text.lower():
+            # Чтоб убрать независимо от регистра, используем re.sub
+            text = re.sub(phrase, "", text, flags=re.IGNORECASE)
+
     return text.strip()
 
 def get_safe_prompt(text: str) -> str:
@@ -155,7 +176,8 @@ async def handle_message(message: Message):
                             size = len(photo_bytes)
                             logging.info(f"[BOT] скачано {size} байт.")
                             # Сохраним во временный файл
-                            import tempfile, os
+                            tmp_path = None
+                            import os
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
                                 tmpfile.write(photo_bytes)
                                 tmp_path = tmpfile.name
@@ -176,7 +198,8 @@ async def handle_message(message: Message):
 
                             finally:
                                 # Удалим временный файл
-                                os.remove(tmp_path)
+                                if tmp_path and os.path.exists(tmp_path):
+                                    os.remove(tmp_path)
                             return
                         else:
                             logging.warning(f"[BOT] resp.status={resp.status}, не отправляю фото.")
