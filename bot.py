@@ -52,7 +52,6 @@ IMAGE_TRIGGERS = [
     "пришли картинку", "прикрепи фото", "покажи картинку", "дай фото", "дай изображение", "картинка"
 ]
 
-# Преобразуем Markdown Gemini → HTML Telegram
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
 
@@ -63,37 +62,28 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # Код-блоки
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-
-    # Удаление заглушек Gemini вроде [Вставьте сюда фото...]
     text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
-
-    # Экранируем HTML
     text = escape(text)
 
-    # Восстановим код-блоки
     for placeholder, block in code_blocks.items():
         text = text.replace(escape(placeholder), block)
 
-    # Форматирование
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-
-    # Заменим * в начале строки на маркер списка
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
 
     return text.strip()
 
-# ✅ Обновлённая функция: извлекает разумный prompt
+# ✅ get_safe_prompt с fallback
 def get_safe_prompt(text: str) -> str:
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     words = re.findall(r'\w+', text)
     for word in words:
         if word not in ["покажи", "мне", "и", "расскажи", "пару", "фактов", "о", "про", "пожалуйста"]:
             return word
-    return "paris"  # fallback по умолчанию
+    return "paris"
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
@@ -131,8 +121,12 @@ async def handle_message(message: Message):
         gemini_text = format_gemini_response(response.text)
 
         image_prompt = get_safe_prompt(user_input)
-        print(f"[DEBUG] IMAGE PROMPT: {image_prompt}")  # 👈 для отладки
+        if not image_prompt or len(image_prompt) < 3:
+            image_prompt = "paris"
+        print(f"[DEBUG] image_prompt = {image_prompt}")
+
         image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
+        print(f"[DEBUG] image_url = {image_url}")
 
         if image_url and any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS):
             try:
@@ -148,6 +142,7 @@ async def handle_message(message: Message):
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
+        # если не удалось загрузить картинку — просто текст
         await message.answer(gemini_text, parse_mode=ParseMode.HTML)
 
     except aiohttp.ClientConnectionError:
