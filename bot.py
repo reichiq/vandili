@@ -6,7 +6,7 @@ import aiohttp
 from io import BytesIO
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatType
 from aiogram.types import FSInputFile, Message
 from html import escape
 from dotenv import load_dotenv
@@ -16,22 +16,36 @@ import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
 
+# Загружаем переменные окружения (BOT_TOKEN, GEMINI_API_KEY, UNSPLASH_ACCESS_KEY, BOT_USERNAME и т.д.)
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
+BOT_USERNAME = os.getenv("BOT_USERNAME")  # например: "VAI_Bot" (без @)
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
+# Настраиваем доступ к модели Gemini (PaLM, Bard, etc.)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
+# Храним историю диалога для каждого chat_id
 chat_history = {}
 
+# Лимиты Telegram
+CAPTION_LIMIT = 950        # Максимум символов для подписи (caption) под фото
+TELEGRAM_MSG_LIMIT = 4096  # Примерный максимум символов одного HTML-сообщения
+
+# Триггеры (на русском), которые означают "покажи фото/картинку"
+IMAGE_TRIGGERS_RU = [
+    "покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"
+]
+
+# Несколько команд/фраз для имени бота
 NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
 INFO_COMMANDS = [
     "кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
@@ -46,24 +60,30 @@ OWNER_REPLIES = [
     "Я бот <b>Vandili</b>. Всё просто.",
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
-IMAGE_TRIGGERS = [
-    "покажи", "покажи мне", "фото", "изображение", "отправь фото",
-    "пришли картинку", "прикрепи фото", "покажи картинку",
-    "дай фото", "дай изображение", "картинка"
-]
 
-CAPTION_LIMIT = 950        # Максимум символов для подписи (caption) под фото
-TELEGRAM_MSG_LIMIT = 4096  # Примерный максимальный размер одного HTML-сообщения
+# Простейший словарь для RU->EN, чтобы отправить корректный запрос Unsplash
+RU_EN_DICT = {
+    "обезьян": "monkey",
+    "тигр": "tiger",
+    "кошка": "cat",
+    "собак": "dog",
+    "пейзаж": "landscape",
+    "чайка": "seagull",
+    # Можно продолжать заполнять...
+}
+
 
 def format_gemini_response(text: str) -> str:
     """
     Преобразует текст от Gemini:
-     - ```…``` -> <pre><code>...</code></pre>
-     - экранирует HTML-спецсимволы,
-     - **…** -> <b>…</b>, *…* -> <i>…</i>, `…` -> <code>…</code>
+      - ```…``` -> <pre><code>…</code></pre>
+      - Экранирует HTML-спецсимволы
+      - **…** -> <b>…</b>, *…* -> <i>…</i>, `…` -> <code>…</code>
+      - Убирает возможные фразы Gemini о том, что "он не может показать изображения"
     """
     code_blocks = {}
 
+    # Тройные бэктики -> <pre><code>…</code></pre>
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
@@ -71,36 +91,112 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # 1) Ищем тройные бэктики ```…```
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-    # 2) Экранируем всё остальное
+
+    # Экранируем остальные спецсимволы
     text = escape(text)
-    # 3) Возвращаем <pre><code>...</code></pre> на место
+
+    # Возвращаем <pre><code>...</code></pre>
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
-    # 4) **…** / *…* / `…`
+
+    # Обрабатываем **…**, *…*, `…`
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
+
+    # Убираем фразы про "не могу показывать картинки"
+    text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
+
     return text.strip()
 
 
-def get_safe_prompt(text: str) -> str:
+def split_smart(text: str, limit: int) -> list[str]:
     """
-    Для "покажи тигра" -> "тигра". Находит первое разумное слово для Unsplash.
+    "Умная" разбивка текста на фрагменты не более limit символов,
+    стараясь не обрывать предложения/слова (ищем ". " или хотя бы " ").
     """
-    text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
-    match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
+    results = []
+    start = 0
+    length = len(text)
+
+    while start < length:
+        remaining = length - start
+        if remaining <= limit:
+            results.append(text[start:].strip())
+            break
+
+        candidate = text[start : start + limit]
+        cut_pos = candidate.rfind('. ')
+        if cut_pos == -1:
+            cut_pos = candidate.rfind(' ')
+            if cut_pos == -1:
+                # Ни пробела, ни точки — обрезаем жёстко
+                cut_pos = len(candidate)
+        else:
+            # Включим точку, если '. '
+            cut_pos += 1
+
+        chunk = text[start : start + cut_pos].strip()
+        if chunk:
+            results.append(chunk)
+
+        start += cut_pos
+
+    return [x for x in results if x]
+
+
+def parse_russian_show_request(user_text: str) -> tuple[bool, str, str]:
+    """
+    Ищем в тексте русское "покажи X" (или "хочу увидеть" и т.п.).
+    Возвращаем кортеж:
+      ( show_image: bool, image_query_en: str, text_for_gemini: str )
+
+    Пример:
+     "покажи обезьяну и расскажи про нее" ->
+       -> show_image=True, image_query_en="monkey", text_for_gemini="и расскажи про нее"
+    """
+    lower_text = user_text.lower()
+
+    # Проверяем, есть ли один из триггеров
+    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
+    if not triggered:
+        return (False, "", user_text)
+
+    # Пытаемся выделить слово после "покажи"/"хочу увидеть"/"пришли фото"
+    match = re.search(r"(покажи|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
-        return match.group(1)
-    return re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", "", text).strip().split(" ")[0]
+        rus_word = match.group(2)
+    else:
+        rus_word = ""
+
+    # Убираем "покажи <rus_word>" из исходного текста, чтобы остаток пошёл в Gemini
+    pattern_remove = rf"(покажи|хочу увидеть|пришли фото)\s+{rus_word}"
+    cleaned_text = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
+
+    # Пробуем найти в словаре RU_EN_DICT
+    image_query_en = ""
+    for k, v in RU_EN_DICT.items():
+        # Пример: k="обезьян", v="monkey", если k in "обезьяну" -> image_query_en="monkey"
+        if k in rus_word:
+            image_query_en = v
+            break
+
+    # Если ничего не нашли, просто используем rus_word как есть (может Unsplash что-нибудь найдёт)
+    if not image_query_en:
+        image_query_en = rus_word
+
+    return (True, image_query_en, cleaned_text)
 
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     """
-    Вызывает Unsplash API, пытаясь получить рандомное фото.
-    Возвращает URL или None.
+    Запрос к Unsplash API. Возвращает URL или None.
     """
+    if not prompt:
+        return None
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
@@ -113,57 +209,6 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 
-def split_smart(text: str, limit: int) -> list[str]:
-    """
-    "Умная" разбивка текста на фрагменты не более `limit` символов,
-    старается искать ближайшее "`. `" (точка + пробел) или хотя бы пробел `" "` 
-    (если не найдёт, режет жёстко).
-    
-    Примерно такая логика:
-    1) Берём кусок в `limit` символов.
-    2) В нём ищем rfind('. ') -> если есть, режем тут (с учётом точки).
-    3) Если нет '. ', пробуем rfind(' ').
-    4) Если нет и пробела — режем жёстко на `limit`.
-    5) Добавляем результат в список, идём дальше.
-    """
-    results = []
-    start = 0
-    length = len(text)
-
-    while start < length:
-        # Остаток текста меньше лимита?
-        if (length - start) <= limit:
-            # Берём всё целиком
-            results.append(text[start:].strip())
-            break
-
-        # Иначе берём кандидат длиной limit
-        candidate = text[start : start + limit]
-        cut_pos = candidate.rfind('. ')
-        if cut_pos == -1:
-            # Не нашли точку + пробел
-            cut_pos = candidate.rfind(' ')
-            if cut_pos == -1:
-                # Даже пробела нет - придётся рубить жёстко
-                cut_pos = len(candidate)
-            else:
-                # Иначе отсекаем по пробелу
-                pass
-        else:
-            # Нашли '. ', включим саму точку
-            cut_pos += 1
-
-        # Берём кусок до cut_pos
-        chunk = text[start : start + cut_pos].strip()
-        if chunk:
-            results.append(chunk)
-        # Сдвигаемся вперёд на cut_pos
-        start += cut_pos
-
-    # Убираем пустые фрагменты на всякий
-    return [r for r in results if r]
-
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -171,8 +216,8 @@ async def cmd_start(message: Message):
         "Я могу отвечать на самые разные вопросы, делиться фактами, "
         "рассказывать интересное и даже показывать изображения по твоему запросу.\n\n"
         "Попробуй, например:\n"
-        "• «покажи тигра»\n"
-        "• «расскажи про Луну»\n\n"
+        "• «покажи обезьяну» (получишь фото)\n"
+        "• «покажи обезьяну и расскажи про нее пару фактов» (фото и рассказ)\n\n"
         "Всегда рад пообщаться! 🧠✨"
     )
     await message.answer(greet)
@@ -180,103 +225,118 @@ async def cmd_start(message: Message):
 
 @dp.message()
 async def handle_msg(message: Message):
+    """
+    Основной обработчик сообщений.
+    1) Если в группе/супергруппе: проверяем упоминание/Reply/ключевые слова для вызова бота.
+    2) Обрабатываем команды (имя/автор).
+    3) Парсим "покажи X" -> перевести X => запрос к Unsplash.
+    4) Остальное -> Gemini.
+    5) Отправляем картинку (если удалось), + отправляем ответ Gemini (если есть).
+    """
+
+    # --- 1) Если это группа или супергруппа, проверяем, "звали" ли бота ---
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        text_lower = (message.text or "").lower()
+
+        # a) Проверка упоминания @BOT_USERNAME
+        mention_bot = False
+        if BOT_USERNAME:
+            mention_bot = (f"@{BOT_USERNAME.lower()}" in text_lower)
+
+        # b) Проверка Reply на сообщение бота
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and (message.reply_to_message.from_user.id == bot.id)
+        )
+
+        # c) Проверка упоминания "vai", "вай", "вэй" без @
+        mention_keywords = ["vai", "вай", "вэй"]
+        mention_by_name = any(keyword in text_lower for keyword in mention_keywords)
+
+        # Если нет ни (mention_bot), ни (reply), ни (mention_by_name), то игнорируем
+        if not mention_bot and not is_reply_to_bot and not mention_by_name:
+            return
+
     user_input = message.text.strip()
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Проверяем, не спрашивает ли имя
-    if any(name_trig in user_input.lower() for name_trig in NAME_COMMANDS):
+    # --- 2) Проверяем простые команды: имя и автор ---
+    low_input = user_input.lower()
+    if any(name_trig in low_input for name_trig in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
         return
-
-    # Проверяем, не спрашивает ли автора
-    if any(info_trig in user_input.lower() for info_trig in INFO_COMMANDS):
-        await message.answer(random.choice(OWNER_REPLIES))
+    if any(info_trig in low_input for info_trig in INFO_COMMANDS):
+        r = random.choice(OWNER_REPLIES)
+        await message.answer(r)
         return
 
-    # Сохраняем в историю для Gemini
-    chat_history.setdefault(cid, []).append({"role": "user", "parts": [user_input]})
-    if len(chat_history[cid]) > 5:
-        chat_history[cid].pop(0)
+    # --- 3) Разбираем "покажи …" по-русски ---
+    show_image, image_en, text_for_gemini = parse_russian_show_request(user_input)
 
-    try:
-        await bot.send_chat_action(cid, "typing")
-        # Запрашиваем текст у Gemini
-        resp = model.generate_content(chat_history[cid])
-        gemini_text = format_gemini_response(resp.text)
-        logging.info(f"[GEMINI] => {gemini_text[:200]}")
+    # --- 4) Если в запросе остался текст после "покажи X" (или вообще не было "покажи") ---
+    gemini_text = ""
+    text_for_gemini = text_for_gemini.strip()
+    if text_for_gemini:
+        # Сохраняем в чат-истории
+        chat_history.setdefault(cid, []).append({"role": "user", "parts": [text_for_gemini]})
+        if len(chat_history[cid]) > 5:
+            chat_history[cid].pop(0)
 
-        # Проверяем, нужна ли картинка
-        prompt = get_safe_prompt(user_input)
-        image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
-        triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
-        logging.info(f"[BOT] triggered={triggered}, image={image_url}")
+        try:
+            await bot.send_chat_action(cid, "typing")
+            resp = model.generate_content(chat_history[cid])
+            gemini_text = format_gemini_response(resp.text)
+        except Exception as e:
+            logging.error(f"[BOT] Error from Gemini: {e}")
+            gemini_text = f"⚠️ Ошибка при получении ответа от LLM: {escape(str(e))}"
 
-        # Если картинка найдена и пользователь её просил
-        if image_url and triggered:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(image_url) as r:
-                    if r.status == 200:
-                        photo_bytes = await r.read()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
-                            tmpf.write(photo_bytes)
-                            tmp_path = tmpf.name
+    # --- 5) Если нужно показать картинку, обращаемся к Unsplash ---
+    image_url = None
+    if show_image and image_en:
+        image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
 
-                        try:
-                            await bot.send_chat_action(cid, "upload_photo")
-                            file = FSInputFile(tmp_path, filename="image.jpg")
+    # --- 6) Отправляем фото, если есть ---
+    if image_url:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(image_url) as r:
+                if r.status == 200:
+                    photo_bytes = await r.read()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
+                        tmpf.write(photo_bytes)
+                        tmp_path = tmpf.name
 
-                            # Уместим ли весь текст в caption?
-                            if len(gemini_text) <= CAPTION_LIMIT:
-                                # Целиком идёт в caption
-                                if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
-                                    # И точно не превысит лимита одного сообщения
-                                    await bot.send_photo(cid, file, caption=gemini_text)
-                                else:
-                                    # Если вдруг текст (даже при 950) > 4096, бывает редко
-                                    # Но чисто теоретически: тогда отправим фото + caption, а лишнее - нет
-                                    # или можно выбросить ошибку
-                                    chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-                                    # Первый кусок (точно влезает, раз len(gemini_text)<=950)
-                                    await bot.send_photo(cid, file, caption=chunks[0])
-                                    # Остальные куски отдельно
-                                    for ch in chunks[1:]:
-                                        await message.answer(ch)
+                    try:
+                        await bot.send_chat_action(cid, "upload_photo")
+                        file = FSInputFile(tmp_path, filename="image.jpg")
 
-                            else:
-                                # Текст не влезает в caption => ставим '…'
-                                await bot.send_photo(cid, file, caption="…")
-                                # И отправляем полный текст по "умной" разбивке, чтобы не превысить 4096
-                                if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
-                                    await message.answer(gemini_text)
-                                else:
-                                    chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-                                    for ch in chunks:
-                                        await message.answer(ch)
+                        # Если весь gemini_text <= CAPTION_LIMIT (950), сунем его туда
+                        if gemini_text and len(gemini_text) <= CAPTION_LIMIT:
+                            # Теоретически может быть риск, если gemini_text близок к 4096
+                            # Но обычно caption не вызывает "Message too long".
+                            await bot.send_photo(cid, file, caption=gemini_text)
+                            gemini_text = ""  # Уже отправили текст
+                        else:
+                            # Иначе только caption="..."
+                            await bot.send_photo(cid, file, caption="...")
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
 
-                        finally:
-                            if os.path.exists(tmp_path):
-                                os.remove(tmp_path)
-
-                        return
-
-        # Если картинки нет или пользователь не просил
-        # Просто отправляем "умно" разбитый текст (не более 4096 символов за раз)
+    # --- 7) Отправляем остаток текста, если остался ---
+    if gemini_text:
         if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
             await message.answer(gemini_text)
         else:
+            # Разбиваем "умно" на куски по 4096
             chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
             for ch in chunks:
                 await message.answer(ch)
 
-    except Exception as e:
-        logging.error(f"[BOT] Error: {e}")
-        await message.answer(f"❌ Ошибка: {escape(str(e))}")
-
 
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
