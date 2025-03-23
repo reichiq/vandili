@@ -97,7 +97,7 @@ def split_smart(text: str, limit: int) -> list[str]:
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
     if len(text) <= CAPTION_LIMIT:
         return text, []
-    chunks_950 = split_smart(text, CAPTION_MSG_LIMIT)
+    chunks_950 = split_smart(text, CAPTION_LIMIT)
     caption = chunks_950[0]
     leftover = " ".join(chunks_950[1:]).strip()
     if not leftover:
@@ -192,31 +192,25 @@ def fallback_translate_to_english(rus_word: str) -> str:
         return rus_word
 
 
-# --------------------------
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ
-# --------------------------
 def generate_short_caption(rus_word: str) -> str:
     """
-    Обращаемся к модели с форматом, который Gemini понимает:
-    массив словарей {"role": "...", "parts": ["..."]}.
+    Обращаемся к модели одним user-сообщением (без role=system),
+    т.к. Gemini не поддерживает system-роль и отвечает 400.
     """
-    short_system_message = {
-        "role": "system",
-        "parts": [
-            ("Ты — творческий помощник, который умеет писать очень короткие, дружелюбные "
-             "подписи на русском языке. Не упоминай, что ты ИИ. "
-             "Старайся не превышать 15 слов.")
-        ]
-    }
-    user_message = {
-        "role": "user",
-        "parts": [
-            (f"Придумай одну короткую, дружелюбную подпись для картинки с '{rus_word}'. "
-             "Можно с лёгкой эмоцией или юмором. Не более 15 слов.")
-        ]
-    }
+    # Формируем инструкцию + запрос в одном user-сообщении:
+    short_prompt = (
+        "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
+        "на русском языке. Не упоминай, что ты ИИ. Старайся не превышать 15 слов.\n\n"
+        f"ЗАДАЧА: Придумай одну короткую, дружелюбную подпись для картинки с «{rus_word}». "
+        "Можно с лёгкой эмоцией или юмором, не более 15 слов."
+    )
     try:
-        response = model.generate_content([short_system_message, user_message])
+        response = model.generate_content([
+            {
+                "role": "user",
+                "parts": [short_prompt]
+            }
+        ])
         caption = response.text.strip()
         return caption
     except Exception as e:
@@ -360,6 +354,7 @@ async def handle_msg(message: Message):
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
