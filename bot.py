@@ -17,7 +17,7 @@ import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
-from googletrans import Translator  # импорт библиотеки для перевода
+from googletrans import Translator  # для fallback-перевода
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -184,6 +184,39 @@ def fallback_translate_to_english(rus_word: str) -> str:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
 
+# -----------------------------------------
+# ВАЖНАЯ НОВАЯ ФУНКЦИЯ: генерирует короткую подпись
+# -----------------------------------------
+def generate_short_caption(rus_word: str) -> str:
+    """
+    Обращаемся к модели, чтобы получить одну дружелюбную, короткую подпись 
+    (не более ~15 слов) на русском. Без извинений, без упоминаний, что это ИИ.
+    """
+    short_system_message = {
+        "role": "system",
+        "content": (
+            "Ты — творческий помощник, который умеет писать очень короткие, дружелюбные "
+            "подписи на русском языке. Не упоминай, что ты ИИ. "
+            "Старайся не превышать 15 слов."
+        )
+    }
+    user_message = {
+        "role": "user",
+        "content": (
+            f"Придумай одну короткую, дружелюбную подпись для картинки с '{rus_word}'. "
+            "Можно с лёгкой эмоцией или юмором. Не более 15 слов."
+        )
+    }
+    try:
+        # ВАЖНО: вызываем model.generate_content не через chat_history, а отдельно
+        response = model.generate_content([short_system_message, user_message])
+        caption = response.text.strip()
+        return caption
+    except Exception as e:
+        logging.error(f"[BOT] Error generating short caption: {e}")
+        # fallback: вернём просто слово с заглавной буквы
+        return rus_word.capitalize()
+
 def parse_russian_show_request(user_text: str):
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
@@ -255,7 +288,6 @@ async def handle_msg(message: Message):
         await message.answer(random.choice(OWNER_REPLIES))
         return
 
-    # Парсим запрос на показ картинки
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
@@ -266,7 +298,6 @@ async def handle_msg(message: Message):
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
-
     has_image = bool(image_url)
 
     logging.info(
@@ -276,17 +307,15 @@ async def handle_msg(message: Message):
 
     gemini_text = ""
 
-    # --- ВАЖНАЯ ПРАВКА ---
-    # Если leftover пустой, значит юзер просто сказал «покажи X» без «и расскажи...»
-    # => Не вызываем LLM, а делаем короткий caption
-    # Если leftover есть (или rus_word вообще пуст), делаем как раньше.
+    # ----------------------------------------
+    # Главное условие: если есть слово, есть картинка,
+    # и leftover ПУСТОЙ => генерируем КОРОТКУЮ ПОДПИСЬ
+    # ----------------------------------------
     if show_image and rus_word and not leftover:
-        # Просто короткая подпись, например: «Страус 🦩» (или «Straus 🦩»)
-        # Можно подобрать эмоджи к разным животным, но тут оставим упрощённо:
-        gemini_text = rus_word.capitalize()
+        # Вызываем нашу новую функцию:
+        gemini_text = generate_short_caption(rus_word)
     else:
-        # leftover не пустой (или вообще нет show_image),
-        # тогда вызываем LLM, как было раньше
+        # leftover не пуст или нет show_image => вызываем основную логику LLM
         if full_prompt:
             chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
             if len(chat_history[cid]) > 5:
@@ -311,9 +340,7 @@ async def handle_msg(message: Message):
                     try:
                         await bot.send_chat_action(cid, "upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
-                        # Делим текст на caption и остаток
                         caption, rest = split_caption_and_text(gemini_text)
-                        # Если caption пуст, поставим «...»
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
                             await message.answer(c)
