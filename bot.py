@@ -228,6 +228,8 @@ async def handle_msg(message: Message):
     image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
 
     if image_url:
+        gemini_text = re.sub(r"\[Вставьте сюда картинку .*?\]", "", gemini_text, flags=re.IGNORECASE).strip()
+
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
                 if r.status == 200:
@@ -243,6 +245,8 @@ async def handle_msg(message: Message):
                             gemini_text = ""
                         else:
                             await bot.send_photo(cid, file, caption="...")
+                            if not gemini_text.strip():
+                                logging.warning("[BOT] Gemini вернул пустой или шаблонный текст")
                     finally:
                         os.remove(tmp_path)
 
