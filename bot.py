@@ -4,10 +4,10 @@ import re
 import random
 import aiohttp
 from io import BytesIO
-from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import FSInputFile, Message
+from aiogram.client.default import DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
@@ -15,7 +15,7 @@ import asyncio
 import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
-from pymorphy3 import MorphAnalyzer  # заменили pymorphy2 на pymorphy3
+from pymorphy3 import MorphAnalyzer
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
-morph = MorphAnalyzer()  # заменили pymorphy2.MorphAnalyzer()
+morph = MorphAnalyzer()
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
@@ -64,6 +64,25 @@ RU_EN_DICT = {
     "париж": "paris",
     "утконос": "platypus"
 }
+
+def get_prepositional_form(rus_word: str) -> str:
+    parsed = morph.parse(rus_word)
+    if not parsed:
+        return rus_word
+    p = parsed[0]
+    loct = p.inflect({"loct"})
+    return loct.word if loct else rus_word
+
+def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
+    word_prep = get_prepositional_form(rus_word)
+    pronoun_map = {
+        r"\bо\s+нем\b":  f"о {word_prep}",
+        r"\bо\s+нём\b":  f"о {word_prep}",
+        r"\bо\s+ней\b":  f"о {word_prep}",
+    }
+    for pattern, repl in pronoun_map.items():
+        leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
+    return leftover
 
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
@@ -136,25 +155,6 @@ def parse_russian_show_request(user_text: str):
     leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     en_word = RU_EN_DICT.get(rus_word, rus_word)
     return (True, rus_word, en_word, leftover)
-
-def get_prepositional_form(rus_word: str) -> str:
-    parsed = morph.parse(rus_word)
-    if not parsed:
-        return rus_word
-    p = parsed[0]
-    loct = p.inflect({'loct'})
-    return loct.word if loct else rus_word
-
-def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
-    word_prep = get_prepositional_form(rus_word)
-    pronoun_map = {
-        r"\bо\s+нем\b":  f"о {word_prep}",
-        r"\bо\s+нём\b":  f"о {word_prep}",
-        r"\bо\s+ней\b":  f"о {word_prep}",
-    }
-    for pattern, repl in pronoun_map.items():
-        leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
-    return leftover
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     if not prompt:
