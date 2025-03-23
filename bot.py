@@ -26,8 +26,6 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 import google.generativeai as genai
-
-# Настройка API-ключа
 genai.configure(api_key=GEMINI_API_KEY)
 
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
@@ -36,7 +34,17 @@ chat_history = {}
 
 INFO_COMMANDS = [
     "кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
-    "кто твой создатель", "чей ты бот", "кем ты был создан", "кто хозяин"
+    "кто твой создатель", "чей ты бот", "кем ты был создан", "кто хозяин",
+    "кто твой владелец", "в смысле кто твой создатель"
+]
+
+OWNER_REPLIES = [
+    "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>.",
+    "Мой создатель — <b>Vandili</b>. Я работаю для него.",
+    "Я принадлежу <i>Vandili</i>, он мой автор.",
+    "Создан <b>Vandili</b> — именно он дал мне жизнь.",
+    "Я бот <b>Vandili</b>. Всё просто.",
+    "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
 # Преобразуем Markdown / спец-формат Gemini в HTML Telegram
@@ -62,7 +70,7 @@ def format_gemini_response(text: str) -> str:
 
     return text
 
-# Безопасный prompt для запроса к Unsplash (оставляем только ключевые слова)
+# Безопасный prompt для запроса к Unsplash
 def get_safe_prompt(text: str) -> str:
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
@@ -87,11 +95,8 @@ async def handle_message(message: Message):
     username = message.from_user.username or message.from_user.full_name
 
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
-        await message.answer(
-            "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>. "
-            "Моя основа — <u>Gemini</u> от Google и изображения от <u>Unsplash</u>.",
-            parse_mode=ParseMode.HTML
-        )
+        reply = random.choice(OWNER_REPLIES)
+        await message.answer(reply, parse_mode=ParseMode.HTML)
         return
 
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_input]})
@@ -107,7 +112,7 @@ async def handle_message(message: Message):
 
         print("Image URL:", image_url)
 
-        if image_url:
+        if image_url and "не могу показать" not in gemini_text.lower():
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
@@ -135,7 +140,7 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
-# 👇 Новый способ запуска для aiogram 3.x
+# aiogram 3.x запуск
 async def main():
     await dp.start_polling(bot)
 
