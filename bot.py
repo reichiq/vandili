@@ -69,6 +69,7 @@ RU_EN_DICT = {
     "пудель": "poodle"
 }
 
+
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
     start = 0
@@ -92,16 +93,18 @@ def split_smart(text: str, limit: int) -> list[str]:
         start += cut_pos
     return [x for x in results if x]
 
+
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
     if len(text) <= CAPTION_LIMIT:
         return text, []
-    chunks_950 = split_smart(text, CAPTION_LIMIT)
+    chunks_950 = split_smart(text, CAPTION_MSG_LIMIT)
     caption = chunks_950[0]
     leftover = " ".join(chunks_950[1:]).strip()
     if not leftover:
         return caption, []
     rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
+
 
 def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
@@ -110,6 +113,7 @@ def get_prepositional_form(rus_word: str) -> str:
     p = parsed[0]
     loct = p.inflect({"loct"})
     return loct.word if loct else rus_word
+
 
 def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     word_prep = get_prepositional_form(rus_word)
@@ -121,6 +125,7 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     for pattern, repl in pronoun_map.items():
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
     return leftover
+
 
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
@@ -157,6 +162,7 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     return '\n'.join(new_lines).strip()
 
+
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     if not prompt:
         return None
@@ -176,6 +182,7 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
         logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
+
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         result = translator.translate(rus_word, src='ru', dest='en')
@@ -184,38 +191,38 @@ def fallback_translate_to_english(rus_word: str) -> str:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
 
-# -----------------------------------------
-# ВАЖНАЯ НОВАЯ ФУНКЦИЯ: генерирует короткую подпись
-# -----------------------------------------
+
+# --------------------------
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ
+# --------------------------
 def generate_short_caption(rus_word: str) -> str:
     """
-    Обращаемся к модели, чтобы получить одну дружелюбную, короткую подпись 
-    (не более ~15 слов) на русском. Без извинений, без упоминаний, что это ИИ.
+    Обращаемся к модели с форматом, который Gemini понимает:
+    массив словарей {"role": "...", "parts": ["..."]}.
     """
     short_system_message = {
         "role": "system",
-        "content": (
-            "Ты — творческий помощник, который умеет писать очень короткие, дружелюбные "
-            "подписи на русском языке. Не упоминай, что ты ИИ. "
-            "Старайся не превышать 15 слов."
-        )
+        "parts": [
+            ("Ты — творческий помощник, который умеет писать очень короткие, дружелюбные "
+             "подписи на русском языке. Не упоминай, что ты ИИ. "
+             "Старайся не превышать 15 слов.")
+        ]
     }
     user_message = {
         "role": "user",
-        "content": (
-            f"Придумай одну короткую, дружелюбную подпись для картинки с '{rus_word}'. "
-            "Можно с лёгкой эмоцией или юмором. Не более 15 слов."
-        )
+        "parts": [
+            (f"Придумай одну короткую, дружелюбную подпись для картинки с '{rus_word}'. "
+             "Можно с лёгкой эмоцией или юмором. Не более 15 слов.")
+        ]
     }
     try:
-        # ВАЖНО: вызываем model.generate_content не через chat_history, а отдельно
         response = model.generate_content([short_system_message, user_message])
         caption = response.text.strip()
         return caption
     except Exception as e:
         logging.error(f"[BOT] Error generating short caption: {e}")
-        # fallback: вернём просто слово с заглавной буквы
         return rus_word.capitalize()
+
 
 def parse_russian_show_request(user_text: str):
     lower_text = user_text.lower()
@@ -252,6 +259,7 @@ def parse_russian_show_request(user_text: str):
 
     return (True, rus_word, en_word, leftover)
 
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -261,6 +269,7 @@ async def cmd_start(message: Message):
         "Всегда рад помочь!"
     )
     await message.answer(greet)
+
 
 @dp.message()
 async def handle_msg(message: Message):
@@ -307,15 +316,11 @@ async def handle_msg(message: Message):
 
     gemini_text = ""
 
-    # ----------------------------------------
-    # Главное условие: если есть слово, есть картинка,
-    # и leftover ПУСТОЙ => генерируем КОРОТКУЮ ПОДПИСЬ
-    # ----------------------------------------
+    # Если show_image=True, есть rus_word, и leftover пустой => генерируем короткую подпись
     if show_image and rus_word and not leftover:
-        # Вызываем нашу новую функцию:
         gemini_text = generate_short_caption(rus_word)
     else:
-        # leftover не пуст или нет show_image => вызываем основную логику LLM
+        # Иначе (есть leftover или нет картинки) вызываем полноценную логику LLM
         if full_prompt:
             chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
             if len(chat_history[cid]) > 5:
@@ -328,7 +333,6 @@ async def handle_msg(message: Message):
                 logging.error(f"[BOT] Error from Gemini: {e}")
                 gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
-    # Отправляем фото, если есть
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -348,11 +352,11 @@ async def handle_msg(message: Message):
                     finally:
                         os.remove(tmp_path)
 
-    # Если текст остался (нет картинки или caption пуст), отправляем
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+
 
 async def main():
     await dp.start_polling(bot)
