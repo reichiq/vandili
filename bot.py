@@ -16,6 +16,7 @@ import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
+from string import punctuation  # <-- Добавили для очистки слов от знаков
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -65,13 +66,20 @@ RU_EN_DICT = {
     "утконос": "platypus"
 }
 
+
 def split_smart(text: str, limit: int) -> list[str]:
+    """Разбивает текст на куски, стараясь не рвать предложение:
+       - Сначала пытается найти точку + пробел ('. ').
+       - Если не находит, ищет просто пробел.
+       - Если тоже не находит, режет жёстко.
+    """
     results = []
     start = 0
     length = len(text)
     while start < length:
         remain = length - start
         if remain <= limit:
+            # Хвост помещается целиком
             results.append(text[start:].strip())
             break
         candidate = text[start : start+limit]
@@ -79,38 +87,39 @@ def split_smart(text: str, limit: int) -> list[str]:
         if cut_pos == -1:
             cut_pos = candidate.rfind(' ')
             if cut_pos == -1:
+                # Если не нашли пробела, режем прямо по лимиту
                 cut_pos = len(candidate)
         else:
-            cut_pos += 1
+            # Если нашли '. ', то оставляем точку, но вырезаем пробел после неё
+            cut_pos += 1  # чтобы включить точку
         chunk = text[start : start+cut_pos].strip()
         if chunk:
             results.append(chunk)
         start += cut_pos
     return [x for x in results if x]
 
-# -------------------------- #
-# 1) Изменили эту функцию    #
-# -------------------------- #
+
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
+    """
+    Первая часть (Caption) - умно обрезаем до 950 символов (CAPTION_LIMIT),
+    стараясь не рвать предложение. Остаток делим на <= 4096 (TELEGRAM_MSG_LIMIT).
+    """
     if len(text) <= CAPTION_LIMIT:
+        # Всё влезает в Caption
         return text, []
 
-    # Ищем в первых 950 символах «логическую» границу (точка, перевод строки, пробел).
-    chunk_end = text[:CAPTION_LIMIT].rfind('. ')
-    if chunk_end == -1:
-        chunk_end = text[:CAPTION_LIMIT].rfind('\n')
-    if chunk_end == -1:
-        chunk_end = text[:CAPTION_LIMIT].rfind(' ')
-    if chunk_end == -1:
-        # Если ничего не нашли, обрезаем ровно 950
-        chunk_end = CAPTION_LIMIT
+    # Разбиваем текст "умно" по 950 символов
+    chunks_950 = split_smart(text, CAPTION_LIMIT)
+    # Первый кусок - Caption
+    caption = chunks_950[0]
+    # Остальные куски склеим и порежем дальше по 4096
+    leftover = " ".join(chunks_950[1:]).strip()
+    if not leftover:
+        return caption, []
 
-    caption = text[:chunk_end].strip()
-    rest_text = text[chunk_end:].strip()
-
-    # Оставшийся текст разбиваем "умно" на chunks <= 4096
-    rest = split_smart(rest_text, TELEGRAM_MSG_LIMIT)
+    rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
+
 
 def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
@@ -119,6 +128,7 @@ def get_prepositional_form(rus_word: str) -> str:
     p = parsed[0]
     loct = p.inflect({"loct"})
     return loct.word if loct else rus_word
+
 
 def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     word_prep = get_prepositional_form(rus_word)
@@ -131,8 +141,10 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
     return leftover
 
+
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
+
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
@@ -140,20 +152,27 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
+    # Обработка блоков кода
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
+
     text = escape(text)
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
 
+    # Жирный, курсив, инлайн-код
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
+
+    # Убираем "[изображение]" и подобные вставки
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
 
+    # Убираем служебные фразы, которые Gemini иногда добавляет
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
+    # Список - заменяем '* ' на '• '
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -164,11 +183,10 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(replaced_line)
         else:
             new_lines.append(line)
+
     return '\n'.join(new_lines).strip()
 
-# -------------------------- #
-# 2) Добавили логирование    #
-# -------------------------- #
+
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     if not prompt:
         return None
@@ -180,7 +198,6 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
                     logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
                     return None
                 data = await response.json()
-                # Проверяем, есть ли ключ 'urls' и 'regular'
                 if "urls" not in data or "regular" not in data["urls"]:
                     logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
                     return None
@@ -189,20 +206,45 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
         logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
+
 def parse_russian_show_request(user_text: str):
+    """Ищем триггеры, извлекаем русское слово, убираем пунктуацию,
+       приводим к нормальной форме, ищем в словаре RU_EN_DICT."""
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
         return (False, "", "", user_text)
+
     match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
-        rus_word = match.group(3)
+        raw_rus_word = match.group(3)
+        # Уберём знаки пунктуации с краёв
+        raw_rus_word_clean = raw_rus_word.strip(punctuation)
+
+        # Прогоним через pymorphy3, чтобы получить нормальную форму
+        parsed = morph.parse(raw_rus_word_clean)
+        if parsed:
+            rus_normal = parsed[0].normal_form
+        else:
+            rus_normal = raw_rus_word_clean
+
+        rus_word = rus_normal
     else:
         rus_word = ""
-    pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{rus_word}"
-    leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
+        raw_rus_word = ""
+
+    # Удаляем из текста именно ту часть, которую нашли
+    # (можно обрабатывать более гибко, но оставим так)
+    if raw_rus_word:
+        pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
+        leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
+    else:
+        leftover = user_text
+
+    # Подставляем перевод (если есть)
     en_word = RU_EN_DICT.get(rus_word, rus_word)
     return (True, rus_word, en_word, leftover)
+
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -213,6 +255,7 @@ async def cmd_start(message: Message):
         "Всегда рад помочь!"
     )
     await message.answer(greet)
+
 
 @dp.message()
 async def handle_msg(message: Message):
@@ -240,6 +283,7 @@ async def handle_msg(message: Message):
         await message.answer(random.choice(OWNER_REPLIES))
         return
 
+    # Парсим запрос на показ картинки
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
@@ -248,9 +292,19 @@ async def handle_msg(message: Message):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
+    image_url = None
+    if show_image:
+        image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
+
     has_image = bool(image_url)
 
+    # Логируем, чтобы понять, какой prompt уходит на Unsplash
+    logging.info(
+        f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
+        f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
+    )
+
+    # Генерируем ответ от Gemini, если есть текст запроса
     if full_prompt:
         chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
         if len(chat_history[cid]) > 5:
@@ -263,6 +317,7 @@ async def handle_msg(message: Message):
             logging.error(f"[BOT] Error from Gemini: {e}")
             gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
+    # Отправляем фото, если есть
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -274,6 +329,7 @@ async def handle_msg(message: Message):
                     try:
                         await bot.send_chat_action(cid, "upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
+                        # Делим текст на caption (до 950) и остаток
                         caption, rest = split_caption_and_text(gemini_text)
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
@@ -282,13 +338,16 @@ async def handle_msg(message: Message):
                     finally:
                         os.remove(tmp_path)
 
+    # Если текст остался (нет картинки или пустой caption) - отправляем
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
 
+
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
