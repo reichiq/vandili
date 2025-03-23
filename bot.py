@@ -65,6 +65,19 @@ RU_EN_DICT = {
     "утконос": "platypus"
 }
 
+def split_caption_and_text(text: str) -> tuple[str, list[str]]:
+    if len(text) <= CAPTION_LIMIT:
+        return text, []
+    chunks = split_smart(text, TELEGRAM_MSG_LIMIT)
+    caption = ""
+    rest = []
+    for chunk in chunks:
+        if not caption and len(chunk) <= CAPTION_LIMIT:
+            caption = chunk
+        else:
+            rest.append(chunk)
+    return caption, rest
+
 def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
     if not parsed:
@@ -101,7 +114,6 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
 
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
@@ -242,11 +254,11 @@ async def handle_msg(message: Message):
                     try:
                         await bot.send_chat_action(cid, "upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
-                        if gemini_text and len(gemini_text) <= CAPTION_LIMIT:
-                            await bot.send_photo(cid, file, caption=gemini_text)
-                            gemini_text = ""
-                        else:
-                            await bot.send_photo(cid, file, caption="...")
+                        caption, rest = split_caption_and_text(gemini_text)
+                        await bot.send_photo(cid, file, caption=caption if caption else "...")
+                        for c in rest:
+                            await message.answer(c)
+                        gemini_text = ""
                     finally:
                         os.remove(tmp_path)
 
