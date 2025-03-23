@@ -60,43 +60,23 @@ IMAGE_TRIGGERS = [
     "дай фото", "дай изображение", "картинка"
 ]
 PROMPT_FIX = {
-    "пудель": "poodle",
-    "пудели": "poodle",
-    "кошка": "cat",
-    "кошки": "cats",
-    "кот": "cat",
-    "коты": "cats",
-    "собака": "dog",
-    "собаки": "dogs",
-    "орхидею": "orchid",
-    "орхидеи": "orchids",
-    "орхидея": "orchid",
-    "персики": "peaches",
-    "обезьяна": "monkey",
-    "обезьяну": "monkey"
+    "пудель": "poodle", "пудели": "poodle",
+    "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
+    "собака": "dog", "собаки": "dogs",
+    "орхидею": "orchid", "орхидеи": "orchids", "орхидея": "orchid",
+    "персики": "peaches", "обезьяна": "monkey", "обезьяну": "monkey"
 }
 
-############################
-# Новые агрессивные шаблоны:
-############################
 UNWANTED_REGEX = [
-    # "Я не могу непосредственно показать..."
     r"(?is)(к\s+сожалению.*?непосредственно.*?показать.*?(\.|$))",
     r"(?is)(\bне\s+могу\s+(?:непосредственно\s+)?показать\b.*?(\.|$))",
-    # "Я текстовый ИИ"
     r"(?is)(\bя\s+(?:текстов\w*|большая\s+языковая\s+модель|language\s+model).{0,50}(\.|$))",
-    # "не могу показывать изображения"
     r"(?is)(\bне\s+могу\s+показывать\s+изображени.*?(\.|$))",
-    # "Вот что вы можете сделать: ...Google, Yandex..."
     r"(?is)(\bвоспользоваться\s+поисков.*?(\.|$))",
     r"(?is)(\bя\s+могу\s+помочь.*?\sнайти.*?(изображени|картинки).*?(\.|$))",
-    # Любые ссылки
     r"(?is)(https?:\/\/[^\s)]+)",
-    # Упоминание поисковиков
     r"(?is)(google|yandex|bing|yahoo|поисковик|search\s+engine)",
-    # "рекомендую поискать..."
     r"(?is)(\b(?:рекомендую|советую)\s+поиск.*?(\.|$))",
-    # "вы можете найти"
     r"(?is)(\bвы\s+можете\s+найти\b.*?(\.|$))",
 ]
 
@@ -112,22 +92,14 @@ def maybe_shorten_text(original: str, user_input: str) -> str:
     return original
 
 def format_gemini_response(text: str, user_input: str) -> str:
-    # 1) Удалить code-block
-    text = re.sub(r"
-(\w+)?\n([\s\S]+?)
-", "", text)
-    # 2) Удалить [вставить фото...]
+    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)  # удалить code blocks
     text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
-    # 3) HTML-escape
     text = escape(text)
-    # 4) Markdown => HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
-    text = re.sub(r'([^]+?)', r'<code>\1</code>', text)
+    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
-    # 5) Удаляем отговорки
     text = remove_unwanted_phrases(text)
-    # 6) Сократить, если чисто "покажи"
     text = maybe_shorten_text(text.strip(), user_input)
     return text.strip()
 
@@ -156,8 +128,7 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
                 logging.info(f"[UNSPLASH] Status={resp.status}")
                 if resp.status == 200:
                     data = await resp.json()
-                    if "urls" in data and "regular" in data["urls"]:
-                        return data["urls"]["regular"]
+                    return data["urls"]["regular"]
     except Exception as e:
         logging.warning(f"Unsplash error: {e}")
     return None
@@ -176,15 +147,17 @@ def split_text(text: str, max_len=950):
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    greet = (
-        "Привет! Я <b>VAI</b>, бот, созданный <i>Vandili</i>.\n\n"
-        "Могу отвечать на вопросы и присылать картинки.\n\n"
-        "• «покажи кота»\n"
-        "• «расскажи про Париж»\n\n"
-        "Если хочешь узнать обо мне: «кто тебя создал» или «как тебя зовут».\n\n"
-        "Приятного общения! 🦾"
+       greet = (
+    "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
+    "Я могу отвечать на самые разные вопросы, делиться фактами, рассказывать интересное и даже показывать изображения по твоему запросу.\n\n"
+    "Попробуй, например:\n"
+    "• «покажи тигра»\n"
+    "• «расскажи про Луну»\n\n"
+    "Всегда рад пообщаться! 🧠✨"
+)
+
     )
-    await message.answer(greet, parse_mode=ParseMode.HTML)
+    await message.answer(greet)
 
 @dp.message()
 async def handle_msg(message: Message):
@@ -193,12 +166,12 @@ async def handle_msg(message: Message):
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
     if any(name_trig in user_input.lower() for name_trig in NAME_COMMANDS):
-        await message.answer("Меня зовут <b>VAI</b>!", parse_mode=ParseMode.HTML)
+        await message.answer("Меня зовут <b>VAI</b>!")
         return
 
     if any(info_trig in user_input.lower() for info_trig in INFO_COMMANDS):
         r = random.choice(OWNER_REPLIES)
-        await message.answer(r, parse_mode=ParseMode.HTML)
+        await message.answer(r)
         return
 
     chat_history.setdefault(cid, []).append({"role": "user", "parts": [user_input]})
@@ -221,7 +194,6 @@ async def handle_msg(message: Message):
                 async with sess.get(image_url) as r:
                     if r.status == 200:
                         photo_bytes = await r.read()
-                        import os
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
                             tmpf.write(photo_bytes)
                             tmp_path = tmpf.name
@@ -231,26 +203,24 @@ async def handle_msg(message: Message):
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
                             cpt = parts[0] if parts else "..."
-                            await bot.send_photo(cid, file, caption=cpt, parse_mode=ParseMode.HTML)
+                            await bot.send_photo(cid, file, caption=cpt)
                             for chunk in parts[1:]:
-                                await message.answer(chunk, parse_mode=ParseMode.HTML)
+                                await message.answer(chunk)
                         finally:
                             if os.path.exists(tmp_path):
                                 os.remove(tmp_path)
                         return
 
-        # Иначе текст
         for chunk in split_text(gemini_text):
-            await message.answer(chunk, parse_mode=ParseMode.HTML)
+            await message.answer(chunk)
 
     except aiohttp.ClientConnectionError:
         await message.answer("🚫 Ошибка: Нет связи с облаками.")
     except ConnectionError:
         await message.answer("⚠️ Нет подключения к интернету.")
     except Exception as e:
-        from html import escape
         logging.error(f"[BOT] Error: {e}")
-        await message.answer(f"❌ Ошибка: {escape(str(e))}", parse_mode=ParseMode.HTML)
+        await message.answer(f"❌ Ошибка: {escape(str(e))}")
 
 async def main():
     await dp.start_polling(bot)
