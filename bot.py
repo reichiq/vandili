@@ -5,13 +5,14 @@ import random
 import aiohttp
 from io import BytesIO
 from aiogram.client.default import DefaultBotProperties
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, Message
 from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
+import google.generativeai as genai
 
 # Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -25,7 +26,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-import google.generativeai as genai
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
@@ -51,14 +51,8 @@ IMAGE_TRIGGERS = [
     "пришли картинку", "прикрепи фото", "покажи картинку", "дай фото", "дай изображение", "картинка"
 ]
 
-STOPWORDS = {
-    "покажи", "расскажи", "мне", "про", "факт", "фото", "изображение", "и", "что", "ты", "о", "про", "интересное"
-}
-
-# Форматирование ответа Gemini
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
-
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
@@ -67,7 +61,7 @@ def format_gemini_response(text: str) -> str:
         return placeholder
 
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-    text = re.sub(r"\[.*?(вставьте|image|insert).*?\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
     text = escape(text)
 
     for placeholder, block in code_blocks.items():
@@ -80,29 +74,11 @@ def format_gemini_response(text: str) -> str:
 
     return text.strip()
 
-# Деление текста по смыслу
-def split_message(text, limit=950):
-    if len(text) <= limit:
-        return [text]
-    parts = []
-    while len(text) > limit:
-        idx = text[:limit].rfind("\n")
-        if idx == -1:
-            idx = text[:limit].rfind(". ")
-            if idx == -1:
-                idx = limit
-        parts.append(text[:idx].strip())
-        text = text[idx:].strip()
-    if text:
-        parts.append(text)
-    return parts
-
-# Получение релевантного поискового запроса
 def get_safe_prompt(text: str) -> str:
-    text = text.lower()
-    words = re.findall(r"\b[\wёЁ]+\b", text)
-    keywords = [w for w in words if w not in STOPWORDS]
-    return " ".join(keywords) if keywords else "city"
+    text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
+    text = re.sub(r"\b(расскажи|покажи|мне|про|факт|фото|изображение|прикрепи|дай|и|о|об|отправь|что|такое|интересное)\b", "", text)
+    words = text.strip().split()
+    return " ".join(words[:4]) if words else "random"
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
@@ -116,11 +92,22 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
         logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
+def split_text(text: str, max_length: int = 950):
+    parts = []
+    while len(text) > max_length:
+        split_index = text[:max_length].rfind('. ')
+        if split_index == -1:
+            split_index = max_length
+        parts.append(text[:split_index+1].strip())
+        text = text[split_index+1:].strip()
+    if text:
+        parts.append(text)
+    return parts
+
 @dp.message()
 async def handle_message(message: Message):
     user_input = message.text.strip()
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.full_name
 
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
@@ -148,20 +135,15 @@ async def handle_message(message: Message):
                         if resp.status == 200:
                             photo = await resp.read()
                             file = FSInputFile(BytesIO(photo), filename="image.jpg")
-                            caption = gemini_text[:950] if gemini_text else ""
-                            await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
-
-                            remaining_text = gemini_text[950:].strip()
-                            if remaining_text:
-                                for chunk in split_message(remaining_text):
-                                    await asyncio.sleep(0.5)
-                                    await message.answer(chunk, parse_mode=ParseMode.HTML)
+                            chunks = split_text(gemini_text)
+                            await bot.send_photo(chat_id=message.chat.id, photo=file, caption=chunks[0], parse_mode=ParseMode.HTML)
+                            for chunk in chunks[1:]:
+                                await message.answer(chunk, parse_mode=ParseMode.HTML)
                             return
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
-        for chunk in split_message(gemini_text):
-            await message.answer(chunk, parse_mode=ParseMode.HTML)
+        await message.answer(gemini_text, parse_mode=ParseMode.HTML)
 
     except aiohttp.ClientConnectionError:
         await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.", parse_mode=ParseMode.HTML)
@@ -172,7 +154,6 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
-# Запуск
 async def main():
     await dp.start_polling(bot)
 
