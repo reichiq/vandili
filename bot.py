@@ -105,18 +105,22 @@ async def handle_message(message: Message):
         image_prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
 
+        print("Image URL:", image_url)
+
         if image_url:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
                         if resp.status == 200:
                             photo = await resp.read()
-                            from io import BytesIO
                             file = FSInputFile(BytesIO(photo), filename="image.jpg")
-
                             caption = gemini_text[:950] if gemini_text else ""
+
+                            print("Отправка изображения...")
                             await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
                             return
+                        else:
+                            logging.warning(f"Не удалось получить изображение. Код: {resp.status}")
             except Exception as e:
                 logging.warning(f"Ошибка при отправке изображения: {e}")
 
