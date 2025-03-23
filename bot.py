@@ -1,4 +1,3 @@
-print("🔥 Бот запущен")
 import logging
 import os
 import re
