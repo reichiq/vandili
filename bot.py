@@ -86,11 +86,14 @@ def format_gemini_response(text: str) -> str:
 
     return text.strip()
 
-# Безопасный prompt для Unsplash
+# ✅ Обновлённая функция: извлекает разумный prompt
 def get_safe_prompt(text: str) -> str:
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
-    match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
-    return match.group(1) if match else re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", "", text).strip().split(" ")[0]
+    words = re.findall(r'\w+', text)
+    for word in words:
+        if word not in ["покажи", "мне", "и", "расскажи", "пару", "фактов", "о", "про", "пожалуйста"]:
+            return word
+    return "paris"  # fallback по умолчанию
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
@@ -128,6 +131,7 @@ async def handle_message(message: Message):
         gemini_text = format_gemini_response(response.text)
 
         image_prompt = get_safe_prompt(user_input)
+        print(f"[DEBUG] IMAGE PROMPT: {image_prompt}")  # 👈 для отладки
         image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
 
         if image_url and any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS):
