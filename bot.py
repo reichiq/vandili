@@ -96,6 +96,8 @@ async def handle_message(message: Message):
 
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
+        await bot.send_chat_action(message.chat.id, action="typing")
+        await asyncio.sleep(1.2)
         await message.answer(reply, parse_mode=ParseMode.HTML)
         return
 
@@ -104,6 +106,8 @@ async def handle_message(message: Message):
         chat_history[user_id].pop(0)
 
     try:
+        await bot.send_chat_action(message.chat.id, action="typing")
+
         response = model.generate_content(chat_history[user_id])
         gemini_text = format_gemini_response(response.text)
 
@@ -112,7 +116,9 @@ async def handle_message(message: Message):
 
         print("Image URL:", image_url)
 
-        if image_url and "не могу показать" not in gemini_text.lower():
+        # Проверка: не вставлять картинку, если Gemini пишет, что не может
+        blocked_phrases = ["не могу показать", "представьте себе", "[вставьте", "я не могу отображать"]
+        if image_url and not any(phrase in gemini_text.lower() for phrase in blocked_phrases):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as resp:
@@ -140,7 +146,7 @@ async def handle_message(message: Message):
         error_text = format_gemini_response(str(e))
         await message.answer(f"❌ Ошибка запроса: {error_text}", parse_mode=ParseMode.HTML)
 
-# aiogram 3.x запуск
+# Запуск (aiogram 3.x)
 async def main():
     await dp.start_polling(bot)
 
