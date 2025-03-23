@@ -52,16 +52,15 @@ IMAGE_TRIGGERS = [
     "дай фото", "дай изображение", "картинка"
 ]
 
-# Лимит для сообщений (Telegram позволяет ~4096 символов, но иногда лучше ставить поменьше)
-MESSAGE_LIMIT = 4096
-# Лимит caption для фото
-CAPTION_LIMIT = 950
-
+CAPTION_LIMIT = 950        # Максимум символов для подписи (caption) под фото
+TELEGRAM_MSG_LIMIT = 4096  # Примерный максимальный размер одного HTML-сообщения
 
 def format_gemini_response(text: str) -> str:
     """
-    Преобразует текст от Gemini, находя блоки ```…```, превращая их в <pre><code>…</code></pre>,
-    а также экранирует HTML-спецсимволы и обрабатывает простейшую Markdown-разметку.
+    Преобразует текст от Gemini:
+     - ```…``` -> <pre><code>...</code></pre>
+     - экранирует HTML-спецсимволы,
+     - **…** -> <b>…</b>, *…* -> <i>…</i>, `…` -> <code>…</code>
     """
     code_blocks = {}
 
@@ -72,29 +71,23 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # Заменяем ```...``` на плейсхолдеры
+    # 1) Ищем тройные бэктики ```…```
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-
-    # Экранируем остатки текста (чтобы <, >, & и прочие символы не ломали HTML)
+    # 2) Экранируем всё остальное
     text = escape(text)
-
-    # Возвращаем на место <pre><code> … </code></pre>
-    for placeholder, block in code_blocks.items():
-        # при вставке используем escape(placeholder), т.к. placeholder тоже экранирован
-        text = text.replace(escape(placeholder), block)
-
-    # Преобразуем **…** -> <b>…</b>, *…* -> <i>…</i>, `…` -> <code>…</code>
+    # 3) Возвращаем <pre><code>...</code></pre> на место
+    for placeholder, block_html in code_blocks.items():
+        text = text.replace(escape(placeholder), block_html)
+    # 4) **…** / *…* / `…`
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-
     return text.strip()
 
 
 def get_safe_prompt(text: str) -> str:
     """
-    Преобразует запрос пользователя в короткий prompt для поиска на Unsplash.
-    Например: 'покажи тигра' -> 'тигра'
+    Для "покажи тигра" -> "тигра". Находит первое разумное слово для Unsplash.
     """
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     match = re.search(r'покажи(?:\s+мне)?\s+(\w+)', text)
@@ -105,8 +98,8 @@ def get_safe_prompt(text: str) -> str:
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     """
-    Поиск изображения через Unsplash API.
-    Возвращает URL или None в случае ошибки.
+    Вызывает Unsplash API, пытаясь получить рандомное фото.
+    Возвращает URL или None.
     """
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
@@ -120,115 +113,55 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 
-def parse_html_with_codeblocks(html_text: str):
+def split_smart(text: str, limit: int) -> list[str]:
     """
-    Разбивает финальный HTML-текст на список "токенов", 
-    где каждый токен — кортеж вида (type, content):
-      - ('code', '<pre><code>...</code></pre>')  для кодовых блоков
-      - ('text', '...') для обычного текста
-    Нужно, чтобы мы не "рвали" кодовые блоки при разбивке.
-    """
-    tokens = []
-    pattern = re.compile(r'(<pre><code.*?>.*?</code></pre>)', re.DOTALL)
-    parts = pattern.split(html_text)
-
-    for part in parts:
-        if not part:
-            continue
-        if part.startswith('<pre><code'):
-            tokens.append(("code", part))
-        else:
-            tokens.append(("text", part))
-    return tokens
-
-
-def build_caption_and_rest(html_text: str, max_caption_len: int = CAPTION_LIMIT):
-    """
-    Делит итоговый HTML-текст на две части: 
-    1) caption (до max_caption_len символов),
-    2) leftover (всё, что не влезло в caption).
-    При этом кодовые блоки ('<pre><code>...</code></pre>') НЕ дробятся.
-    Если целиком блок кода не влезает — отправляем его целиком в leftover.
-    """
-    tokens = parse_html_with_codeblocks(html_text)
-    current_len = 0
-    caption_builder = []
-    leftover_builder = []
-
-    for (ttype, content) in tokens:
-        if len(content) > max_caption_len:
-            # Целиком блок больше лимита — уходит целиком в leftover
-            leftover_builder.append((ttype, content))
-        else:
-            # Проверяем, влезает ли вместе с уже накопленным
-            if current_len + len(content) <= max_caption_len:
-                caption_builder.append((ttype, content))
-                current_len += len(content)
-            else:
-                leftover_builder.append((ttype, content))
-
-    # Преобразуем токены обратно в строки
-    caption_str = "".join([c for _, c in caption_builder]).strip()
-    leftover_tokens = leftover_builder  # список (type, content)
-
-    return caption_str, leftover_tokens
-
-
-def split_text_smart(text: str, limit: int = MESSAGE_LIMIT) -> list:
-    """
-    "Смысловая" разбивка длинного текста на части, 
-    стараясь разрезать по '. ' или хотя бы по пробелу.
-    """
-    chunks = []
-    chunk_start = 0
-    text_len = len(text)
-
-    while chunk_start < text_len:
-        # если остаток короче лимита - берем целиком
-        if (text_len - chunk_start) <= limit:
-            chunks.append(text[chunk_start:].strip())
-            break
-        # ищем точку с пробелом ближайшую к пределу
-        slice_end = chunk_start + limit
-        slice_chunk = text[chunk_start:slice_end]
-        # пытаемся найти точку с пробелом
-        idx = slice_chunk.rfind('. ')
-        if idx == -1:
-            # если нету точки, пробуем искать пробел
-            idx = slice_chunk.rfind(' ')
-            if idx == -1:
-                # тогда режем ровно где лимит
-                idx = limit
-        else:
-            idx += 1  # чтобы точка осталась в чанкe
-        chunks.append(text[chunk_start: chunk_start + idx].strip())
-        chunk_start += idx
-
-    return [c for c in chunks if c]  # убираем пустые
-
-
-def build_messages_from_tokens(tokens: list, limit: int = MESSAGE_LIMIT) -> list:
-    """
-    Получаем список токенов вида (type, content). Собираем итоговые сообщения, 
-    НЕ разбивая код ('code'), а тексты ('text') — дробим "смыслово", если они превышают лимит.
+    "Умная" разбивка текста на фрагменты не более `limit` символов,
+    старается искать ближайшее "`. `" (точка + пробел) или хотя бы пробел `" "` 
+    (если не найдёт, режет жёстко).
     
-    Возвращает список строк, каждая не длиннее limit (примерно).
+    Примерно такая логика:
+    1) Берём кусок в `limit` символов.
+    2) В нём ищем rfind('. ') -> если есть, режем тут (с учётом точки).
+    3) Если нет '. ', пробуем rfind(' ').
+    4) Если нет и пробела — режем жёстко на `limit`.
+    5) Добавляем результат в список, идём дальше.
     """
-    messages = []
-    for ttype, content in tokens:
-        if ttype == 'code':
-            # Код не дробим - сразу отдельное сообщение
-            # Но если блок больше лимита, Teleгram может отвергнуть.
-            messages.append(content.strip())
-        else:
-            # ttype == 'text'
-            if len(content) <= limit:
-                messages.append(content.strip())
+    results = []
+    start = 0
+    length = len(text)
+
+    while start < length:
+        # Остаток текста меньше лимита?
+        if (length - start) <= limit:
+            # Берём всё целиком
+            results.append(text[start:].strip())
+            break
+
+        # Иначе берём кандидат длиной limit
+        candidate = text[start : start + limit]
+        cut_pos = candidate.rfind('. ')
+        if cut_pos == -1:
+            # Не нашли точку + пробел
+            cut_pos = candidate.rfind(' ')
+            if cut_pos == -1:
+                # Даже пробела нет - придётся рубить жёстко
+                cut_pos = len(candidate)
             else:
-                # Применяем смысловую разбивку
-                parts = split_text_smart(content, limit)
-                messages.extend(parts)
-    return messages
+                # Иначе отсекаем по пробелу
+                pass
+        else:
+            # Нашли '. ', включим саму точку
+            cut_pos += 1
+
+        # Берём кусок до cut_pos
+        chunk = text[start : start + cut_pos].strip()
+        if chunk:
+            results.append(chunk)
+        # Сдвигаемся вперёд на cut_pos
+        start += cut_pos
+
+    # Убираем пустые фрагменты на всякий
+    return [r for r in results if r]
 
 
 @dp.message(Command("start"))
@@ -251,36 +184,36 @@ async def handle_msg(message: Message):
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Если пользователь спрашивает имя
+    # Проверяем, не спрашивает ли имя
     if any(name_trig in user_input.lower() for name_trig in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
         return
 
-    # Если спрашивает, кто создал
+    # Проверяем, не спрашивает ли автора
     if any(info_trig in user_input.lower() for info_trig in INFO_COMMANDS):
-        r = random.choice(OWNER_REPLIES)
-        await message.answer(r)
+        await message.answer(random.choice(OWNER_REPLIES))
         return
 
-    # Сохраняем историю для Gemini
+    # Сохраняем в историю для Gemini
     chat_history.setdefault(cid, []).append({"role": "user", "parts": [user_input]})
     if len(chat_history[cid]) > 5:
         chat_history[cid].pop(0)
 
     try:
         await bot.send_chat_action(cid, "typing")
+        # Запрашиваем текст у Gemini
         resp = model.generate_content(chat_history[cid])
         gemini_text = format_gemini_response(resp.text)
         logging.info(f"[GEMINI] => {gemini_text[:200]}")
 
-        # Проверяем, запрашивал ли пользователь изображение
+        # Проверяем, нужна ли картинка
         prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
         triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
         logging.info(f"[BOT] triggered={triggered}, image={image_url}")
 
+        # Если картинка найдена и пользователь её просил
         if image_url and triggered:
-            # 1) Скачиваем картинку
             async with aiohttp.ClientSession() as sess:
                 async with sess.get(image_url) as r:
                     if r.status == 200:
@@ -289,44 +222,53 @@ async def handle_msg(message: Message):
                             tmpf.write(photo_bytes)
                             tmp_path = tmpf.name
 
-                        # 2) Делаем разделение на caption/ leftover
-                        caption, leftover_tokens = build_caption_and_rest(gemini_text, CAPTION_LIMIT)
-
                         try:
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
 
-                            # Если caption пуст — хоть что-то поставим
-                            if not caption.strip():
-                                caption = "..."
+                            # Уместим ли весь текст в caption?
+                            if len(gemini_text) <= CAPTION_LIMIT:
+                                # Целиком идёт в caption
+                                if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
+                                    # И точно не превысит лимита одного сообщения
+                                    await bot.send_photo(cid, file, caption=gemini_text)
+                                else:
+                                    # Если вдруг текст (даже при 950) > 4096, бывает редко
+                                    # Но чисто теоретически: тогда отправим фото + caption, а лишнее - нет
+                                    # или можно выбросить ошибку
+                                    chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+                                    # Первый кусок (точно влезает, раз len(gemini_text)<=950)
+                                    await bot.send_photo(cid, file, caption=chunks[0])
+                                    # Остальные куски отдельно
+                                    for ch in chunks[1:]:
+                                        await message.answer(ch)
 
-                            # Отправляем фото + caption
-                            await bot.send_photo(cid, file, caption=caption)
-
-                            # 3) leftover_tokens => "смыслово" дробим (если нужно) и шлём сообщениями
-                            if leftover_tokens:
-                                # Превращаем leftover_tokens в список сообщений (each <= MESSAGE_LIMIT)
-                                leftover_messages = build_messages_from_tokens(leftover_tokens, MESSAGE_LIMIT)
-                                for msg_chunk in leftover_messages:
-                                    await message.answer(msg_chunk)
+                            else:
+                                # Текст не влезает в caption => ставим '…'
+                                await bot.send_photo(cid, file, caption="…")
+                                # И отправляем полный текст по "умной" разбивке, чтобы не превысить 4096
+                                if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
+                                    await message.answer(gemini_text)
+                                else:
+                                    chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+                                    for ch in chunks:
+                                        await message.answer(ch)
 
                         finally:
                             if os.path.exists(tmp_path):
                                 os.remove(tmp_path)
+
                         return
 
-        # Если не было картинки или не сработал триггер
-        # Отправляем весь текст "смыслово" разбитым, чтобы не превысить MESSAGE_LIMIT
-        tokens = parse_html_with_codeblocks(gemini_text)
-        splitted_messages = build_messages_from_tokens(tokens, MESSAGE_LIMIT)
+        # Если картинки нет или пользователь не просил
+        # Просто отправляем "умно" разбитый текст (не более 4096 символов за раз)
+        if len(gemini_text) <= TELEGRAM_MSG_LIMIT:
+            await message.answer(gemini_text)
+        else:
+            chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+            for ch in chunks:
+                await message.answer(ch)
 
-        for msg_part in splitted_messages:
-            await message.answer(msg_part)
-
-    except aiohttp.ClientConnectionError:
-        await message.answer("🚫 Ошибка: Нет связи с облаками.")
-    except ConnectionError:
-        await message.answer("⚠️ Нет подключения к интернету.")
     except Exception as e:
         logging.error(f"[BOT] Error: {e}")
         await message.answer(f"❌ Ошибка: {escape(str(e))}")
