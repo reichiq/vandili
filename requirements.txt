@@ -1,7 +1,5 @@
+aiogram==3.3.0
 aiohttp
-aiofiles
-aiogram==3.0.0b7
 python-dotenv
-pymorphy2
 google-generativeai
-requests
+pymorphy3
