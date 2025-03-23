@@ -16,7 +16,8 @@ import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
-from string import punctuation  # <-- Добавили для очистки слов от знаков
+from string import punctuation
+from googletrans import Translator  # импорт библиотеки для перевода
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -30,6 +31,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
+translator = Translator()  # создаём экземпляр переводчика
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
@@ -55,15 +57,17 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
+# Ключи — это нормальные формы слов, которые выдаёт pymorphy3
 RU_EN_DICT = {
-    "обезьян": "monkey",
+    "обезьяна": "monkey",
     "тигр": "tiger",
     "кошка": "cat",
-    "собак": "dog",
+    "собака": "dog",
     "пейзаж": "landscape",
     "чайка": "seagull",
     "париж": "paris",
-    "утконос": "platypus"
+    "утконос": "platypus",
+    "пудель": "poodle"
 }
 
 
@@ -79,7 +83,6 @@ def split_smart(text: str, limit: int) -> list[str]:
     while start < length:
         remain = length - start
         if remain <= limit:
-            # Хвост помещается целиком
             results.append(text[start:].strip())
             break
         candidate = text[start : start+limit]
@@ -87,11 +90,9 @@ def split_smart(text: str, limit: int) -> list[str]:
         if cut_pos == -1:
             cut_pos = candidate.rfind(' ')
             if cut_pos == -1:
-                # Если не нашли пробела, режем прямо по лимиту
                 cut_pos = len(candidate)
         else:
-            # Если нашли '. ', то оставляем точку, но вырезаем пробел после неё
-            cut_pos += 1  # чтобы включить точку
+            cut_pos += 1  # включаем точку, но убираем пробел
         chunk = text[start : start+cut_pos].strip()
         if chunk:
             results.append(chunk)
@@ -101,18 +102,14 @@ def split_smart(text: str, limit: int) -> list[str]:
 
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
     """
-    Первая часть (Caption) - умно обрезаем до 950 символов (CAPTION_LIMIT),
-    стараясь не рвать предложение. Остаток делим на <= 4096 (TELEGRAM_MSG_LIMIT).
+    Первую часть (Caption) - умно обрезаем до 950 символов,
+    стараясь не рвать предложение. Остаток делим на куски <= 4096.
     """
     if len(text) <= CAPTION_LIMIT:
-        # Всё влезает в Caption
         return text, []
 
-    # Разбиваем текст "умно" по 950 символов
     chunks_950 = split_smart(text, CAPTION_LIMIT)
-    # Первый кусок - Caption
     caption = chunks_950[0]
-    # Остальные куски склеим и порежем дальше по 4096
     leftover = " ".join(chunks_950[1:]).strip()
     if not leftover:
         return caption, []
@@ -207,9 +204,19 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 
+def fallback_translate_to_english(rus_word: str) -> str:
+    """Переводит слово с русского на английский через googletrans."""
+    try:
+        result = translator.translate(rus_word, src='ru', dest='en')
+        return result.text
+    except Exception as e:
+        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
+        return rus_word  # возвращаем исходное слово, если перевод не удался
+
+
 def parse_russian_show_request(user_text: str):
     """Ищем триггеры, извлекаем русское слово, убираем пунктуацию,
-       приводим к нормальной форме, ищем в словаре RU_EN_DICT."""
+       приводим к нормальной форме, ищем в словаре RU_EN_DICT или переводим."""
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
@@ -218,10 +225,8 @@ def parse_russian_show_request(user_text: str):
     match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
         raw_rus_word = match.group(3)
-        # Уберём знаки пунктуации с краёв
         raw_rus_word_clean = raw_rus_word.strip(punctuation)
 
-        # Прогоним через pymorphy3, чтобы получить нормальную форму
         parsed = morph.parse(raw_rus_word_clean)
         if parsed:
             rus_normal = parsed[0].normal_form
@@ -233,16 +238,19 @@ def parse_russian_show_request(user_text: str):
         rus_word = ""
         raw_rus_word = ""
 
-    # Удаляем из текста именно ту часть, которую нашли
-    # (можно обрабатывать более гибко, но оставим так)
     if raw_rus_word:
         pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
         leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     else:
         leftover = user_text
 
-    # Подставляем перевод (если есть)
-    en_word = RU_EN_DICT.get(rus_word, rus_word)
+    # Если слово есть в словаре, используем его перевод,
+    # иначе пробуем перевести через Google Translate
+    if rus_word in RU_EN_DICT:
+        en_word = RU_EN_DICT[rus_word]
+    else:
+        en_word = fallback_translate_to_english(rus_word)
+
     return (True, rus_word, en_word, leftover)
 
 
@@ -298,13 +306,13 @@ async def handle_msg(message: Message):
 
     has_image = bool(image_url)
 
-    # Логируем, чтобы понять, какой prompt уходит на Unsplash
+    # Логируем
     logging.info(
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    # Генерируем ответ от Gemini, если есть текст запроса
+    # Генерируем ответ от Gemini, если есть текст
     if full_prompt:
         chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
         if len(chat_history[cid]) > 5:
@@ -329,7 +337,7 @@ async def handle_msg(message: Message):
                     try:
                         await bot.send_chat_action(cid, "upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
-                        # Делим текст на caption (до 950) и остаток
+                        # Делим текст на caption и остаток
                         caption, rest = split_caption_and_text(gemini_text)
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
