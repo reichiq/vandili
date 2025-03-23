@@ -17,7 +17,7 @@ import tempfile
 from aiogram.filters import Command
 
 ############################
-# ПОПЫТАЕМСЯ ПОДКЛЮЧИТЬ googletrans
+# Попробуем подключить переводчик googletrans
 ############################
 try:
     from googletrans import Translator
@@ -27,7 +27,7 @@ except ImportError:
     translator = None
     USE_TRANSLATOR = False
 
-# Загружаем .env
+# Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -43,7 +43,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 ############################
-# ОТДЕЛЬНАЯ ПАМЯТЬ НА КАЖДЫЙ CHAT
+# Память для каждого чата
 ############################
 chat_history = {}
 
@@ -68,21 +68,9 @@ IMAGE_TRIGGERS = [
     "дай фото", "дай изображение", "картинка"
 ]
 
-UNWANTED_GEMINI_PHRASES = [
-    "Извини, я не могу показывать изображения",
-    "я не могу показывать изображения",
-    "I cannot display images",
-    "I can't display images",
-    "I am a text-based model",
-    "I'm a text-based model",
-    "I can't show images",
-    "не имею возможности взаимодействовать",  # расширяем
-]
-
-######################
-# СЛОВАРЬ ПОДСТАНОВОК
-######################
-# Если встречаем ключ в тексте, заменяем на значение — до перевода
+###########################
+# Словарь авто-замен (рус->англ)
+###########################
 PROMPT_FIX = {
     "пудель": "poodle",
     "пудели": "poodle",
@@ -96,13 +84,45 @@ PROMPT_FIX = {
     "орхидеи": "orchids",
     "орхидея": "orchid",
     "персики": "peaches",
+    "обезьяна": "monkey",
+    "обезьяну": "monkey"
 }
 
+###########################
+# Расширенные регулярки, чтобы вырезать
+# "я текстовая модель" + "ищи в Google" и т.д.
+###########################
+UNWANTED_REGEX = [
+    # Отговорки "не могу показать" (без привязки к одним словам)
+    r"(?:извини.*?не могу (напрямую )?показать.*?изображени.*?(\.|$))",
+    r"(?:я\s+не\s+могу\s+показать\s+.*?(\.|$))",
+    r"(?:я\s+текстова\w+\s+модель.*?(\.|$))",
+    r"(?:не име\w+ возмож\w+ взаимодействовать.*?(\.|$))",
+
+    # Ссылки на Google/Yandex
+    r"(?:google\s*(images)?|yandex\s*(картинк(и|ах)))",
+    r"(?:ищите\s+(в\s+)?google|ищите\s+(в\s+)?yandex)",
+    r"(?:вы\s+можете\s+найти\s+.*?google\s+images.*?(\.|$))"
+]
+
+###########################
+# Функция удаления нежелательного текста
+###########################
+def remove_unwanted_phrases(text: str) -> str:
+    for pattern in UNWANTED_REGEX:
+        # Удаляем кусок целиком (примерно до точки или перевода строки)
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
+    return text
+
 ############################
-# ФОРМАТИРОВАНИЕ ОТВЕТА
+# format_gemini_response
 ############################
 def format_gemini_response(text: str) -> str:
-    """Убираем код-блоки, вставки, отговорки, переводим Markdown → HTML."""
+    """
+    Убираем код-блоки, вставки типа [вставить картинку],
+    вырезаем все отговорки, ссылки на google.
+    Переводим Markdown -> HTML.
+    """
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
@@ -112,10 +132,10 @@ def format_gemini_response(text: str) -> str:
     # Удаляем code-blockи
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
 
-    # Удаляем шаблоны типа [вставить картинку]
+    # [вставить картинку..., insert..., фото...]
     text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
 
-    # Экранируем HTML
+    # HTML-escape
     text = escape(text)
 
     # Markdown => HTML
@@ -124,29 +144,32 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
 
-    # Убираем нежелательные отговорки
-    for phrase in UNWANTED_GEMINI_PHRASES:
-        text = re.sub(phrase, "", text, flags=re.IGNORECASE)
+    # Удаляем нежелательные отговорки по расширенным regex
+    text = remove_unwanted_phrases(text)
 
     return text.strip()
 
 ############################
-# ГЕНЕРАЦИЯ ПАРАМЕТРА ДЛЯ UNSPLASH
+# Генерация prompt для Unsplash
 ############################
 def get_safe_prompt(user_input: str) -> str:
     """
-    1) Убираем стоп-слова (покажи, расскажи, и т.п.)
-    2) Заменяем слова из PROMPT_FIX (например, 'пудель'->'poodle')
-    3) Переводим всю фразу на английский (если googletrans есть)
+    1) Удаляем знаки и стоп-слова
+    2) Заменяем некоторые слова через PROMPT_FIX
+    3) Переводим (если googletrans есть)
     """
     text = user_input.lower()
-    # Убираем лишние знаки
+    # Удаляем пунктуацию
     text = re.sub(r'[.,!?\-\n]', ' ', text)
-    # Удаляем стоп-слова
-    text = re.sub(r"\b(расскажи|покажи|мне|про|факт|фото|изображение|прикрепи|дай|и|о|об|отправь|что|такое|интересное)\b", "", text)
+    # Убираем стоп-слова
+    text = re.sub(
+        r"\b(расскажи|покажи|мне|про|факт|фото|изображение|прикрепи|дай|и|о|об|отправь|что|такое|интересное)\b",
+        "",
+        text
+    )
     words = text.strip().split()
 
-    # Подставляем фиксы
+    # PROMPT_FIX
     for i, w in enumerate(words):
         if w in PROMPT_FIX:
             words[i] = PROMPT_FIX[w]
@@ -155,21 +178,19 @@ def get_safe_prompt(user_input: str) -> str:
     if not cleaned:
         return "random"
 
-    # Переводим ВСЮ строку
+    # Переводим всю оставшуюся фразу
     if USE_TRANSLATOR:
         translated = translator.translate(cleaned, src="ru", dest="en").text
-        # Пример: "пудели собаки" -> "poodle dogs"
+        logging.info(f"[BOT] Translate RU->EN: '{cleaned}' -> '{translated}'")
         prompt = translated.strip()
-        logging.info(f"[BOT] Translate RU->EN: '{cleaned}' -> '{prompt}'")
         return prompt if prompt else "random"
     else:
         return cleaned
 
 ############################
-# ЗАПРОС К UNSPLASH
+# Запрос к Unsplash
 ############################
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
-    """Скачиваем random-фото с Unsplash по prompt."""
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
@@ -184,7 +205,7 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 ############################
-# РАЗДЕЛЯЕМ ДЛИННЫЙ ТЕКСТ
+# Разделяем текст на части
 ############################
 def split_text(text: str, max_length: int = 950):
     parts = []
@@ -215,15 +236,15 @@ async def cmd_start(message: Message):
     await message.answer(greet_text, parse_mode=ParseMode.HTML)
 
 ############################
-# ОСНОВНОЙ ОБРАБОТЧИК
+# Основная логика
 ############################
 @dp.message()
 async def handle_message(message: Message):
     user_input = message.text.strip()
-    chat_id = message.chat.id  # память для группы/приватного чата
+    chat_id = message.chat.id
     logging.info(f"[BOT] Получено: '{user_input}', chat_id={chat_id}")
 
-    # Если спрашивают про создателя
+    # Проверяем команду о создателе
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
         await asyncio.sleep(1)
@@ -231,42 +252,41 @@ async def handle_message(message: Message):
         await message.answer(reply, parse_mode=ParseMode.HTML)
         return
 
-    # Сохраняем историю под ключом chat_id
+    # Чат-история
     chat_history.setdefault(chat_id, []).append({"role": "user", "parts": [user_input]})
     if len(chat_history[chat_id]) > 5:
         chat_history[chat_id].pop(0)
 
     try:
         await bot.send_chat_action(chat_id, action="typing")
+        # Генерация Gemini
         response = model.generate_content(chat_history[chat_id])
         gemini_text = format_gemini_response(response.text)
-        logging.info(f"[GEMINI] text[:200] => {gemini_text[:200]}...")
+        logging.info(f"[GEMINI] text => {gemini_text[:200]}...")
 
-        # Обрабатываем prompt
+        # Prompt для Unsplash
         prompt = get_safe_prompt(user_input)
-        logging.info(f"[BOT] unsplash prompt => {prompt}")
+        logging.info(f"[BOT] Unsplash prompt => '{prompt}'")
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
         logging.info(f"[BOT] image_url => {image_url}")
 
-        # Проверка триггеров
         triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
         logging.info(f"[BOT] triggered => {triggered}")
 
-        # Если есть url и триггер
         if image_url and triggered:
+            logging.info("[BOT] Скачиваю Unsplash-фото...")
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
                         photo_bytes = await resp.read()
                         size = len(photo_bytes)
                         logging.info(f"[BOT] скачано {size} байт.")
-                        # Пишем во временный файл
                         import os
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
                             tmpfile.write(photo_bytes)
                             tmp_path = tmpfile.name
 
-                        # Разделяем текст
+                        # Нарезаем текст
                         chunks = split_text(gemini_text)
                         try:
                             await bot.send_chat_action(chat_id, action="upload_photo")
@@ -280,15 +300,14 @@ async def handle_message(message: Message):
                             )
                             for chunk in chunks[1:]:
                                 await message.answer(chunk, parse_mode=ParseMode.HTML)
-
                         finally:
                             if os.path.exists(tmp_path):
                                 os.remove(tmp_path)
                         return
                     else:
-                        logging.warning(f"[BOT] resp.status={resp.status}, фото не отправлено.")
+                        logging.warning(f"[BOT] resp.status={resp.status}, без фото...")
 
-        # Иначе -> просто текст
+        # Если не получилось - просто текст
         for chunk in split_text(gemini_text):
             await message.answer(chunk, parse_mode=ParseMode.HTML)
 
@@ -298,11 +317,10 @@ async def handle_message(message: Message):
         await message.answer("⚠️ Нет подключения к интернету.")
     except Exception as e:
         logging.error(f"[BOT] ошибка: {e}")
-        err_text = escape(str(e))
-        await message.answer(f"❌ Ошибка: {err_text}", parse_mode=ParseMode.HTML)
+        await message.answer(f"❌ Ошибка: {escape(str(e))}", parse_mode=ParseMode.HTML)
 
 ############################
-# ЗАПУСК
+# Запуск
 ############################
 async def main():
     await dp.start_polling(bot)
