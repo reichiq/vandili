@@ -30,7 +30,6 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = pymorphy2.MorphAnalyzer()
 
-# Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
@@ -102,23 +101,20 @@ def format_gemini_response(text: str) -> str:
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
     start = 0
-    length = len(text)
-    while start < length:
-        remain = length - start
+    while start < len(text):
+        remain = len(text) - start
         if remain <= limit:
             results.append(text[start:].strip())
             break
-        candidate = text[start : start+limit]
+        candidate = text[start:start+limit]
         cut_pos = candidate.rfind('. ')
         if cut_pos == -1:
             cut_pos = candidate.rfind(' ')
-            if cut_pos == -1:
-                cut_pos = len(candidate)
+        if cut_pos == -1:
+            cut_pos = limit
         else:
             cut_pos += 1
-        chunk = text[start : start+cut_pos].strip()
-        if chunk:
-            results.append(chunk)
+        results.append(text[start:start+cut_pos].strip())
         start += cut_pos
     return [x for x in results if x]
 
@@ -128,10 +124,7 @@ def parse_russian_show_request(user_text: str):
     if not triggered:
         return (False, "", "", user_text)
     match = re.search(r"(покажи|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
-    if match:
-        rus_word = match.group(2)
-    else:
-        rus_word = ""
+    rus_word = match.group(2) if match else ""
     pattern_remove = rf"(покажи|хочу увидеть|пришли фото)\s+{rus_word}"
     leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     en_word = RU_EN_DICT.get(rus_word, rus_word)
@@ -141,16 +134,15 @@ def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
     if not parsed:
         return rus_word
-    p = parsed[0]
-    loct = p.inflect({'loct'})
+    loct = parsed[0].inflect({'loct'})
     return loct.word if loct else rus_word
 
 def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     word_prep = get_prepositional_form(rus_word)
     pronoun_map = {
-        r"\bо\s+нем\b":  f"о {word_prep}",
-        r"\bо\s+нём\b":  f"о {word_prep}",
-        r"\bо\s+ней\b":  f"о {word_prep}",
+        r"\bо\s+нем\b": f"о {word_prep}",
+        r"\bо\s+нём\b": f"о {word_prep}",
+        r"\bо\s+ней\b": f"о {word_prep}"
     }
     for pattern, repl in pronoun_map.items():
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
@@ -185,24 +177,18 @@ async def handle_msg(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = (message.text or "").lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
-        is_reply_to_bot = (
-            message.reply_to_message and
-            message.reply_to_message.from_user and
-            (message.reply_to_message.from_user.id == bot.id)
-        )
-        mention_keywords = ["vai", "вай", "вэй"]
-        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
+        is_reply_to_bot = message.reply_to_message and message.reply_to_message.from_user.id == bot.id
+        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in ["vai", "вай", "вэй"]):
             return
 
     user_input = message.text.strip()
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    lower_inp = user_input.lower()
-    if any(nc in lower_inp for nc in NAME_COMMANDS):
+    if any(cmd in user_input.lower() for cmd in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
         return
-    if any(ic in lower_inp for ic in INFO_COMMANDS):
+    if any(cmd in user_input.lower() for cmd in INFO_COMMANDS):
         await message.answer(random.choice(OWNER_REPLIES))
         return
 
@@ -211,8 +197,7 @@ async def handle_msg(message: Message):
         leftover = replace_pronouns_morph(leftover, rus_word)
 
     gemini_text = ""
-    leftover = leftover.strip()
-    if leftover:
+    if leftover.strip():
         chat_history.setdefault(cid, []).append({"role": "user", "parts": [leftover]})
         if len(chat_history[cid]) > 5:
             chat_history[cid].pop(0)
@@ -225,7 +210,6 @@ async def handle_msg(message: Message):
             gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
     image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
-
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -246,9 +230,8 @@ async def handle_msg(message: Message):
                         os.remove(tmp_path)
 
     if gemini_text:
-        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-        for c in chunks:
-            await message.answer(c)
+        for chunk in split_smart(gemini_text, TELEGRAM_MSG_LIMIT):
+            await message.answer(chunk)
 
 async def main():
     await dp.start_polling(bot)
