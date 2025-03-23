@@ -66,8 +66,8 @@ def format_gemini_response(text: str) -> str:
     # Код-блоки
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
 
-    # Удалить изображения типа [Изображение ...]
-    text = re.sub(r"\[Изображение.*?\]", "", text)
+    # Удаление заглушек Gemini вроде [Вставьте сюда фото...]
+    text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
 
     # Экранируем HTML
     text = escape(text)
@@ -130,8 +130,6 @@ async def handle_message(message: Message):
         image_prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
 
-        print("Image URL:", image_url)
-
         if image_url and any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -141,7 +139,6 @@ async def handle_message(message: Message):
                             file = FSInputFile(BytesIO(photo), filename="image.jpg")
                             caption = gemini_text[:950] if gemini_text else ""
 
-                            print("Отправка изображения...")
                             await bot.send_photo(chat_id=message.chat.id, photo=file, caption=caption, parse_mode=ParseMode.HTML)
                             return
             except Exception as e:
