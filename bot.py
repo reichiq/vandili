@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
 import google.generativeai as genai
+import tempfile
+import shutil
 
+# Загрузка .env
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -51,17 +54,18 @@ IMAGE_TRIGGERS = [
 ]
 
 def format_gemini_response(text: str) -> str:
+    """Форматируем ответ от Gemini в Telegram HTML."""
     def extract_code(match):
         lang = match.group(1) or "text"
         code = escape(match.group(2))
         placeholder = f"__CODE_BLOCK__"
         return placeholder
 
-    # Упростим, чтобы не путаться
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     text = re.sub(r"\[.*?(фото|изображени|вставьте).*?\]", "", text, flags=re.IGNORECASE)
     text = escape(text)
-    # Markdown → HTML
+
+    # Преобразуем Markdown-style в HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
@@ -69,33 +73,29 @@ def format_gemini_response(text: str) -> str:
     return text.strip()
 
 def get_safe_prompt(text: str) -> str:
+    """Извлекаем осмысленный prompt для Unsplash, убирая стоп-слова."""
     text = re.sub(r'[.,!?\-\n]', ' ', text.lower())
     text = re.sub(r"\b(расскажи|покажи|мне|про|факт|фото|изображение|прикрепи|дай|и|о|об|отправь|что|такое|интересное)\b", "", text)
     words = text.strip().split()
-    if not words:
-        return "random"
-    # Возьмем до 3 слов
-    return " ".join(words[:3])
+    return " ".join(words[:3]) if words else "random"
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
-    logging.info(f"[UNSPLASH] Запрос по prompt: '{prompt}'")
+    """Запрашиваем Unsplash, получаем URL regular-качества."""
     url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
-                logging.info(f"[UNSPLASH] Статус ответа: {response.status}")
+                logging.info(f"[UNSPLASH] status: {response.status}")
                 if response.status == 200:
                     data = await response.json()
-                    logging.info(f"[UNSPLASH] Ответ JSON: {data}")
-                    if 'urls' in data and 'regular' in data['urls']:
-                        return data['urls']['regular']
-                    else:
-                        logging.warning("[UNSPLASH] Нет поля 'urls' или 'regular'")
+                    if "urls" in data and "regular" in data["urls"]:
+                        return data["urls"]["regular"]
     except Exception as e:
         logging.warning(f"Ошибка при получении изображения: {e}")
     return None
 
 def split_text(text: str, max_length: int = 950):
+    """Разбиваем текст по точкам, чтобы не рвать предложения."""
     parts = []
     while len(text) > max_length:
         split_index = text[:max_length].rfind('. ')
@@ -111,73 +111,90 @@ def split_text(text: str, max_length: int = 950):
 async def handle_message(message: Message):
     user_input = message.text.strip()
     user_id = message.from_user.id
+    logging.info(f"[BOT] Получено: '{user_input}', от user_id={user_id}")
 
-    logging.info(f"[BOT] Получено сообщение: '{user_input}'")
-    logging.info(f"[BOT] Пользователь ID: {user_id}")
-
-    # Проверка — инфо-команды
+    # Проверка команд о владельце
     if any(trigger in user_input.lower() for trigger in INFO_COMMANDS):
         reply = random.choice(OWNER_REPLIES)
-        logging.info("[BOT] Сработала инфо-команда => ответ про создателя Vandili")
+        logging.info("[BOT] Отправляю инфо-ответ (Vandili).")
+        await bot.send_chat_action(message.chat.id, action="typing")
+        await asyncio.sleep(1.2)
         await message.answer(reply, parse_mode=ParseMode.HTML)
         return
 
-    # Добавляем сообщение в чат-историю
+    # Чат-история
     chat_history.setdefault(user_id, []).append({"role": "user", "parts": [user_input]})
     if len(chat_history[user_id]) > 5:
         chat_history[user_id].pop(0)
 
-    # Печатает...
-    await bot.send_chat_action(message.chat.id, action="typing")
+    try:
+        await bot.send_chat_action(message.chat.id, action="typing")
+        # Генерация текста
+        response = model.generate_content(chat_history[user_id])
+        gemini_text = format_gemini_response(response.text)
+        logging.info(f"[GEMINI] Итоговый текст: {gemini_text[:200]}...")
 
-    # Генерация от Gemini
-    response = model.generate_content(chat_history[user_id])
-    gemini_text = format_gemini_response(response.text)
+        # Prompt для Unsplash
+        image_prompt = get_safe_prompt(user_input)
+        logging.info(f"[BOT] image_prompt='{image_prompt}'")
+        image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
+        logging.info(f"[BOT] image_url={image_url}")
 
-    logging.info(f"[GEMINI] Итоговый текст (после format): '{gemini_text[:200]}...'")
+        # Проверяем триггер
+        triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
+        logging.info(f"[BOT] triggered={triggered}")
 
-    # Prompt для Unsplash
-    image_prompt = get_safe_prompt(user_input)
-    logging.info(f"[BOT] Итоговый 'image_prompt': '{image_prompt}'")
+        # Если есть URL + триггер => отправляем фото
+        if image_url and triggered:
+            logging.info("[BOT] Пробую скачать файл с Unsplash и отправить фото...")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(image_url) as resp:
+                        if resp.status == 200:
+                            photo_bytes = await resp.read()
+                            size = len(photo_bytes)
+                            logging.info(f"[BOT] скачано {size} байт.")
+                            # Сохраним во временный файл
+                            import tempfile, os
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
+                                tmpfile.write(photo_bytes)
+                                tmp_path = tmpfile.name
 
-    # Получение URL
-    image_url = await get_unsplash_image_url(image_prompt, UNSPLASH_ACCESS_KEY)
-    logging.info(f"[BOT] image_url: {image_url}")
+                            chunks = split_text(gemini_text)
+                            try:
+                                await bot.send_chat_action(message.chat.id, action="upload_photo")
+                                file = FSInputFile(tmp_path, filename="image.jpg")
+                                await bot.send_photo(
+                                    chat_id=message.chat.id,
+                                    photo=file,
+                                    caption=chunks[0] if chunks else "...",
+                                    parse_mode=ParseMode.HTML
+                                )
 
-    # Есть ли триггер для фото?
-    triggered = any(trigger in user_input.lower() for trigger in IMAGE_TRIGGERS)
-    logging.info(f"[BOT] triggered (фото)?: {triggered}")
+                                for chunk in chunks[1:]:
+                                    await message.answer(chunk, parse_mode=ParseMode.HTML)
 
-    # Если и URL, и триггер => отправляем фото
-    if image_url and triggered:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status == 200:
-                        logging.info("[BOT] Успешно скачал фото, отправляю в чат...")
-                        photo = await resp.read()
-                        file = FSInputFile(BytesIO(photo), filename="image.jpg")
-                        chunks = split_text(gemini_text)
-                        # Отправляем первую часть как caption
-                        await bot.send_photo(
-                            chat_id=message.chat.id,
-                            photo=file,
-                            caption=chunks[0] if chunks else "...",
-                            parse_mode=ParseMode.HTML
-                        )
-                        # Остальные части — отдельными сообщениями
-                        for chunk in chunks[1:]:
-                            await message.answer(chunk, parse_mode=ParseMode.HTML)
-                        return
-                    else:
-                        logging.warning(f"[BOT] resp.status != 200 ({resp.status}) => не отправляю фото")
-        except Exception as e:
-            logging.warning(f"Ошибка при отправке изображения: {e}")
+                            finally:
+                                # Удалим временный файл
+                                os.remove(tmp_path)
+                            return
+                        else:
+                            logging.warning(f"[BOT] resp.status={resp.status}, не отправляю фото.")
+            except Exception as e:
+                logging.warning(f"[BOT] Ошибка при отправке изображения: {e}")
 
-    # Иначе — просто текст
-    logging.info("[BOT] Отправляю текст без фото...")
-    for chunk in split_text(gemini_text):
-        await message.answer(chunk, parse_mode=ParseMode.HTML)
+        # Если что-то пошло не так => просто текст
+        logging.info("[BOT] Отправляю текст без фото.")
+        for chunk in split_text(gemini_text):
+            await message.answer(chunk, parse_mode=ParseMode.HTML)
+
+    except aiohttp.ClientConnectionError:
+        await message.answer("🚫 Ошибка: Не удаётся подключиться к облакам Vandili.")
+    except ConnectionError:
+        await message.answer("⚠️ Нет подключения к интернету.")
+    except Exception as e:
+        logging.error(f"[BOT] Общая ошибка: {e}")
+        await message.answer(f"❌ Ошибка: {escape(str(e))}", parse_mode=ParseMode.HTML)
 
 async def main():
     await dp.start_polling(bot)
