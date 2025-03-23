@@ -36,7 +36,10 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
+model = genai.GenerativeModel(
+    model_name="models/gemini-1.5-pro-latest",
+    system_instruction="Не упоминай, что ты ИИ, и не говори, что не можешь показать изображение. Просто предоставь полезный ответ."
+)
 
 chat_history = {}
 
@@ -54,11 +57,13 @@ OWNER_REPLIES = [
     "Я бот <b>Vandili</b>. Всё просто.",
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
+
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
     "пришли картинку", "прикрепи фото", "покажи картинку",
     "дай фото", "дай изображение", "картинка"
 ]
+
 PROMPT_FIX = {
     "пудель": "poodle", "пудели": "poodle",
     "кошка": "cat", "кошки": "cats", "кот": "cat", "коты": "cats",
@@ -92,7 +97,7 @@ def maybe_shorten_text(original: str, user_input: str) -> str:
     return original
 
 def format_gemini_response(text: str, user_input: str) -> str:
-    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)  # удалить code blocks
+    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)
     text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
     text = escape(text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
@@ -100,8 +105,7 @@ def format_gemini_response(text: str, user_input: str) -> str:
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^\s*\*\s+', '• ', text, flags=re.MULTILINE)
     text = remove_unwanted_phrases(text)
-    text = maybe_shorten_text(text.strip(), user_input)
-    return text.strip()
+    return maybe_shorten_text(text.strip(), user_input)
 
 def get_safe_prompt(user_input: str) -> str:
     text = user_input.lower()
@@ -147,15 +151,13 @@ def split_text(text: str, max_len=950):
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-       greet = (
-    "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
-    "Я могу отвечать на самые разные вопросы, делиться фактами, рассказывать интересное и даже показывать изображения по твоему запросу.\n\n"
-    "Попробуй, например:\n"
-    "• «покажи тигра»\n"
-    "• «расскажи про Луну»\n\n"
-    "Всегда рад пообщаться! 🧠✨"
-)
-
+    greet = (
+        "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
+        "Я могу отвечать на самые разные вопросы, делиться фактами, рассказывать интересное и даже показывать изображения по твоему запросу.\n\n"
+        "Попробуй, например:\n"
+        "• «покажи тигра»\n"
+        "• «расскажи про Луну»\n\n"
+        "Всегда рад пообщаться! 🧠✨"
     )
     await message.answer(greet)
 
@@ -202,8 +204,7 @@ async def handle_msg(message: Message):
                         try:
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
-                            cpt = parts[0] if parts else "..."
-                            await bot.send_photo(cid, file, caption=cpt)
+                            await bot.send_photo(cid, file, caption=parts[0] if parts else "...")
                             for chunk in parts[1:]:
                                 await message.answer(chunk)
                         finally:
