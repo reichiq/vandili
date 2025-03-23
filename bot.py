@@ -47,10 +47,12 @@ INFO_COMMANDS = [
     "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"
 ]
 OWNER_REPLIES = [
-    "Я — <b>VAI</b>, интеллектуальный помощник.",
-    "Я создан, чтобы помогать. Просто зови меня <b>VAI</b>.",
-    "Я помощник <b>VAI</b>, всегда рядом для твоих вопросов.",
-    "Моя цель — быть полезным. Просто <b>VAI</b>."
+    "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>.",
+    "Мой создатель — <b>Vandili</b>. Я работаю для него.",
+    "Я принадлежу <i>Vandili</i>, он мой автор.",
+    "Создан <b>Vandili</b> — именно он дал мне жизнь.",
+    "Я бот <b>Vandili</b>. Всё просто.",
+    "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 IMAGE_TRIGGERS = [
     "покажи", "покажи мне", "фото", "изображение", "отправь фото",
@@ -90,7 +92,8 @@ def maybe_shorten_text(original: str, user_input: str) -> str:
     return original
 
 def format_gemini_response(text: str, user_input: str) -> str:
-    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", r"<pre><code>\1</code></pre>", text)
+    text = re.sub(r"```(?:\w+)?\n([\s\S]+?)```", "", text)
+    text = re.sub(r"\[.*?(фото|изображени|вставьте|вставить|insert|картинку).*?\]", "", text, flags=re.IGNORECASE)
     text = escape(text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
@@ -176,9 +179,15 @@ async def handle_msg(message: Message):
     try:
         await bot.send_chat_action(cid, "typing")
         resp = model.generate_content(chat_history[cid])
-        gemini_text = format_gemini_response(resp.text, user_input)
-        logging.info(f"[GEMINI] => {gemini_text[:200]}")
+        text = resp.text.strip()
 
+        # Если это Python-код, форматируем его красиво
+        if re.search(r"\bdef\b.+\):", text) and "```" not in text:
+            text = f"<pre><code class='language-python'>{escape(text)}</code></pre>"
+            await message.answer(text, parse_mode=ParseMode.HTML)
+            return
+
+        gemini_text = format_gemini_response(text, user_input)
         prompt = get_safe_prompt(user_input)
         image_url = await get_unsplash_image_url(prompt, UNSPLASH_ACCESS_KEY)
         triggered = any(t in user_input.lower() for t in IMAGE_TRIGGERS)
@@ -196,13 +205,12 @@ async def handle_msg(message: Message):
                         try:
                             await bot.send_chat_action(cid, "upload_photo")
                             file = FSInputFile(tmp_path, filename="image.jpg")
-                            cpt = parts[0] if parts else "..."
-                            await bot.send_photo(cid, file, caption=cpt)
+                            caption = parts[0] if parts else "Вот изображение:"
+                            await bot.send_photo(cid, file, caption=caption)
                             for chunk in parts[1:]:
                                 await message.answer(chunk)
                         finally:
-                            if os.path.exists(tmp_path):
-                                os.remove(tmp_path)
+                            os.remove(tmp_path)
                         return
 
         for chunk in split_text(gemini_text):
