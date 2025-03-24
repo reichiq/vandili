@@ -452,24 +452,33 @@ def parse_russian_show_request(user_text: str):
 
 @dp.message()
 async def handle_msg(message: Message):
+    # Проверяем, что это сообщение в группе или супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        # Если бот выключен в этом чате, то ничего не делаем
         if message.chat.id not in enabled_chats:
-            return  # Бот выключен в этом чате
+            return
+
         text_lower = (message.text or "").lower()
+
+        # Проверяем, упомянул ли кто-то бота или это ответ на его сообщение
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
             message.reply_to_message
             and message.reply_to_message.from_user
             and (message.reply_to_message.from_user.id == bot.id)
         )
-        mention_keywords = ["vai", "вай", "вэй"]
-        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
-            return  # Игнорировать сообщение, если оно не содержит упоминания бота или ключевых слов
+        mention_keywords = ["вай", "вэй", "vai"]
 
+        # Бот будет реагировать только если его упомянули или это ответ на его сообщение
+        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
+            return  # Если не упомянули и не ответили на бота, бот не реагирует
+
+    # Далее происходит обработка сообщения, как обычно:
     user_input = message.text.strip()
     cid = message.chat.id
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
+    # Реакция на команду "Как тебя зовут" или "Кто ты?"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await message.answer("Меня зовут <b>VAI</b>!")
@@ -478,6 +487,7 @@ async def handle_msg(message: Message):
         await message.answer(random.choice(OWNER_REPLIES))
         return
 
+    # Преобразуем запросы типа "вай покажи кота" в нужный формат
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
@@ -485,6 +495,7 @@ async def handle_msg(message: Message):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
+    # Запрос к Unsplash для получения изображения
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -494,6 +505,7 @@ async def handle_msg(message: Message):
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
+    # Генерация и отправка ответа с изображением, если оно есть
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
         
     if has_image:
@@ -511,14 +523,14 @@ async def handle_msg(message: Message):
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
                             await message.answer(c)
-                        gemini_text = ""
                     finally:
                         os.remove(tmp_path)
-                        
+
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+
  
 
 async def main():
