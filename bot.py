@@ -94,10 +94,12 @@ async def handle_all_messages(message: Message):
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
+            username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
             content = (
-                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> "
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
                 f"(id: <code>{uid}</code>):\n\n{caption}"
-            )
+)
+
 
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
