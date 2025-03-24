@@ -45,7 +45,28 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 chat_history = {}
-enabled_chats = set()
+import json
+
+ENABLED_CHATS_FILE = "enabled_chats.json"
+
+def load_enabled_chats() -> set:
+    if not os.path.exists(ENABLED_CHATS_FILE):
+        return set()
+    try:
+        with open(ENABLED_CHATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return set(data)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось загрузить enabled_chats: {e}")
+        return set()
+
+def save_enabled_chats(chats: set):
+    try:
+        with open(ENABLED_CHATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(chats), f)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить enabled_chats: {e}")
+enabled_chats = load_enabled_chats()
 support_mode_users = set()
 ADMIN_ID = 1936733487
 
@@ -60,6 +81,7 @@ async def cmd_start(message: Message):
 
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.add(message.chat.id)
+        save_enabled_chats(enabled_chats)
         logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
 
 
@@ -67,6 +89,7 @@ async def cmd_start(message: Message):
 async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
+        save_enabled_chats(enabled_chats)
         await message.answer("Бот отключён в этом чате.")
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
