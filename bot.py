@@ -470,7 +470,7 @@ else:
 
         try:
             await bot.send_chat_action(cid, "typing")
-            resp = model.generate_content(chat_history[cid])
+            resp = await model.generate_content(chat_history[cid])
 
             if not resp.candidates:
                 reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
@@ -482,7 +482,6 @@ else:
         except Exception as e:
             logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
             gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
-
 
 
     if has_image:
