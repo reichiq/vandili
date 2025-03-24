@@ -92,7 +92,7 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-    if uid in support_mode_users:
+if uid in support_mode_users:
     try:
         caption = message.caption or message.text or "[Без текста]"
         content = (
