@@ -457,8 +457,7 @@ async def handle_msg(message: Message):
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
-
-gemini_text = ""
+    gemini_text = ""
 
 if show_image and rus_word and not leftover:
     gemini_text = generate_short_caption(rus_word)
