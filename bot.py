@@ -24,7 +24,6 @@ from string import punctuation
 from googletrans import Translator
 
 translator = Translator()
-result = translator.translate(text, dest='en').text
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
