@@ -100,7 +100,7 @@ async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
         save_enabled_chats(enabled_chats)
-        await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, "Бот отключён в этом чате.")
+        await message.answer("Бот отключён в этом чате.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
 
