@@ -4,9 +4,9 @@ import re
 import random
 import aiohttp
 from io import BytesIO
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
-from aiogram.types import FSInputFile, Message
+from aiogram.types import FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile, BufferedInputFile
 from aiogram.client.default import DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
@@ -50,7 +50,52 @@ model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 chat_history = {}
 enabled_chats = set()
+support_mode_users = set()
+ADMIN_ID = 1936733487
 
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]
+        ]
+    )
+    await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "support_request")
+async def handle_support_click(callback: CallbackQuery):
+    await callback.message.answer("Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.")
+    support_mode_users.add(callback.from_user.id)
+    await callback.answer()
+
+@dp.message()
+async def handle_msg(message: Message):
+    cid = message.chat.id
+    uid = message.from_user.id
+
+    if uid in support_mode_users:
+        try:
+            caption = message.caption or message.text or "[Без текста]"
+            content = f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> (id: <code>{uid}</code>):\n\n{caption}"
+
+            if message.photo:
+                file = message.photo[-1]
+                file_bytes = await file.download(destination=BytesIO())
+                await bot.send_photo(ADMIN_ID, photo=BufferedInputFile(file_bytes.getvalue(), filename="image.jpg"), caption=content)
+            elif message.video:
+                file = message.video
+                file_bytes = await file.download(destination=BytesIO())
+                await bot.send_video(ADMIN_ID, video=BufferedInputFile(file_bytes.getvalue(), filename="video.mp4"), caption=content)
+            else:
+                await bot.send_message(ADMIN_ID, content)
+
+            await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
+        except Exception as e:
+            await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
+            logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+        finally:
+            support_mode_users.discard(uid)
+        return
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
