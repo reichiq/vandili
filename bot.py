@@ -102,31 +102,61 @@ if uid in support_mode_users:
 
         if message.photo:
             file = message.photo[-1]
-            file_data = await bot.download(file)
-            photo_bytes = file_data.read()
+            photo_bytes = await file.download(destination=BytesIO())
             await bot.send_photo(
                 ADMIN_ID,
-                photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
+                photo=BufferedInputFile(photo_bytes.getvalue(), filename="image.jpg"),
                 caption=content
             )
+
         elif message.video:
             file = message.video
-            file_data = await bot.download(file)
-            video_bytes = file_data.read()
+            video_bytes = await file.download(destination=BytesIO())
             await bot.send_video(
                 ADMIN_ID,
-                video=BufferedInputFile(video_bytes, filename="video.mp4"),
+                video=BufferedInputFile(video_bytes.getvalue(), filename="video.mp4"),
                 caption=content
             )
+
+        elif message.document:
+            file = message.document
+            doc_bytes = await file.download(destination=BytesIO())
+            await bot.send_document(
+                ADMIN_ID,
+                document=BufferedInputFile(doc_bytes.getvalue(), filename=file.file_name or "document"),
+                caption=content
+            )
+
+        elif message.audio:
+            file = message.audio
+            audio_bytes = await file.download(destination=BytesIO())
+            await bot.send_audio(
+                ADMIN_ID,
+                audio=BufferedInputFile(audio_bytes.getvalue(), filename=file.file_name or "audio.mp3"),
+                caption=content
+            )
+
+        elif message.voice:
+            file = message.voice
+            voice_bytes = await file.download(destination=BytesIO())
+            await bot.send_voice(
+                ADMIN_ID,
+                voice=BufferedInputFile(voice_bytes.getvalue(), filename="voice.ogg"),
+                caption=content
+            )
+
         else:
             await bot.send_message(ADMIN_ID, content)
 
         await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
+
     except Exception as e:
         await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
         logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+
     finally:
         support_mode_users.discard(uid)
+
     return
 
     # если не режим поддержки — вызываем обычную логику
