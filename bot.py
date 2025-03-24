@@ -77,8 +77,10 @@ RU_EN_DICT = {
     "чайка": "seagull",
     "париж": "paris",
     "утконос": "platypus",
-    "пудель": "poodle"
+    "пудель": "poodle",
+    "медоед": "honey badger"
 }
+
 
 
 def split_smart(text: str, limit: int) -> list[str]:
