@@ -25,7 +25,7 @@ from google.cloud import translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
-key_path = '/root/vandili/gcloud-key.json' # Убедись, что путь верный
+key_path = '/root/vandili/gcloud-key.json'  # Убедись, что путь верный
 credentials = service_account.Credentials.from_service_account_file(key_path)
 
 # Инициализируем клиент для перевода
@@ -67,6 +67,7 @@ async def handle_support_click(callback: CallbackQuery):
     await callback.message.answer("Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.")
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
+
 
 @dp.message()
 async def handle_msg(message: Message):
