@@ -82,7 +82,7 @@ async def cmd_start(message: Message):
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
         "Всегда на связи!"
     )
-    await message.answer(greet, reply_to_message_id=message.message_id, message_thread_id=thread_id)
+    await message.answer(greet)
 
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.add(message.chat.id)
@@ -100,7 +100,7 @@ async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
         save_enabled_chats(enabled_chats)
-        await message.answer("Бот отключён в этом чате.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
+        await message.answer("Бот отключён в этом чате.")
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
 
@@ -116,7 +116,7 @@ async def cmd_help(message: Message):
             [InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]
         ]
     )
-        await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_to_message_id=message.message_id, message_thread_id=thread_id, reply_markup=keyboard)
+    await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
 
 
 
@@ -212,10 +212,10 @@ async def handle_all_messages(message: Message):
             else:
                 await bot.send_message(ADMIN_ID, content)
 
-        await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
+            await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
 
         except Exception as e:
-        await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
+            await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
 
         finally:
@@ -511,10 +511,10 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Реакция на команду "Как тебя зовут" или "Кто ты?"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await message.answer("Меня зовут <b>VAI</b>!", reply_to_message_id=message.message_id, message_thread_id=thread_id)
+        await message.answer("Меня зовут <b>VAI</b>!")
         return
     if any(ic in lower_inp for ic in INFO_COMMANDS):
-        await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, random.choice(OWNER_REPLIES))
+        await message.answer(random.choice(OWNER_REPLIES))
         return
 
     # Преобразуем запросы типа "вай покажи кота" в нужный формат
@@ -552,14 +552,14 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                         caption, rest = split_caption_and_text(gemini_text)
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
-                            await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, c)
+                            await message.answer(c)
                     finally:
                         os.remove(tmp_path)
 
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
-            await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, c)
+            await message.answer(c)
 
  
 
