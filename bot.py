@@ -22,7 +22,14 @@ from string import punctuation
 # Google Cloud Translation
 # ---------------------
 from google.cloud import translate_v2 as translate
-translate_client = translate.Client()
+from google.oauth2 import service_account
+
+# Указываем путь к файлу ключа
+key_path = '/home/khan7/gen-lang-client-0538633345-a454d9af390a.json'  # Убедись, что путь верный
+credentials = service_account.Credentials.from_service_account_file(key_path)
+
+# Инициализируем клиент для перевода
+translate_client = translate.Client(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -36,9 +43,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
-
-# Инициализируем клиент перевода (использует GOOGLE_APPLICATION_CREDENTIALS)
-translate_client = translate.Client()
 
 # Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
