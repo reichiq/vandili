@@ -463,6 +463,7 @@ def parse_russian_show_request(user_text: str):
         en_word = fallback_translate_to_english(rus_word)
 
     return (True, rus_word, en_word, leftover)
+
 @dp.message()
 async def handle_msg(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -477,7 +478,7 @@ async def handle_msg(message: Message):
         )
         mention_keywords = ["vai", "вай", "вэй"]
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
-            return
+            return  # Игнорировать сообщение, если оно не содержит упоминания бота или ключевых слов
 
     user_input = message.text.strip()
     cid = message.chat.id
@@ -532,6 +533,7 @@ async def handle_msg(message: Message):
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+ 
 
 async def main():
     await dp.start_polling(bot)
