@@ -29,7 +29,7 @@ key_path = '/home/khan7/gen-lang-client-0538633345-a454d9af390a.json'  # Убе�
 credentials = service_account.Credentials.from_service_account_file(key_path)
 
 # Инициализируем клиент для перевода
-translate_client = translate.TranslationServiceClient(credentials=credentials)
+translate_client = translate.Client(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
