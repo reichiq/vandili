@@ -49,6 +49,8 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
 chat_history = {}
+enabled_chats = set()
+
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
@@ -283,17 +285,30 @@ def parse_russian_show_request(user_text: str):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
-        "Привет! Я <b>VAI</b> — интеллектуальный помощник.\n\n"
-        "Напиши: «покажи Париж и расскажи о нём» — я покажу фото и факты.\n"
-        "Теперь я умею более правильно склонять слова (спасибо pymorphy3!).\n\n"
-        "Всегда рад помочь!"
-    )
+    "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
+    "Просто напиши мне, и я постараюсь ответить или помочь.\n"
+    "Всегда на связи!"
+)
     await message.answer(greet)
+
+    # Включаем бота в группе
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.add(message.chat.id)
+        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
+
+@dp.message(Command("stop"))
+async def cmd_stop(message: Message):
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.discard(message.chat.id)
+        await message.answer("Бот отключён в этом чате.")
+        logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
 
 @dp.message()
 async def handle_msg(message: Message):
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        if message.chat.id not in enabled_chats:
+            return  # Бот выключен в этом чате
         text_lower = (message.text or "").lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
