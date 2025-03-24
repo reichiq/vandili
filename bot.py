@@ -89,8 +89,7 @@ async def handle_support_click(callback: CallbackQuery):
 
 
 @dp.message()
-async def handle_support_msg(message: Message):
-    cid = message.chat.id
+async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
     if uid in support_mode_users:
@@ -116,6 +115,24 @@ async def handle_support_msg(message: Message):
         finally:
             support_mode_users.discard(uid)
         return
+
+    await handle_msg(message)
+
+
+async def handle_msg(message: Message):
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        if message.chat.id not in enabled_chats:
+            return
+        text_lower = (message.text or "").lower()
+        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and (message.reply_to_message.from_user.id == bot.id)
+        )
+        mention_keywords = ["vai", "вай", "вэй"]
+        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
+            return
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
@@ -424,6 +441,7 @@ async def handle_msg(message: Message):
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
