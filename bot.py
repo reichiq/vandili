@@ -347,19 +347,19 @@ async def cmd_stop(message: Message):
             
 @dp.message()
 async def handle_msg(message: Message):
-                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-                    if message.chat.id not in enabled_chats:
-                        return  # Бот выключен в этом чате
-                    text_lower = (message.text or "").lower()
-                    mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
-                    is_reply_to_bot = (
-                        message.reply_to_message
-                        and message.reply_to_message.from_user
-                        and (message.reply_to_message.from_user.id == bot.id)
-                    )
-                    mention_keywords = ["vai", "вай", "вэй"]
-                    if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
-                        return
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        if message.chat.id not in enabled_chats:
+            return  # Бот выключен в этом чате
+        text_lower = (message.text or "").lower()
+        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and (message.reply_to_message.from_user.id == bot.id)
+        )
+        mention_keywords = ["vai", "вай", "вэй"]
+        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
+            return
 
     user_input = message.text.strip()
     cid = message.chat.id
@@ -392,11 +392,9 @@ async def handle_msg(message: Message):
 
     gemini_text = ""
 
-    # Генерация короткого caption, если leftover пустой
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
     else:
-        # Если leftover не пуст, вызываем LLM как обычно
         if full_prompt:
             chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
             if len(chat_history[cid]) > 5:
@@ -409,7 +407,6 @@ async def handle_msg(message: Message):
                 logging.error(f"[BOT] Error from Gemini: {e}")
                 gemini_text = f"⚠️ Ошибка LLM: {escape(str(e))}"
 
-    # Отправляем фото, если есть
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -429,16 +426,13 @@ async def handle_msg(message: Message):
                     finally:
                         os.remove(tmp_path)
 
-    # Если текст остался, отправляем
     if gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
 
-
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
