@@ -101,8 +101,10 @@ async def handle_all_messages(message: Message):
 
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
-                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
-                    photo_bytes = await resp.read()
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        photo_bytes = await resp.read()
                 await bot.send_photo(
                     ADMIN_ID,
                     photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
@@ -111,8 +113,10 @@ async def handle_all_messages(message: Message):
 
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
-                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
-                    video_bytes = await resp.read()
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        video_bytes = await resp.read()
                 await bot.send_video(
                     ADMIN_ID,
                     video=BufferedInputFile(video_bytes, filename="video.mp4"),
@@ -121,8 +125,10 @@ async def handle_all_messages(message: Message):
 
             elif message.document:
                 file = await bot.get_file(message.document.file_id)
-                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
-                    doc_bytes = await resp.read()
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        doc_bytes = await resp.read()
                 await bot.send_document(
                     ADMIN_ID,
                     document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"),
@@ -131,8 +137,10 @@ async def handle_all_messages(message: Message):
 
             elif message.audio:
                 file = await bot.get_file(message.audio.file_id)
-                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
-                    audio_bytes = await resp.read()
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        audio_bytes = await resp.read()
                 await bot.send_audio(
                     ADMIN_ID,
                     audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"),
@@ -141,8 +149,10 @@ async def handle_all_messages(message: Message):
 
             elif message.voice:
                 file = await bot.get_file(message.voice.file_id)
-                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
-                    voice_bytes = await resp.read()
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        voice_bytes = await resp.read()
                 await bot.send_voice(
                     ADMIN_ID,
                     voice=BufferedInputFile(voice_bytes, filename="voice.ogg"),
@@ -163,7 +173,7 @@ async def handle_all_messages(message: Message):
 
         return
 
-    # если не поддержка — передаём в основной хендлер
+    # если не поддержка — обычный хендлер
     await handle_msg(message)
 
 
