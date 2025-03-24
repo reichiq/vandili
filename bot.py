@@ -214,7 +214,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
             try:
                 await bot.send_chat_action(cid, "typing")
-                resp = model.generate_content(chat_history[cid])
+                resp = model.generate_content(chat_history[cid])  # исправлено: без await
 
                 if not resp.candidates:
                     reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
@@ -524,9 +524,10 @@ async def handle_msg(message: Message):
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
                             await message.answer(c)
+                        gemini_text = ""
                     finally:
                         os.remove(tmp_path)
-
+                        
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
