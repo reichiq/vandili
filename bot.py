@@ -92,45 +92,47 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-if uid in support_mode_users:
-    try:
-        caption = message.caption or message.text or "[Без текста]"
-        content = (
-            f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> "
-            f"(id: <code>{uid}</code>):\n\n{caption}"
-        )
-
-        if message.photo:
-            file = message.photo[-1]
-            file_data = await bot.download(file)
-            photo_bytes = await file_data.read()
-            await bot.send_photo(
-                ADMIN_ID,
-                photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
-                caption=content
+    if uid in support_mode_users:
+        try:
+            caption = message.caption or message.text or "[Без текста]"
+            content = (
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> "
+                f"(id: <code>{uid}</code>):\n\n{caption}"
             )
-        elif message.video:
-            file = message.video
-            file_data = await bot.download(file)
-            video_bytes = await file_data.read()
-            await bot.send_video(
-                ADMIN_ID,
-                video=BufferedInputFile(video_bytes, filename="video.mp4"),
-                caption=content
-            )
-        else:
-            await bot.send_message(ADMIN_ID, content)
 
-        await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
+            if message.photo:
+                file = message.photo[-1]
+                file_data = await bot.download(file)
+                photo_bytes = await file_data.read()
+                await bot.send_photo(
+                    ADMIN_ID,
+                    photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
+                    caption=content
+                )
+            elif message.video:
+                file = message.video
+                file_data = await bot.download(file)
+                video_bytes = await file_data.read()
+                await bot.send_video(
+                    ADMIN_ID,
+                    video=BufferedInputFile(video_bytes, filename="video.mp4"),
+                    caption=content
+                )
+            else:
+                await bot.send_message(ADMIN_ID, content)
 
-    except Exception as e:
-        await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
-        logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+            await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
 
-    finally:
-        support_mode_users.discard(uid)
-    return
+        except Exception as e:
+            await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
+            logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
 
+        finally:
+            support_mode_users.discard(uid)
+
+        return
+
+    # если не режим поддержки — вызываем обычную логику
     await handle_msg(message)
 
 
