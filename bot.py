@@ -70,6 +70,11 @@ enabled_chats = load_enabled_chats()
 support_mode_users = set()
 ADMIN_ID = 1936733487
 
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -85,6 +90,11 @@ async def cmd_start(message: Message):
         logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
 
 
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
+
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -93,6 +103,11 @@ async def cmd_stop(message: Message):
         await message.answer("Бот отключён в этом чате.")
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
+
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -104,11 +119,21 @@ async def cmd_help(message: Message):
     await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
 
 
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
+
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     await callback.message.answer("Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.")
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
+
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -450,8 +475,13 @@ def parse_russian_show_request(user_text: str):
 
     return (True, rus_word, en_word, leftover)
 
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    await handle_msg(message)
+
 @dp.message()
-async def handle_msg(message: Message):
+async def handle_msg(message: Message, prompt_mode: bool = False):
     # Проверяем, что это сообщение в группе или супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         # Если бот выключен в этом чате, то ничего не делаем
