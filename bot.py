@@ -21,9 +21,8 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from googletrans import Translator
-
-translator = Translator()
+from google.cloud import translate_v2 as translate
+translate_client = translate.Client()
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
