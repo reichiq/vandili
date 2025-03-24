@@ -230,20 +230,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     return gemini_text
 
 
-async def handle_msg(message: Message):
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        if message.chat.id not in enabled_chats:
-            return
-        text_lower = (message.text or "").lower()
-        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
-        is_reply_to_bot = (
-            message.reply_to_message
-            and message.reply_to_message.from_user
-            and (message.reply_to_message.from_user.id == bot.id)
-        )
-        mention_keywords = ["vai", "вай", "вэй"]
-        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
-            return
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
