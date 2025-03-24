@@ -87,11 +87,11 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
 
-
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
-        if uid in support_mode_users:
+
+    if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
             content = (
@@ -160,11 +160,12 @@ async def handle_all_messages(message: Message):
 
         finally:
             support_mode_users.discard(uid)
+
         return
 
-
-    # Здесь остальной код, например:
+    # если не поддержка — передаём в основной хендлер
     await handle_msg(message)
+
 
 
 async def handle_msg(message: Message):
