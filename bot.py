@@ -6,7 +6,10 @@ import aiohttp
 from io import BytesIO
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
-from aiogram.types import FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile, BufferedInputFile
+from aiogram.types import (
+    FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    CallbackQuery, InputFile, BufferedInputFile
+)
 from aiogram.client.default import DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
@@ -18,17 +21,11 @@ from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
 
-# ---------------------
-# Google Cloud Translation
-# ---------------------
 from google.cloud import translate
 from google.oauth2 import service_account
 
-# Указываем путь к файлу ключа
-key_path = '/root/vandili/gcloud-key.json'  # Убедись, что путь верный
+key_path = '/root/vandili/gcloud-key.json'
 credentials = service_account.Credentials.from_service_account_file(key_path)
-
-# Инициализируем клиент для перевода
 translate_client = translate.TranslationServiceClient(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -44,7 +41,6 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
-# Gemini init
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
@@ -68,9 +64,8 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
 
-
 @dp.message()
-async def handle_msg(message: Message):
+async def handle_support_msg(message: Message):
     cid = message.chat.id
     uid = message.from_user.id
 
