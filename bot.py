@@ -91,82 +91,77 @@ async def handle_support_click(callback: CallbackQuery):
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
-
-    if uid in support_mode_users:
-    try:
-        caption = message.caption or message.text or "[Без текста]"
-        content = (
-            f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> "
-            f"(id: <code>{uid}</code>):\n\n{caption}"
-        )
-
-        if message.photo:
-            file = await bot.get_file(message.photo[-1].file_id)
-            file_path = file.file_path
-            async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}") as r:
-                photo_bytes = await r.read()
-            await bot.send_photo(
-                ADMIN_ID,
-                photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
-                caption=content
+        if uid in support_mode_users:
+        try:
+            caption = message.caption or message.text or "[Без текста]"
+            content = (
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> "
+                f"(id: <code>{uid}</code>):\n\n{caption}"
             )
 
-        elif message.video:
-            file = await bot.get_file(message.video.file_id)
-            file_path = file.file_path
-            async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}") as r:
-                video_bytes = await r.read()
-            await bot.send_video(
-                ADMIN_ID,
-                video=BufferedInputFile(video_bytes, filename="video.mp4"),
-                caption=content
-            )
+            if message.photo:
+                file = await bot.get_file(message.photo[-1].file_id)
+                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
+                    photo_bytes = await resp.read()
+                await bot.send_photo(
+                    ADMIN_ID,
+                    photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
+                    caption=content
+                )
 
-        elif message.document:
-            file = await bot.get_file(message.document.file_id)
-            file_path = file.file_path
-            async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}") as r:
-                doc_bytes = await r.read()
-            await bot.send_document(
-                ADMIN_ID,
-                document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"),
-                caption=content
-            )
+            elif message.video:
+                file = await bot.get_file(message.video.file_id)
+                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
+                    video_bytes = await resp.read()
+                await bot.send_video(
+                    ADMIN_ID,
+                    video=BufferedInputFile(video_bytes, filename="video.mp4"),
+                    caption=content
+                )
 
-        elif message.audio:
-            file = await bot.get_file(message.audio.file_id)
-            file_path = file.file_path
-            async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}") as r:
-                audio_bytes = await r.read()
-            await bot.send_audio(
-                ADMIN_ID,
-                audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"),
-                caption=content
-            )
+            elif message.document:
+                file = await bot.get_file(message.document.file_id)
+                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
+                    doc_bytes = await resp.read()
+                await bot.send_document(
+                    ADMIN_ID,
+                    document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"),
+                    caption=content
+                )
 
-        elif message.voice:
-            file = await bot.get_file(message.voice.file_id)
-            file_path = file.file_path
-            async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}") as r:
-                voice_bytes = await r.read()
-            await bot.send_voice(
-                ADMIN_ID,
-                voice=BufferedInputFile(voice_bytes, filename="voice.ogg"),
-                caption=content
-            )
+            elif message.audio:
+                file = await bot.get_file(message.audio.file_id)
+                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
+                    audio_bytes = await resp.read()
+                await bot.send_audio(
+                    ADMIN_ID,
+                    audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"),
+                    caption=content
+                )
 
-        else:
-            await bot.send_message(ADMIN_ID, content)
+            elif message.voice:
+                file = await bot.get_file(message.voice.file_id)
+                async with bot.session.get(f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}") as resp:
+                    voice_bytes = await resp.read()
+                await bot.send_voice(
+                    ADMIN_ID,
+                    voice=BufferedInputFile(voice_bytes, filename="voice.ogg"),
+                    caption=content
+                )
 
-        await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
+            else:
+                await bot.send_message(ADMIN_ID, content)
 
-    except Exception as e:
-        await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
-        logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+            await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
 
-    finally:
-        support_mode_users.discard(uid)
-    return
+        except Exception as e:
+            await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.")
+            logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+
+        finally:
+            support_mode_users.discard(uid)
+        return
+
 
     # Здесь остальной код, например:
     await handle_msg(message)
