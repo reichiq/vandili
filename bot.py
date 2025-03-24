@@ -201,24 +201,24 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
 # ---------------------
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
-        # Путь к проекту
-        project_id = "gen-lang-client-0588633435"  # Замените на ваш ID проекта
+        project_id = "gen-lang-client-0588633435"
         location = "global"
         parent = f"projects/{project_id}/locations/{location}"
 
-        # Перевод текста
-    response = translate_client.translate_text(
-    parent=parent,
-    contents=[rus_word],
-    mime_type="text/plain",  # Текстовый формат
-    source_language_code="ru",
-    target_language_code="en",
-)
+        response = translate_client.translate_text(
+            parent=parent,
+            contents=[rus_word],
+            mime_type="text/plain",
+            source_language_code="ru",
+            target_language_code="en",
+        )
 
         return response.translations[0].translated_text
+
     except Exception as e:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
+
 
 def generate_short_caption(rus_word: str) -> str:
     short_prompt = (
