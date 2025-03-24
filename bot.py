@@ -97,16 +97,25 @@ async def handle_all_messages(message: Message):
             caption = message.caption or message.text or "[Без текста]"
             content = f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b> (id: <code>{uid}</code>):\n\n{caption}"
 
-            if message.photo:
-                file = message.photo[-1]
-                file_bytes = await file.download(destination=BytesIO())
-                await bot.send_photo(ADMIN_ID, photo=BufferedInputFile(file_bytes.getvalue(), filename="image.jpg"), caption=content)
-            elif message.video:
-                file = message.video
-                file_bytes = await file.download(destination=BytesIO())
-                await bot.send_video(ADMIN_ID, video=BufferedInputFile(file_bytes.getvalue(), filename="video.mp4"), caption=content)
-            else:
-                await bot.send_message(ADMIN_ID, content)
+    if message.photo:
+    file = message.photo[-1]
+    file_data = await bot.download(file)
+    photo_bytes = await file_data.read()
+    await bot.send_photo(
+        ADMIN_ID,
+        photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
+        caption=content
+    )
+
+elif message.video:
+    file = message.video
+    file_data = await bot.download(file)
+    video_bytes = await file_data.read()
+    await bot.send_video(
+        ADMIN_ID,
+        video=BufferedInputFile(video_bytes, filename="video.mp4"),
+        caption=content
+    )
 
             await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.")
         except Exception as e:
