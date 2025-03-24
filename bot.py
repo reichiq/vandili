@@ -21,7 +21,7 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from google.cloud import translate
+from google.cloud import translate_v2 as translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
