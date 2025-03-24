@@ -116,7 +116,7 @@ async def cmd_help(message: Message):
             [InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]
         ]
     )
-    await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, "Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
+        await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_to_message_id=message.message_id, message_thread_id=thread_id, reply_markup=keyboard)
 
 
 
@@ -212,10 +212,10 @@ async def handle_all_messages(message: Message):
             else:
                 await bot.send_message(ADMIN_ID, content)
 
-            await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, "Спасибо! Ваше сообщение отправлено в поддержку.")
+        await message.answer("Спасибо! Ваше сообщение отправлено в поддержку.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
 
         except Exception as e:
-            await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, "Произошла ошибка при отправке сообщения. Попробуйте позже.")
+        await message.answer("Произошла ошибка при отправке сообщения. Попробуйте позже.", reply_to_message_id=message.message_id, message_thread_id=thread_id)
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
 
         finally:
@@ -511,7 +511,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Реакция на команду "Как тебя зовут" или "Кто ты?"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, "Меня зовут <b>VAI</b>!")
+        await message.answer("Меня зовут <b>VAI</b>!", reply_to_message_id=message.message_id, message_thread_id=thread_id)
         return
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, random.choice(OWNER_REPLIES))
