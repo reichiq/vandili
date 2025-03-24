@@ -178,6 +178,33 @@ async def handle_all_messages(message: Message):
     # если не поддержка — обычный хендлер
     await handle_msg(message)
 
+async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
+    gemini_text = ""
+
+    if show_image and rus_word and not leftover:
+        gemini_text = generate_short_caption(rus_word)
+    else:
+        if full_prompt:
+            chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
+            if len(chat_history[cid]) > 5:
+                chat_history[cid].pop(0)
+
+            try:
+                await bot.send_chat_action(cid, "typing")
+                resp = await model.generate_content(chat_history[cid])
+
+                if not resp.candidates:
+                    reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+                    logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
+                    gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
+                else:
+                    gemini_text = format_gemini_response(resp.text)
+
+            except Exception as e:
+                logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+                gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+
+    return gemini_text
 
 
 async def handle_msg(message: Message):
@@ -457,32 +484,8 @@ async def handle_msg(message: Message):
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
-    gemini_text = ""
-
-if show_image and rus_word and not leftover:
-    gemini_text = generate_short_caption(rus_word)
-else:
-    if full_prompt:
-        chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
-        if len(chat_history[cid]) > 5:
-            chat_history[cid].pop(0)
-
-        try:
-            await bot.send_chat_action(cid, "typing")
-            resp = await model.generate_content(chat_history[cid])
-
-            if not resp.candidates:
-                reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-                logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-                gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
-            else:
-                gemini_text = format_gemini_response(resp.text)
-
-        except Exception as e:
-            logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-            gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
-
-
+    gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
+        
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -498,15 +501,13 @@ else:
                         await bot.send_photo(cid, file, caption=caption if caption else "...")
                         for c in rest:
                             await message.answer(c)
-                        gemini_text = ""
                     finally:
                         os.remove(tmp_path)
 
-    if gemini_text:
+    elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
-
 
 async def main():
     await dp.start_polling(bot)
