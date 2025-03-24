@@ -25,7 +25,7 @@ from google.cloud import translate_v2 as translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
-key_path = '/home/khan7/gen-lang-client-0538633345-a454d9af390a.json'  # Убедись, что путь верный
+key_path = '/root/vandili/gcloud-key.json' # Убедись, что путь верный
 credentials = service_account.Credentials.from_service_account_file(key_path)
 
 # Инициализируем клиент для перевода
