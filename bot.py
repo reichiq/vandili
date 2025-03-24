@@ -100,6 +100,9 @@ async def handle_all_messages(message: Message):
                 f"(id: <code>{uid}</code>):\n\n{caption}"
             )
 
+            # Проверка на текст
+            user_input = message.text.strip() if message.text else ""
+
             if message.photo:
                 file = message.photo[-1]
                 file_data = await bot.download(file)
