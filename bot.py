@@ -21,7 +21,7 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from google.cloud import translate_v2 as translate
+from google.cloud import translate_v3 as translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
@@ -29,7 +29,7 @@ key_path = '/home/khan7/gen-lang-client-0538633345-a454d9af390a.json'  # Убе�
 credentials = service_account.Credentials.from_service_account_file(key_path)
 
 # Инициализируем клиент для перевода
-translate_client = translate.Client(credentials=credentials)
+translate_client = translate.TranslationServiceClient(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -201,13 +201,26 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
 # ---------------------
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
-        result = translate_client.translate(rus_word, target_language="en")
-        # result — словарь вида {"translatedText": "...", ...}
-        return result["translatedText"]
+        # Путь к проекту
+        project_id = "your-google-cloud-project-id"  # Замените на ваш ID проекта
+        location = "global"
+        parent = f"projects/{project_id}/locations/{location}"
+
+        # Перевод текста
+        response = translate_client.translate_text(
+            request={
+                "parent": parent,
+                "contents": [rus_word],
+                "mime_type": "text/plain",  # Текстовый формат
+                "source_language_code": "ru",  # Исходный язык
+                "target_language_code": "en",  # Целевой язык
+            }
+        )
+
+        return response.translations[0].translated_text
     except Exception as e:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
-
 
 def generate_short_caption(rus_word: str) -> str:
     short_prompt = (
