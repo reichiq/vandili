@@ -191,7 +191,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
             try:
                 await bot.send_chat_action(cid, "typing")
-                resp = await model.generate_content(chat_history[cid])
+                resp = model.generate_content(chat_history[cid])
 
                 if not resp.candidates:
                     reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
