@@ -21,7 +21,7 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from google.cloud import translate_v2 as translate
+from google.cloud import translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
@@ -29,7 +29,7 @@ key_path = '/root/vandili/gcloud-key.json' # Убедись, что путь в�
 credentials = service_account.Credentials.from_service_account_file(key_path)
 
 # Инициализируем клиент для перевода
-translate_client = translate.Client(credentials=credentials)
+translate_client = translate.TranslationServiceClient(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -202,20 +202,18 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         # Путь к проекту
-        project_id = "your-google-cloud-project-id"  # Замените на ваш ID проекта
+        project_id = "gen-lang-client-0588633435"  # Замените на ваш ID проекта
         location = "global"
         parent = f"projects/{project_id}/locations/{location}"
 
         # Перевод текста
-        response = translate_client.translate_text(
-            request={
-                "parent": parent,
-                "contents": [rus_word],
-                "mime_type": "text/plain",  # Текстовый формат
-                "source_language_code": "ru",  # Исходный язык
-                "target_language_code": "en",  # Целевой язык
-            }
-        )
+    response = translate_client.translate_text(
+    parent=parent,
+    contents=[rus_word],
+    mime_type="text/plain",  # Текстовый формат
+    source_language_code="ru",
+    target_language_code="en",
+)
 
         return response.translations[0].translated_text
     except Exception as e:
