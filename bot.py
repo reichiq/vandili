@@ -82,7 +82,7 @@ async def cmd_start(message: Message):
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
         "Всегда на связи!"
     )
-    await message.answer(reply_to_message_id=message.message_id, message_thread_id=thread_id, greet)
+    await message.answer(greet, reply_to_message_id=message.message_id, message_thread_id=thread_id)
 
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.add(message.chat.id)
