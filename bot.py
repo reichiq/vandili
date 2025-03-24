@@ -326,45 +326,45 @@ def parse_russian_show_request(user_text: str):
 
     return (True, rus_word, en_word, leftover)
 
-
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    greet = (
-        "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
-        "Просто напиши мне, и я постараюсь ответить или помочь.\n"
-        "Всегда на связи!"
-    )
-    await message.answer(greet)
-
-    # Включаем бота в группе
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        enabled_chats.add(message.chat.id)
-        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
-
-
-@dp.message(Command("stop"))
-async def cmd_stop(message: Message):
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        enabled_chats.discard(message.chat.id)
-        await message.answer("Бот отключён в этом чате.")
-        logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-
-
-@dp.message()
-async def handle_msg(message: Message):
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        if message.chat.id not in enabled_chats:
-            return  # Бот выключен в этом чате
-        text_lower = (message.text or "").lower()
-        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
-        is_reply_to_bot = (
-            message.reply_to_message
-            and message.reply_to_message.from_user
-            and (message.reply_to_message.from_user.id == bot.id)
-        )
-        mention_keywords = ["vai", "вай", "вэй"]
-        if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
-            return
+    
+            @dp.message(Command("start"))
+            async def cmd_start(message: Message):
+                greet = (
+                    "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
+                    "Просто напиши мне, и я постараюсь ответить или помочь.\n"
+                    "Всегда на связи!"
+                )
+                await message.answer(greet)
+            
+                # Включаем бота в группе
+                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                    enabled_chats.add(message.chat.id)
+                    logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
+            
+            
+            @dp.message(Command("stop"))
+            async def cmd_stop(message: Message):
+                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                    enabled_chats.discard(message.chat.id)
+                    await message.answer("Бот отключён в этом чате.")
+                    logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
+            
+            
+            @dp.message()
+            async def handle_msg(message: Message):
+                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                    if message.chat.id not in enabled_chats:
+                        return  # Бот выключен в этом чате
+                    text_lower = (message.text or "").lower()
+                    mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
+                    is_reply_to_bot = (
+                        message.reply_to_message
+                        and message.reply_to_message.from_user
+                        and (message.reply_to_message.from_user.id == bot.id)
+                    )
+                    mention_keywords = ["vai", "вай", "вэй"]
+                    if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
+                        return
 
     user_input = message.text.strip()
     cid = message.chat.id
