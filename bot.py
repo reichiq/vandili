@@ -3,6 +3,7 @@ import os
 import re
 import random
 import aiohttp
+import google.cloud.translate
 from io import BytesIO
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode, ChatType
@@ -21,7 +22,7 @@ from string import punctuation
 # ---------------------
 # Google Cloud Translation
 # ---------------------
-from google.cloud import translate_v2 as translate
+from google.cloud import translate
 from google.oauth2 import service_account
 
 # Указываем путь к файлу ключа
