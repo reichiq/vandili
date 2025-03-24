@@ -103,24 +103,25 @@ async def handle_all_messages(message: Message):
             # Проверка на текст
             user_input = message.text.strip() if message.text else ""
 
-            if message.photo:
-                file = message.photo[-1]
-                file_data = await bot.download(file)
-                photo_bytes = await file_data.read()
-                await bot.send_photo(
-                    ADMIN_ID,
-                    photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
-                    caption=content
-                )
-            elif message.video:
-                file = message.video
-                file_data = await bot.download(file)
-                video_bytes = await file_data.read()
-                await bot.send_video(
-                    ADMIN_ID,
-                    video=BufferedInputFile(video_bytes, filename="video.mp4"),
-                    caption=content
-                )
+if message.photo:
+    file = message.photo[-1]
+    file_data = await bot.download(file)
+    photo_bytes = file_data.read()  # без await
+    await bot.send_photo(
+        ADMIN_ID,
+        photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
+        caption=content
+    )
+elif message.video:
+    file = message.video
+    file_data = await bot.download(file)
+    video_bytes = file_data.read()  # без await
+    await bot.send_video(
+        ADMIN_ID,
+        video=BufferedInputFile(video_bytes, filename="video.mp4"),
+        caption=content
+    )
+
             else:
                 await bot.send_message(ADMIN_ID, content)
 
