@@ -458,29 +458,30 @@ async def handle_msg(message: Message):
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    gemini_text = ""
+        gemini_text = ""
 
-    if show_image and rus_word and not leftover:
-        gemini_text = generate_short_caption(rus_word)
-    else:
-        if full_prompt:
-            chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
-            if len(chat_history[cid]) > 5:
-                chat_history[cid].pop(0)
-try:
-    await bot.send_chat_action(cid, "typing")
-    resp = model.generate_content(chat_history[cid])
+        if show_image and rus_word and not leftover:
+            gemini_text = generate_short_caption(rus_word)
+        else:
+            if full_prompt:
+                chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
+                if len(chat_history[cid]) > 5:
+                    chat_history[cid].pop(0)
 
-    if not resp.candidates:
-        reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-        logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-        gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
-    else:
-        gemini_text = format_gemini_response(resp.text)
+                try:
+                    await bot.send_chat_action(cid, "typing")
+                    resp = model.generate_content(chat_history[cid])
 
-except Exception as e:
-    logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-    gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+                    if not resp.candidates:
+                        reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+                        logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
+                        gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
+                    else:
+                        gemini_text = format_gemini_response(resp.text)
+
+                except Exception as e:
+                    logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+                    gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."    
 
 
     if has_image:
