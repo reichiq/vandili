@@ -328,19 +328,18 @@ def parse_russian_show_request(user_text: str):
     return (True, rus_word, en_word, leftover)
 
     
-            @dp.message(Command("start"))
-            async def cmd_start(message: Message):
-                greet = (
-                    "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
-                    "Просто напиши мне, и я постараюсь ответить или помочь.\n"
-                    "Всегда на связи!"
-                )
-                await message.answer(greet)
-            
-                # Включаем бота в группе
-                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-                    enabled_chats.add(message.chat.id)
-                    logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
+      @dp.message(Command("start"))
+async def cmd_start(message: Message):
+    greet = (
+        "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
+        "Просто напиши мне, и я постараюсь ответить или помочь.\n"
+        "Всегда на связи!"
+    )
+    await message.answer(greet)
+
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.add(message.chat.id)
+        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
             
             
             @dp.message(Command("stop"))
