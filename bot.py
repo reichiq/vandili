@@ -49,6 +49,28 @@ enabled_chats = set()
 support_mode_users = set()
 ADMIN_ID = 1936733487
 
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    greet = (
+        "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
+        "Просто напиши мне, и я постараюсь ответить или помочь.\n"
+        "Всегда на связи!"
+    )
+    await message.answer(greet)
+
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.add(message.chat.id)
+        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
+
+
+@dp.message(Command("stop"))
+async def cmd_stop(message: Message):
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.discard(message.chat.id)
+        await message.answer("Бот отключён в этом чате.")
+        logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
+
+
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     keyboard = InlineKeyboardMarkup(
@@ -58,11 +80,13 @@ async def cmd_help(message: Message):
     )
     await message.answer("Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
 
+
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     await callback.message.answer("Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.")
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
+
 
 @dp.message()
 async def handle_support_msg(message: Message):
@@ -125,9 +149,7 @@ RU_EN_DICT = {
 }
 
 
-
 def split_smart(text: str, limit: int) -> list[str]:
-    """Разбивает текст на куски, стараясь не рвать предложение."""
     results = []
     start = 0
     length = len(text)
@@ -152,7 +174,6 @@ def split_smart(text: str, limit: int) -> list[str]:
 
 
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
-    """Первую часть (до 950 символов) используем как caption, остальное разбиваем."""
     if len(text) <= CAPTION_LIMIT:
         return text, []
     chunks_950 = split_smart(text, CAPTION_LIMIT)
@@ -162,7 +183,6 @@ def split_caption_and_text(text: str) -> tuple[str, list[str]]:
         return caption, []
     rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
-
 
 def get_prepositional_form(rus_word: str) -> str:
     parsed = morph.parse(rus_word)
@@ -219,8 +239,6 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     return '\n'.join(new_lines).strip()
-
-
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     if not prompt:
         return None
@@ -241,9 +259,6 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
     return None
 
 
-# ---------------------
-# Используем Google Cloud Translation
-# ---------------------
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         project_id = "gen-lang-client-0588633435"
@@ -314,37 +329,12 @@ def parse_russian_show_request(user_text: str):
     else:
         leftover = user_text
 
-    # Смотрим, есть ли слово в словаре. Если нет — вызываем Google Cloud Translation.
     if rus_word in RU_EN_DICT:
         en_word = RU_EN_DICT[rus_word]
     else:
         en_word = fallback_translate_to_english(rus_word)
 
     return (True, rus_word, en_word, leftover)
-
-    
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    greet = (
-        "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
-        "Просто напиши мне, и я постараюсь ответить или помочь.\n"
-        "Всегда на связи!"
-    )
-    await message.answer(greet)
-
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        enabled_chats.add(message.chat.id)
-        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
-            
-            
-@dp.message(Command("stop"))
-async def cmd_stop(message: Message):
-                if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-                    enabled_chats.discard(message.chat.id)
-                    await message.answer("Бот отключён в этом чате.")
-                    logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-            
-
 @dp.message()
 async def handle_msg(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -430,6 +420,7 @@ async def handle_msg(message: Message):
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+
 
 async def main():
     await dp.start_polling(bot)
