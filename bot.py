@@ -44,12 +44,26 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
+# Используем модель Gemini 2.0-flash
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
 chat_history = {}
 
 ENABLED_CHATS_FILE = "enabled_chats.json"
+
+# ---------------------- Вспомогательная функция для топиков ---------------------- #
+def thread_kwargs(message: Message) -> dict:
+    """
+    Если это супергруппа/группа с топиками, вернём словарь
+    {"message_thread_id": ...}, иначе пусто.
+    """
+    if (
+        message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
+        and message.message_thread_id is not None
+    ):
+        return {"message_thread_id": message.message_thread_id}
+    return {}
 
 def load_enabled_chats() -> set:
     if not os.path.exists(ENABLED_CHATS_FILE):
@@ -81,7 +95,12 @@ async def cmd_start(message: Message):
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
         "Всегда на связи!"
     )
-    await message.answer(greet, message_thread_id=message.message_thread_id)
+    # Отправляем в тот же топик (если есть)
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text=greet,
+        **thread_kwargs(message)
+    )
 
     # Автоматически включаем бота в группе/супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -94,9 +113,10 @@ async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
         save_enabled_chats(enabled_chats)
-        await message.answer(
-            "Бот отключён в этом чате.",
-            message_thread_id=message.message_thread_id
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Бот отключён в этом чате.",
+            **thread_kwargs(message)
         )
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
 
@@ -112,18 +132,20 @@ async def cmd_help(message: Message):
             ]
         ]
     )
-    await message.answer(
-        "Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
         reply_markup=keyboard,
-        message_thread_id=message.message_thread_id
+        **thread_kwargs(message)
     )
 
 # ---------------------- Режим поддержки ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
-    await callback.message.answer(
-        "Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.",
-        message_thread_id=callback.message.message_thread_id
+    await bot.send_message(
+        chat_id=callback.message.chat.id,
+        text="Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.",
+        **thread_kwargs(callback.message)
     )
     support_mode_users.add(callback.from_user.id)
     await callback.answer()
@@ -207,18 +229,20 @@ async def handle_all_messages(message: Message):
                 # Если просто текст, без вложений
                 await bot.send_message(ADMIN_ID, content)
 
-            await message.answer(
-                "Спасибо! Ваше сообщение отправлено в поддержку.",
-                message_thread_id=message.message_thread_id
+            # Ответ пользователю
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Спасибо! Ваше сообщение отправлено в поддержку.",
+                **thread_kwargs(message)
             )
 
         except Exception as e:
-            await message.answer(
-                "Произошла ошибка при отправке сообщения. Попробуйте позже.",
-                message_thread_id=message.message_thread_id
-            )
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Произошла ошибка при отправке сообщения. Попробуйте позже.",
+                **thread_kwargs(message)
+            )
         finally:
             support_mode_users.discard(uid)
 
@@ -234,7 +258,7 @@ async def group_show_request(message: Message):
     await handle_msg(message)
 
 # ---------------------- Основная логика бота ---------------------- #
-async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
+async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
 
     # Если нужно только короткая подпись для картинки
@@ -248,14 +272,10 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
                 chat_history[cid].pop(0)
 
             try:
-                # Показываем "typing" в том же топике
-                await bot.send_chat_action(
-                    chat_id=cid,
-                    action="typing",
-                    message_thread_id=thread_id
-                )
+                # Показываем "typing"
+                await bot.send_chat_action(chat_id=cid, action="typing")
                 # Генерация Gemini
-                resp = model.generate_content(chat_history[cid])  # без await в SDK
+                resp = model.generate_content(chat_history[cid])
                 if not resp.candidates:
                     reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
                     logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
@@ -290,12 +310,12 @@ INFO_COMMANDS = [
 ]
 
 OWNER_REPLIES = [
-    "Я — <b>VAI</b>, Telegram-бот, созданный <i>Vandili</i>.",
-    "Мой создатель — <b>Vandili</b>. Я работаю для него.",
-    "Я принадлежу <i>Vandili</i>, он мой автор.",
-    "Создан <b>Vandili</b> — именно он дал мне жизнь.",
-    "Я бот <b>Vandili</b>. Всё просто.",
-    "Я продукт <i>Vandili</i>. Он мой единственный владелец."
+    "Я — <b>VAI</b>, создан командой <i>Vandili</i> 😎",
+    "Мой создатель — <b>Vandili</b>. Я работаю для них 😉",
+    "Я принадлежу <i>Vandili</i>, они моя команда ✨",
+    "Создан <b>Vandili</b> — именно они дали мне жизнь 🤝",
+    "Я бот <b>Vandili</b>. Всё просто 🤗",
+    "Я продукт <i>Vandili</i>. Они мои создатели 😇"
 ]
 
 RU_EN_DICT = {
@@ -377,7 +397,7 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
 def format_gemini_response(text: str) -> str:
     """
     Приводим ответ Gemini к HTML-формату (жирный/курсив/код),
-    вырезаем упоминания о том, что ИИ не может показать изображение и т.д.
+    и вырезаем/заменяем любые упоминания о том, что бот — от Google.
     """
     code_blocks = {}
 
@@ -390,31 +410,30 @@ def format_gemini_response(text: str) -> str:
         )
         return placeholder
 
-    # Сначала ищем тройные бэктики с кодом
+    # 1. Вырезаем тройные бэктики с кодом
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
 
-    # Экранируем HTML-символы
+    # 2. Экранируем HTML-символы
     text = escape(text)
 
-    # Возвращаем кодовые блоки на место
+    # 3. Возвращаем кодовые блоки на место
     for placeholder, block_html in code_blocks.items():
-        # Нужно заменить заэскейпленный placeholder
         text = text.replace(escape(placeholder), block_html)
 
-    # **bold** -> <b>...</b>
+    # 4. **bold** -> <b>...</b>
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     # *italic* -> <i>...</i>
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     # `inline code` -> <code>...</code>
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
 
-    # Удаляем лишние фразы о том, что ИИ не может показывать картинки
+    # 5. Удаляем лишние фразы о том, что ИИ не может показывать картинки
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
-    # Заменяем "* " на "• " (списки)
+    # 6. Заменяем "* " на "• " (списки)
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -426,6 +445,17 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
+
+    # 7. Убираем любые упоминания, что бот от Google,
+    #    и заменяем «я большая языковая модель» на «Я VAI, создан командой Vandili»
+    text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
+    text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
+    text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
+
+    # Русские варианты
+    text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+    text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+    text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
 
     return text
 
@@ -478,7 +508,7 @@ def generate_short_caption(rus_word: str) -> str:
     """
     short_prompt = (
         "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
-        "на русском языке. Не упоминай, что ты ИИ. Старайся не превышать 15 слов.\n\n"
+        "на русском языке. Не упоминай, что ты ИИ или Google. Старайся не превышать 15 слов.\n\n"
         f"ЗАДАЧА: Придумай одну короткую, дружелюбную подпись для картинки с «{rus_word}». "
         "Можно с лёгкой эмоцией или юмором, не более 15 слов."
     )
@@ -489,7 +519,7 @@ def generate_short_caption(rus_word: str) -> str:
                 "parts": [short_prompt]
             }
         ])
-        caption = response.text.strip()
+        caption = format_gemini_response(response.text.strip())
         return caption
     except Exception as e:
         logging.error(f"[BOT] Error generating short caption: {e}")
@@ -540,7 +570,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     а также обрабатывает "вай покажи ..." и прочее.
     """
     cid = message.chat.id
-    thread_id = message.message_thread_id
     user_input = (message.text or "").strip()
 
     # Если бот в группе/супергруппе и выключен в этом чате — не отвечаем
@@ -566,15 +595,17 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Реакция на "как тебя зовут" и "кто создал"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await message.answer(
-            "Меня зовут <b>VAI</b>!",
-            message_thread_id=thread_id
+        await bot.send_message(
+            chat_id=cid,
+            text="Меня зовут <b>VAI</b>! 🤖",
+            **thread_kwargs(message)
         )
         return
     if any(ic in lower_inp for ic in INFO_COMMANDS):
-        await message.answer(
-            random.choice(OWNER_REPLIES),
-            message_thread_id=thread_id
+        await bot.send_message(
+            chat_id=cid,
+            text=random.choice(OWNER_REPLIES),
+            **thread_kwargs(message)
         )
         return
 
@@ -599,7 +630,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
     # Генерация ответа (текст) через Gemini
     gemini_text = await generate_and_send_gemini_response(
-        cid, full_prompt, show_image, rus_word, leftover, thread_id
+        cid, full_prompt, show_image, rus_word, leftover
     )
 
     # Если есть изображение — отправляем фото + подпись
@@ -612,12 +643,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                         tmpf.write(photo_bytes)
                         tmp_path = tmpf.name
                     try:
-                        # Показываем "upload_photo" в том же топике
-                        await bot.send_chat_action(
-                            chat_id=cid,
-                            action="upload_photo",
-                            message_thread_id=thread_id
-                        )
+                        # Показываем "upload_photo"
+                        await bot.send_chat_action(chat_id=cid, action="upload_photo", **thread_kwargs(message))
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text)
                         # Отправляем фото
@@ -625,15 +652,11 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                             chat_id=cid,
                             photo=file,
                             caption=caption if caption else "...",
-                            message_thread_id=thread_id
+                            **thread_kwargs(message)
                         )
                         # Если остался текст после 950 символов, отправляем сообщениями
                         for c in rest:
-                            await bot.send_message(
-                                chat_id=cid,
-                                text=c,
-                                message_thread_id=thread_id
-                            )
+                            await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
                     finally:
                         os.remove(tmp_path)
 
@@ -641,11 +664,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
-            await bot.send_message(
-                chat_id=cid,
-                text=c,
-                message_thread_id=thread_id
-            )
+            await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
