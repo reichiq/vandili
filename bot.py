@@ -34,7 +34,7 @@ translate_client = translate.TranslationServiceClient(credentials=credentials)
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Ключ для DeepSeek через OpenRouter
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Ваш ключ OpenRouter: sk-or-v1-...
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
@@ -81,21 +81,30 @@ SYSTEM_PROMPT = (
 def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
     """
     Отправляем запрос к DeepSeek Chat API через OpenRouter.
-    POST https://openrouter.ai/api/v1/chat/completions
+    URL: POST https://openrouter.ai/api/v1/chat/completions
+    Тело:
     {
       "model": "deepseek/deepseek-chat-v3-0324:free",
-      "messages": [...]
+      "messages": [ { "role": "system", "content": "..." }, ... ]
     }
     """
     url = "https://openrouter.ai/api/v1/chat/completions"
+
+    # Внимание: добавляем и Authorization: Bearer, и X-OpenRouter-Api-Key,
+    # а также X-Title и HTTP-Referer. Возможно, не все нужны, но так надёжнее.
     headers = {
         "Authorization": f"Bearer {api_key}",
+        "X-OpenRouter-Api-Key": api_key,
         "Content-Type": "application/json",
+        "HTTP-Referer": "https://t.me/YourBotUsername",  # при желании подставьте реальный адрес
+        "X-Title": "VAI-bot"
     }
+
     data = {
         "model": "deepseek/deepseek-chat-v3-0324:free",
         "messages": chat_messages
     }
+
     try:
         resp = requests.post(url, headers=headers, json=data, timeout=30)
         if resp.status_code == 200:
@@ -107,14 +116,14 @@ def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
                 return "Пустой ответ от DeepSeek (нет choices)."
         else:
             logging.error(f"[DeepSeek] Ошибка {resp.status_code}: {resp.text}")
-            return "Произошла ошибка при запросе к DeepSeek."
+            return f"Произошла ошибка при запросе к DeepSeek. Код: {resp.status_code}"
     except Exception as e:
         logging.error(f"[DeepSeek] Исключение при запросе: {e}")
         return "Ошибка при обращении к DeepSeek."
 
 def deepseek_generate_content(messages: list[dict]) -> str:
     """
-    Преобразуем внутреннюю структуру сообщений в формат Chat API и вызываем DeepSeek.
+    Формируем внутреннюю структуру -> формат Chat API -> зовём call_deepseek_chat_api.
     """
     chat_messages = []
     for msg in messages:
@@ -123,7 +132,7 @@ def deepseek_generate_content(messages: list[dict]) -> str:
         chat_messages.append({"role": role, "content": content})
     return call_deepseek_chat_api(chat_messages, DEEPSEEK_API_KEY)
 
-# ---------------------- Дополнительные функции ---------------------- #
+# ---------------------- Доп. функции ---------------------- #
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         project_id = "gen-lang-client-0588633435"
@@ -138,7 +147,7 @@ def fallback_translate_to_english(rus_word: str) -> str:
         )
         return response.translations[0].translated_text
     except Exception as e:
-        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
+        logging.warning(f"Ошибка при переводе '{rus_word}': {e}")
         return rus_word
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
@@ -182,7 +191,8 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
 # ---------------------- Парсинг "вай покажи..." ---------------------- #
 def parse_russian_show_request(user_text: str):
     lower_text = user_text.lower()
-    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
+    triggers = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
+    triggered = any(trig in lower_text for trig in triggers)
     if not triggered:
         return (False, "", "", user_text)
     match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
@@ -209,7 +219,6 @@ def parse_russian_show_request(user_text: str):
         en_word = ""
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
-# ---------------------- Генерация короткой подписи ---------------------- #
 def generate_short_caption(rus_word: str) -> str:
     prompt = (
         "ИНСТРУКЦИЯ: Ты — VAI, бот от Vandili. Если есть факты, перечисляй их построчно. "
@@ -219,10 +228,9 @@ def generate_short_caption(rus_word: str) -> str:
         {"role": "system", "parts": [SYSTEM_PROMPT]},
         {"role": "user", "parts": [prompt]}
     ]
-    result = deepseek_generate_content(messages)
-    # Доп. форматирование, если нужно
-    result = re.sub(r"(\.\s*)•", r".\n•", result)
-    return result.strip()
+    text = deepseek_generate_content(messages)
+    text = re.sub(r"(\.\s*)•", r".\n•", text)
+    return text.strip()
 
 # ---------------------- Разбиение текста ---------------------- #
 def split_smart(text: str, limit: int) -> list[str]:
@@ -262,7 +270,6 @@ def split_caption_and_text(text: str) -> tuple[str, list[str]]:
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
 
-IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
 NAME_COMMANDS = [
     "как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you", "я кто"
 ]
@@ -280,12 +287,10 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
-# ---------------------- Генерация полного ответа DeepSeek ---------------------- #
+# ---------------------- Генерация ответа через DeepSeek ---------------------- #
 async def generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     chat_history[cid] = []
     chat_history[cid].append({"role": "system", "parts": [SYSTEM_PROMPT]})
-
-    # Если нужно только короткую подпись (картинка + rus_word) и leftover пуст
     if show_image and rus_word and not leftover:
         return generate_short_caption(rus_word)
     else:
@@ -323,11 +328,10 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     thread_id = message.message_thread_id
     user_input = (message.text or "").strip()
 
-    # Если это группа/супергруппа и бот не включён — не отвечаем
+    # Если это группа/супергруппа и бот не включён
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid not in enabled_chats:
             return
-        # Проверяем, упомянули ли бота
         lower_text = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
         is_reply_to_bot = (
@@ -336,7 +340,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             (message.reply_to_message.from_user.id == bot.id)
         )
         mention_keywords = ["вай", "вэй", "vai"]
-        # Если не упомянули и не ответили боту, не сказали "вай" — не отвечаем
         if not mention_bot and not is_reply_to_bot and not any(k in lower_text for k in mention_keywords):
             return
 
@@ -344,12 +347,12 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
     lower_inp = user_input.lower()
 
-    # 1) Если пользователь спрашивает "как тебя зовут"
+    # 1) / Как тебя зовут
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(cid, "Меня зовут <b>VAI</b>!", message_thread_id=thread_id)
         return
 
-    # 2) "кто тебя создал" и т.д.
+    # 2) / Кто создал
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await bot.send_message(cid, random.choice(OWNER_REPLIES), message_thread_id=thread_id)
         return
@@ -361,7 +364,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # 4) Если запрос на картинку — Unsplash
+    # 4) Запрос к Unsplash
     image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
     has_image = bool(image_url)
 
@@ -389,23 +392,21 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                     finally:
                         os.remove(tmp_path)
     else:
-        # 7) Если нет картинки
         if deepseek_text:
             chunks = split_smart(deepseek_text, TELEGRAM_MSG_LIMIT)
             for chunk in chunks:
                 await bot.send_message(cid, chunk, message_thread_id=thread_id)
         else:
-            # 8) Fallback:
-            # Если это приватный чат (ChatType.PRIVATE) и бот не среагировал — отвечаем "Привет!"
+            # fallback, если в ЛС просто "привет" и т.п.
             if message.chat.type == ChatType.PRIVATE:
                 await bot.send_message(cid, "Привет! Чем могу помочь?", message_thread_id=thread_id)
 
-# ---------------------- Хэндлер на ВСЕ сообщения (если не команда) ---------------------- #
+# ---------------------- Хендлер на ВСЕ остальные сообщения ---------------------- #
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-    # 1) Если пользователь в режиме поддержки
+    # Режим поддержки
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -457,7 +458,6 @@ async def handle_all_messages(message: Message):
                 text="Спасибо! Ваше сообщение отправлено в поддержку.",
                 message_thread_id=message.message_thread_id
             )
-
         except Exception as e:
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
             await bot.send_message(
@@ -469,10 +469,10 @@ async def handle_all_messages(message: Message):
             support_mode_users.discard(uid)
         return
 
-    # 2) Если не режим поддержки — вызываем handle_msg
+    # Если не режим поддержки, вызываем handle_msg
     await handle_msg(message)
 
-# ---------------------- Команды: /start, /stop, /help ---------------------- #
+# ---------------------- Команды /start, /stop, /help ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -521,6 +521,7 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    # Параметры для разбиения
     CAPTION_LIMIT = 950
     TELEGRAM_MSG_LIMIT = 4096
     asyncio.run(main())
