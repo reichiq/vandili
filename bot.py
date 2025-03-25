@@ -99,6 +99,20 @@ async def cmd_start(message: Message):
     
     if len(args) > 1 and args[1] == "support":
         
+        await message.answer("Вы обратились в поддержку. Опишите вашу проблему или задайте вопрос. Ваше сообщение будет передано операторам.")
+        
+        # Включаем режим пересылки сообщений в поддержку
+        
+        return  # Завершаем выполнение, чтобы не запускать стандартную логику /start
+    
+    
+    # Обычный /start
+    await message.answer("Привет! Я бот. Чем могу помочь?")
+    
+    args = message.text.split()  # Получаем аргументы команды
+    
+    if len(args) > 1 and args[1] == "support":
+        
         await message.answer("Вы обратились в поддержку. Опишите вашу проблему или задайте вопрос. Можете отправить текст, изображение или видео.")
         
         return  # Завершаем выполнение, чтобы не запускать стандартную логику /start
@@ -137,6 +151,20 @@ async def cmd_stop(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            
+            [InlineKeyboardButton(text="Написать в поддержку", url=f"t.me/{BOT_USERNAME}?start=support")]
+        
+        ])
+        
+        await message.answer("Если у вас возник вопрос, нажмите кнопку ниже, чтобы обратиться в поддержку.", reply_markup=keyboard)
+    
+    else:
+        # ЛС: старая логика
+        await message.answer("Привет! Чем могу помочь?")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         
