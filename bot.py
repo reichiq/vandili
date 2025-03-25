@@ -95,7 +95,6 @@ async def cmd_start(message: Message):
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
         "Всегда на связи!"
     )
-    # Отправляем в тот же топик (если есть)
     await bot.send_message(
         chat_id=message.chat.id,
         text=greet,
@@ -612,6 +611,9 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Проверяем, нет ли запроса "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
+        # Если в leftover осталось "вай" (или "vai") как отдельное слово — убираем, чтобы
+        # не считать его частью запроса
+        leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
         leftover = replace_pronouns_morph(leftover, rus_word)
 
     leftover = leftover.strip()
