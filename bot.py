@@ -52,6 +52,13 @@ chat_history = {}
 
 ENABLED_CHATS_FILE = "enabled_chats.json"
 
+ADMIN_ID = 1936733487
+
+# Текст, который бот присылает в ЛС, когда переходит в «режим поддержки»
+SUPPORT_PROMPT_TEXT = (
+    "Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки."
+)
+
 # ---------------------- Вспомогательная функция для топиков ---------------------- #
 def thread_kwargs(message: Message) -> dict:
     """
@@ -85,7 +92,6 @@ def save_enabled_chats(chats: set):
 
 enabled_chats = load_enabled_chats()
 support_mode_users = set()
-ADMIN_ID = 1936733487
 
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
@@ -121,6 +127,11 @@ async def cmd_stop(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    """
+    В группе — показывает кнопку, ведущую в ЛС бота.
+    В личке — сразу показывает кнопку «Написать в поддержку» (или можно напрямую включать режим поддержки).
+    """
+    # Создаём кнопку «Написать в поддержку»
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -131,23 +142,60 @@ async def cmd_help(message: Message):
             ]
         ]
     )
-    await bot.send_message(
-        chat_id=message.chat.id,
-        text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
-        reply_markup=keyboard,
-        **thread_kwargs(message)
-    )
 
-# ---------------------- Режим поддержки ---------------------- #
+    if message.chat.type == ChatType.PRIVATE:
+        # Если человек в личке с ботом, просто отправляем /help с этой кнопкой
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+            reply_markup=keyboard
+        )
+    else:
+        # Если человек в группе/супергруппе, аналогично
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+            reply_markup=keyboard,
+            **thread_kwargs(message)
+        )
+
+# ---------------------- Режим поддержки (callback) ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
-    await bot.send_message(
-        chat_id=callback.message.chat.id,
-        text="Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.",
-        **thread_kwargs(callback.message)
-    )
-    support_mode_users.add(callback.from_user.id)
-    await callback.answer()
+    """
+    Если нажали «Написать в поддержку»:
+    - В группе: показать кнопку-ссылку на ЛС с ботом.
+    - В личке: включить «режим поддержки» и попросить пользователя отправить сообщение.
+    """
+    chat_type = callback.message.chat.type
+
+    # Если пользователь нажал кнопку в личке с ботом
+    if chat_type == ChatType.PRIVATE:
+        # Включаем режим поддержки
+        support_mode_users.add(callback.from_user.id)
+        await callback.message.answer(SUPPORT_PROMPT_TEXT)
+        await callback.answer()
+    else:
+        # Если пользователь нажал кнопку в группе — даём ссылку на ЛС бота
+        # Можно использовать прямую ссылку t.me/<бот>?start=anything
+        private_url = f"https://t.me/{BOT_USERNAME}"
+        # Собираем клавиатуру с URL-кнопкой
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть личный чат с ботом",
+                        url=private_url
+                    )
+                ]
+            ]
+        )
+        await callback.message.answer(
+            "Чтобы написать в поддержку, перейдите в личные сообщения со мной. Нажмите кнопку ниже:",
+            reply_markup=keyboard,
+            **thread_kwargs(callback.message)
+        )
+        await callback.answer()
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -171,7 +219,7 @@ async def handle_all_messages(message: Message):
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
                 await bot.send_photo(
-                    ADMIN_ID,
+                    chat_id=ADMIN_ID,
                     photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
                     caption=content
                 )
@@ -183,7 +231,7 @@ async def handle_all_messages(message: Message):
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
                 await bot.send_video(
-                    ADMIN_ID,
+                    chat_id=ADMIN_ID,
                     video=BufferedInputFile(video_bytes, filename="video.mp4"),
                     caption=content
                 )
@@ -195,7 +243,7 @@ async def handle_all_messages(message: Message):
                     async with session.get(url) as resp:
                         doc_bytes = await resp.read()
                 await bot.send_document(
-                    ADMIN_ID,
+                    chat_id=ADMIN_ID,
                     document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"),
                     caption=content
                 )
@@ -207,7 +255,7 @@ async def handle_all_messages(message: Message):
                     async with session.get(url) as resp:
                         audio_bytes = await resp.read()
                 await bot.send_audio(
-                    ADMIN_ID,
+                    chat_id=ADMIN_ID,
                     audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"),
                     caption=content
                 )
@@ -219,7 +267,7 @@ async def handle_all_messages(message: Message):
                     async with session.get(url) as resp:
                         voice_bytes = await resp.read()
                 await bot.send_voice(
-                    ADMIN_ID,
+                    chat_id=ADMIN_ID,
                     voice=BufferedInputFile(voice_bytes, filename="voice.ogg"),
                     caption=content
                 )
@@ -228,35 +276,36 @@ async def handle_all_messages(message: Message):
                 # Если просто текст, без вложений
                 await bot.send_message(ADMIN_ID, content)
 
-            # Ответ пользователю
-            await bot.send_message(
-                chat_id=message.chat.id,
-                text="Спасибо! Ваше сообщение отправлено в поддержку.",
-                **thread_kwargs(message)
-            )
-
+            # Ответ пользователю в ЛС
+            if message.chat.type == ChatType.PRIVATE:
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    text="Спасибо! Ваше сообщение отправлено в поддержку."
+                )
         except Exception as e:
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            await bot.send_message(
-                chat_id=message.chat.id,
-                text="Произошла ошибка при отправке сообщения. Попробуйте позже.",
-                **thread_kwargs(message)
-            )
+            if message.chat.type == ChatType.PRIVATE:
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    text="Произошла ошибка при отправке сообщения. Попробуйте позже."
+                )
         finally:
-            support_mode_users.discard(uid)
+            # Можно отключать пользователя от режима сразу
+            # или дать ему возможность продолжить общение в поддержку.
+            # Если хотим отключать сразу после одного сообщения — раскомментируем:
+            # support_mode_users.discard(uid)
+            pass
+    else:
+        # Если не режим поддержки, обрабатываем обычные сообщения
+        await handle_msg(message)
 
-        return
-
-    # Если не режим поддержки, обрабатываем обычные сообщения
-    await handle_msg(message)
-
-# ---------------------- Декоратор для "вай покажи ..." ---------------------- #
+# ---------------------- Дополнительный декоратор для "вай покажи ..." ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
     # Просто вызываем основную функцию обработки
     await handle_msg(message)
 
-# ---------------------- Основная логика бота ---------------------- #
+# ---------------------- Логика бота / генерация ответа Gemini ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
 
