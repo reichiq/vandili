@@ -74,19 +74,17 @@ support_mode_users = set()
 ADMIN_ID = 1936733487
 
 # ---------------------- Системный промпт ---------------------- #
-# Делаем упор на то, чтобы не повторять постоянно «Привет!» и «Я не знаю, кто ты».
-# Если пользователь оскорбляет — бот отвечает вежливо, но не зацикливается на представлении.
+# Уточнили: не начинать ответ с "Привет!" или "Рад слышать", при перечислении фактов
+# выводить их по строкам (маркированный список).
 SYSTEM_PROMPT = (
     "Ты — VAI, Telegram-бот, созданный Vandili. "
-    "Ты всегда вежлив и дружелюбен. Если пользователь оскорбляет тебя, "
-    "не груби в ответ и не повторяй постоянно «Привет!» или «Я не знаю, кто ты». "
-    "Просто ответь коротко и продолжи диалог. "
-    "Если пользователь задаёт вопрос (например, про Париж), дай содержательный ответ по теме. "
-    "Никогда не упоминай, что ты обучен Google или являешься большой языковой моделью. "
+    "Отвечай вежливо, но без излишних приветствий и без упоминаний предыдущих сообщений. "
+    "Если пользователь оскорбляет, не груби в ответ и не говори «Рад слышать» или «Привет». "
+    "Если пользователь просит перечислить факты, обязательно выводи их по пунктам (каждый пункт на новой строке). "
+    "Не упоминай, что ты обучен Google или являешься большой языковой моделью. "
     "Просто будь VAI от Vandili."
 )
 
-# ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -136,7 +134,6 @@ async def cmd_help(message: Message):
         message_thread_id=message.message_thread_id
     )
 
-# ---------------------- Режим поддержки ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     await bot.send_message(
@@ -151,7 +148,6 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-    # Режим "поддержки"
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -242,37 +238,28 @@ async def handle_all_messages(message: Message):
             support_mode_users.discard(uid)
         return
 
-    # Обычный режим
     await handle_msg(message)
 
-# ---------------------- "вай покажи" ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
     await handle_msg(message)
 
-# ---------------------- Основная логика ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
-    """
-    Генерируем ответ от модели. Если в истории нет системного промпта, добавляем.
-    """
-    # Инициализируем историю для этого чата
     if cid not in chat_history:
         chat_history[cid] = []
 
-    # Если нет системного промпта в начале — добавим как первое "user"-сообщение
+    # Если нет системного промпта в начале — вставим
     if not chat_history[cid] or not any(msg.get("parts") == [SYSTEM_PROMPT] for msg in chat_history[cid]):
         chat_history[cid].insert(0, {"role": "user", "parts": [SYSTEM_PROMPT]})
 
     gemini_text = ""
 
-    # Если нужна только короткая подпись (картинка + rus_word), а leftover пуст
+    # Если нужна короткая подпись
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
     else:
         if full_prompt:
-            # Добавляем фразу пользователя
             chat_history[cid].append({"role": "user", "parts": [full_prompt]})
-            # Чтобы история не разрасталась бесконечно
             if len(chat_history[cid]) > 10:
                 chat_history[cid] = chat_history[cid][-10:]
 
@@ -407,7 +394,7 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
-    # Преобразуем списки "* " -> "• "
+    # Преобразуем "* " -> "• "
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -464,8 +451,9 @@ def fallback_translate_to_english(rus_word: str) -> str:
 def generate_short_caption(rus_word: str) -> str:
     short_prompt = (
         "ИНСТРУКЦИЯ: Ты — VAI, бот от Vandili. Не упоминай, что ты ИИ или обучен Google. "
-        "Напиши одну короткую, дружелюбную подпись к изображению с «{word}» (до 15 слов)."
-    ).format(word=rus_word)
+        "Если перечисляешь факты, делай их по пунктам. "
+        f"Напиши одну короткую, дружелюбную подпись к изображению с «{rus_word}» (до 15 слов)."
+    )
     try:
         response = model.generate_content([
             {"role": "user", "parts": [SYSTEM_PROMPT]},
@@ -515,7 +503,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     thread_id = message.message_thread_id
     user_input = (message.text or "").strip()
 
-    # Если бот в группе и отключён, не отвечаем
+    # Если бот в группе и отключён — не отвечаем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid not in enabled_chats:
             return
@@ -529,13 +517,12 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         )
         mention_keywords = ["вай", "вэй", "vai"]
 
-        # Если нет упоминания/реплая/ключевых слов — не отвечаем
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
 
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Если фраза совпадает с "как тебя зовут" и т.д. — короткий ответ
+    # Короткие ответы на "как тебя зовут" и "кто создал"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(
@@ -552,7 +539,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         )
         return
 
-    # Проверяем, нет ли запроса "вай покажи ..."
+    # Проверяем, нет ли "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
@@ -560,7 +547,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # Пытаемся получить картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -571,12 +557,10 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    # Генерация текста через Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover, thread_id
     )
 
-    # Если есть картинка, отправляем фото
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -603,8 +587,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                             )
                     finally:
                         os.remove(tmp_path)
-
-    # Иначе, если есть текст, отправляем текст
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
@@ -614,7 +596,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                 message_thread_id=thread_id
             )
 
-# ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
