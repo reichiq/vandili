@@ -77,18 +77,15 @@ SYSTEM_PROMPT = (
     "Если пользователь оскорбляет, отвечай кратко и вежливо."
 )
 
-# ---------------------- DeepSeek Chat API ---------------------- #
+# ---------------------- DeepSeek Chat API через OpenRouter ---------------------- #
 def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
     """
     Отправляем запрос к DeepSeek Chat API через OpenRouter.
-    Запрос отправляется на:
-      POST https://openrouter.ai/api/v1/chat/completions
-    с телом:
-      {
-         "model": "deepseek/deepseek-chat-v3-0324:free",
-         "messages": [ { "role": "system", "content": "..." },
-                       { "role": "user", "content": "..." } ]
-      }
+    POST https://openrouter.ai/api/v1/chat/completions
+    {
+      "model": "deepseek/deepseek-chat-v3-0324:free",
+      "messages": [...]
+    }
     """
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -117,7 +114,7 @@ def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
 
 def deepseek_generate_content(messages: list[dict]) -> str:
     """
-    Преобразуем внутреннюю структуру сообщений в формат DeepSeek Chat API и вызываем его.
+    Преобразуем внутреннюю структуру сообщений в формат Chat API и вызываем DeepSeek.
     """
     chat_messages = []
     for msg in messages:
@@ -126,7 +123,7 @@ def deepseek_generate_content(messages: list[dict]) -> str:
         chat_messages.append({"role": role, "content": content})
     return call_deepseek_chat_api(chat_messages, DEEPSEEK_API_KEY)
 
-# ---------------------- Вспомогательные функции ---------------------- #
+# ---------------------- Дополнительные функции ---------------------- #
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         project_id = "gen-lang-client-0588633435"
@@ -182,7 +179,7 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
     return leftover
 
-# ---------------------- Парсинг запроса "вай покажи ..." ---------------------- #
+# ---------------------- Парсинг "вай покажи..." ---------------------- #
 def parse_russian_show_request(user_text: str):
     lower_text = user_text.lower()
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
@@ -223,11 +220,11 @@ def generate_short_caption(rus_word: str) -> str:
         {"role": "user", "parts": [prompt]}
     ]
     result = deepseek_generate_content(messages)
-    # Здесь можно добавить дополнительное форматирование, если требуется
+    # Доп. форматирование, если нужно
     result = re.sub(r"(\.\s*)•", r".\n•", result)
     return result.strip()
 
-# ---------------------- Функция для разбиения текста ---------------------- #
+# ---------------------- Разбиение текста ---------------------- #
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
     start = 0
@@ -262,12 +259,10 @@ def split_caption_and_text(text: str) -> tuple[str, list[str]]:
     rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
 
-# ---------------------- Параметры разбиения ---------------------- #
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
 
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
-
 NAME_COMMANDS = [
     "как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you", "я кто"
 ]
@@ -285,76 +280,12 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
-# ---------------------- Основная функция обработки сообщений ---------------------- #
-async def handle_msg(message: Message, prompt_mode: bool = False):
-    cid = message.chat.id
-    thread_id = message.message_thread_id
-    user_input = (message.text or "").strip()
-
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        if cid not in enabled_chats:
-            return
-        lower_text = user_input.lower()
-        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
-        is_reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and (message.reply_to_message.from_user.id == bot.id))
-        mention_keywords = ["вай", "вэй", "vai"]
-        if not mention_bot and not is_reply_to_bot and not any(k in lower_text for k in mention_keywords):
-            return
-
-    logging.info(f"[BOT] cid={cid}, text='{user_input}'")
-
-    lower_inp = user_input.lower()
-    if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>!", message_thread_id=thread_id)
-        return
-
-    if any(ic in lower_inp for ic in INFO_COMMANDS):
-        await bot.send_message(chat_id=cid, text=random.choice(OWNER_REPLIES), message_thread_id=thread_id)
-        return
-
-    show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
-    if show_image and rus_word:
-        leftover = replace_pronouns_morph(leftover, rus_word)
-    leftover = leftover.strip()
-    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
-
-    image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
-    has_image = bool(image_url)
-
-    logging.info(f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'")
-
-    deepseek_text = await generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id)
-
-    if has_image:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(image_url) as r:
-                if r.status == 200:
-                    photo_bytes = await r.read()
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
-                        tmpf.write(photo_bytes)
-                        tmp_path = tmpf.name
-                    try:
-                        await bot.send_chat_action(cid, "upload_photo", message_thread_id=thread_id)
-                        file = FSInputFile(tmp_path, filename="image.jpg")
-                        caption, rest = split_caption_and_text(deepseek_text)
-                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", message_thread_id=thread_id)
-                        for c in rest:
-                            await bot.send_message(chat_id=cid, text=c, message_thread_id=thread_id)
-                    finally:
-                        os.remove(tmp_path)
-    else:
-        if deepseek_text:
-            for chunk in split_smart(deepseek_text, TELEGRAM_MSG_LIMIT):
-                await bot.send_message(chat_id=cid, text=chunk, message_thread_id=thread_id)
-
-@dp.message(F.text.lower().startswith("вай покажи"))
-async def group_show_request(message: Message):
-    await handle_msg(message)
-
-# ---------------------- Генерация ответа через DeepSeek ---------------------- #
+# ---------------------- Генерация полного ответа DeepSeek ---------------------- #
 async def generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     chat_history[cid] = []
     chat_history[cid].append({"role": "system", "parts": [SYSTEM_PROMPT]})
+
+    # Если нужно только короткую подпись (картинка + rus_word) и leftover пуст
     if show_image and rus_word and not leftover:
         return generate_short_caption(rus_word)
     else:
@@ -386,68 +317,210 @@ def format_deepseek_response(text: str) -> str:
     text = re.sub(r"(\.\s*)•", r".\n•", text)
     return text.strip()
 
-# ---------------------- Функции разбиения текста ---------------------- #
-def split_smart(text: str, limit: int) -> list[str]:
-    results = []
-    start = 0
-    length = len(text)
-    while start < length:
-        remain = length - start
-        if remain <= limit:
-            results.append(text[start:].strip())
-            break
-        candidate = text[start: start+limit]
-        cut_pos = candidate.rfind('. ')
-        if cut_pos == -1:
-            cut_pos = candidate.rfind(' ')
-            if cut_pos == -1:
-                cut_pos = len(candidate)
+# ---------------------- handle_msg ---------------------- #
+async def handle_msg(message: Message, prompt_mode: bool = False):
+    cid = message.chat.id
+    thread_id = message.message_thread_id
+    user_input = (message.text or "").strip()
+
+    # Если это группа/супергруппа и бот не включён — не отвечаем
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        if cid not in enabled_chats:
+            return
+        # Проверяем, упомянули ли бота
+        lower_text = user_input.lower()
+        mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
+        is_reply_to_bot = (
+            message.reply_to_message and
+            message.reply_to_message.from_user and
+            (message.reply_to_message.from_user.id == bot.id)
+        )
+        mention_keywords = ["вай", "вэй", "vai"]
+        # Если не упомянули и не ответили боту, не сказали "вай" — не отвечаем
+        if not mention_bot and not is_reply_to_bot and not any(k in lower_text for k in mention_keywords):
+            return
+
+    logging.info(f"[BOT] cid={cid}, text='{user_input}'")
+
+    lower_inp = user_input.lower()
+
+    # 1) Если пользователь спрашивает "как тебя зовут"
+    if any(nc in lower_inp for nc in NAME_COMMANDS):
+        await bot.send_message(cid, "Меня зовут <b>VAI</b>!", message_thread_id=thread_id)
+        return
+
+    # 2) "кто тебя создал" и т.д.
+    if any(ic in lower_inp for ic in INFO_COMMANDS):
+        await bot.send_message(cid, random.choice(OWNER_REPLIES), message_thread_id=thread_id)
+        return
+
+    # 3) Парсим "вай покажи ..."
+    show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
+    if show_image and rus_word:
+        leftover = replace_pronouns_morph(leftover, rus_word)
+    leftover = leftover.strip()
+    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
+
+    # 4) Если запрос на картинку — Unsplash
+    image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
+    has_image = bool(image_url)
+
+    logging.info(f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'")
+
+    # 5) Генерация ответа через DeepSeek
+    deepseek_text = await generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id)
+
+    # 6) Отправляем фото + текст
+    if has_image:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(image_url) as r:
+                if r.status == 200:
+                    photo_bytes = await r.read()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
+                        tmpf.write(photo_bytes)
+                        tmp_path = tmpf.name
+                    try:
+                        await bot.send_chat_action(cid, "upload_photo", message_thread_id=thread_id)
+                        file = FSInputFile(tmp_path, filename="image.jpg")
+                        caption, rest = split_caption_and_text(deepseek_text)
+                        await bot.send_photo(cid, file, caption=caption if caption else "...", message_thread_id=thread_id)
+                        for c in rest:
+                            await bot.send_message(cid, c, message_thread_id=thread_id)
+                    finally:
+                        os.remove(tmp_path)
+    else:
+        # 7) Если нет картинки
+        if deepseek_text:
+            chunks = split_smart(deepseek_text, TELEGRAM_MSG_LIMIT)
+            for chunk in chunks:
+                await bot.send_message(cid, chunk, message_thread_id=thread_id)
         else:
-            cut_pos += 1
-        chunk = text[start: start+cut_pos].strip()
-        if chunk:
-            results.append(chunk)
-        start += cut_pos
-    return [x for x in results if x]
+            # 8) Fallback:
+            # Если это приватный чат (ChatType.PRIVATE) и бот не среагировал — отвечаем "Привет!"
+            if message.chat.type == ChatType.PRIVATE:
+                await bot.send_message(cid, "Привет! Чем могу помочь?", message_thread_id=thread_id)
 
-def split_caption_and_text(text: str) -> tuple[str, list[str]]:
-    if len(text) <= CAPTION_LIMIT:
-        return text, []
-    chunks = split_smart(text, CAPTION_LIMIT)
-    caption = chunks[0]
-    leftover = " ".join(chunks[1:]).strip()
-    if not leftover:
-        return caption, []
-    rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
-    return caption, rest
+# ---------------------- Хэндлер на ВСЕ сообщения (если не команда) ---------------------- #
+@dp.message()
+async def handle_all_messages(message: Message):
+    uid = message.from_user.id
 
-# ---------------------- Параметры разбиения ---------------------- #
-CAPTION_LIMIT = 950
-TELEGRAM_MSG_LIMIT = 4096
+    # 1) Если пользователь в режиме поддержки
+    if uid in support_mode_users:
+        try:
+            caption = message.caption or message.text or "[Без текста]"
+            username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
+            content = (
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
+                f"(id: <code>{uid}</code>):\n\n{caption}"
+            )
+            if message.photo:
+                file = await bot.get_file(message.photo[-1].file_id)
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        photo_bytes = await resp.read()
+                await bot.send_photo(ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
+            elif message.video:
+                file = await bot.get_file(message.video.file_id)
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        video_bytes = await resp.read()
+                await bot.send_video(ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content)
+            elif message.document:
+                file = await bot.get_file(message.document.file_id)
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        doc_bytes = await resp.read()
+                await bot.send_document(ADMIN_ID, document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"), caption=content)
+            elif message.audio:
+                file = await bot.get_file(message.audio.file_id)
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        audio_bytes = await resp.read()
+                await bot.send_audio(ADMIN_ID, audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"), caption=content)
+            elif message.voice:
+                file = await bot.get_file(message.voice.file_id)
+                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        voice_bytes = await resp.read()
+                await bot.send_voice(ADMIN_ID, voice=BufferedInputFile(voice_bytes, filename="voice.ogg"), caption=content)
+            else:
+                await bot.send_message(ADMIN_ID, content)
 
-# ---------------------- Дополнительные функции ---------------------- #
-def get_prepositional_form(rus_word: str) -> str:
-    parsed = morph.parse(rus_word)
-    if not parsed:
-        return rus_word
-    p = parsed[0]
-    loct = p.inflect({"loct"})
-    return loct.word if loct else rus_word
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Спасибо! Ваше сообщение отправлено в поддержку.",
+                message_thread_id=message.message_thread_id
+            )
 
-def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
-    word_prep = get_prepositional_form(rus_word)
-    pronoun_map = {
-        r"\bо\s+нем\b": f"о {word_prep}",
-        r"\bо\s+нём\b": f"о {word_prep}",
-        r"\bо\s+ней\b": f"о {word_prep}",
-    }
-    for pattern, repl in pronoun_map.items():
-        leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
-    return leftover
+        except Exception as e:
+            logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Произошла ошибка при отправке сообщения. Попробуйте позже.",
+                message_thread_id=message.message_thread_id
+            )
+        finally:
+            support_mode_users.discard(uid)
+        return
 
-# ---------------------- Команда для запуска бота ---------------------- #
+    # 2) Если не режим поддержки — вызываем handle_msg
+    await handle_msg(message)
+
+# ---------------------- Команды: /start, /stop, /help ---------------------- #
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    greet = (
+        "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
+        "Просто напиши мне, и я постараюсь ответить или помочь.\n"
+        "Всегда на связи!"
+    )
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text=greet,
+        message_thread_id=message.message_thread_id
+    )
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.add(message.chat.id)
+        save_enabled_chats(enabled_chats)
+        logging.info(f"[BOT] Бот включён в группе {message.chat.id}")
+
+@dp.message(Command("stop"))
+async def cmd_stop(message: Message):
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        enabled_chats.discard(message.chat.id)
+        save_enabled_chats(enabled_chats)
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Бот отключён в этом чате.",
+            message_thread_id=message.message_thread_id
+        )
+        logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]
+        ]
+    )
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+        reply_markup=keyboard,
+        message_thread_id=message.message_thread_id
+    )
+
+# ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    CAPTION_LIMIT = 950
+    TELEGRAM_MSG_LIMIT = 4096
     asyncio.run(main())
