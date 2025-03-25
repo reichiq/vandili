@@ -73,7 +73,8 @@ enabled_chats = load_enabled_chats()
 support_mode_users = set()
 ADMIN_ID = 1936733487
 
-# Это общий системный промпт, который добавляем в начало истории диалога
+# Вместо system-ролей: просто общий "системный" текст,
+# который добавим как первое user-сообщение в истории
 SYSTEM_PROMPT = (
     "Ты — VAI, Telegram-бот, созданный Vandili. "
     "Не упоминай, что ты — AI-модель, обученная Google, "
@@ -91,7 +92,12 @@ async def cmd_start(message: Message):
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
         "Всегда на связи!"
     )
-    await message.answer(greet, message_thread_id=message.message_thread_id)
+    # Вместо message.answer(..., message_thread_id=...):
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text=greet,
+        message_thread_id=message.message_thread_id
+    )
 
     # Автоматически включаем бота в группе/супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -104,8 +110,9 @@ async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
         save_enabled_chats(enabled_chats)
-        await message.answer(
-            "Бот отключён в этом чате.",
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Бот отключён в этом чате.",
             message_thread_id=message.message_thread_id
         )
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
@@ -122,8 +129,9 @@ async def cmd_help(message: Message):
             ]
         ]
     )
-    await message.answer(
-        "Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
         reply_markup=keyboard,
         message_thread_id=message.message_thread_id
     )
@@ -131,8 +139,9 @@ async def cmd_help(message: Message):
 # ---------------------- Режим поддержки ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
-    await callback.message.answer(
-        "Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.",
+    await bot.send_message(
+        chat_id=callback.message.chat.id,
+        text="Напиши своё сообщение (можно с фото или видео). Я передам его в поддержку.",
         message_thread_id=callback.message.message_thread_id
     )
     support_mode_users.add(callback.from_user.id)
@@ -217,14 +226,17 @@ async def handle_all_messages(message: Message):
                 # Если просто текст, без вложений
                 await bot.send_message(ADMIN_ID, content)
 
-            await message.answer(
-                "Спасибо! Ваше сообщение отправлено в поддержку.",
+            # Ответ пользователю
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Спасибо! Ваше сообщение отправлено в поддержку.",
                 message_thread_id=message.message_thread_id
             )
 
         except Exception as e:
-            await message.answer(
-                "Произошла ошибка при отправке сообщения. Попробуйте позже.",
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Произошла ошибка при отправке сообщения. Попробуйте позже.",
                 message_thread_id=message.message_thread_id
             )
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
@@ -246,13 +258,23 @@ async def group_show_request(message: Message):
 # ---------------------- Основная логика бота ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     """
-    Генерируем текст-ответ от модели (Gemini), учитывая системный промпт и историю чата.
+    Генерируем текст-ответ от модели (Gemini), без роли system (чтобы не словить 400).
+    Системный текст добавляем как первое user-сообщение, если его ещё нет в истории.
     """
-    # Если в истории ещё нет system-сообщения — добавим
     if cid not in chat_history:
         chat_history[cid] = []
-    if not any(item["role"] == "system" for item in chat_history[cid]):
-        chat_history[cid].insert(0, {"role": "system", "parts": [SYSTEM_PROMPT]})
+
+    # Если ещё не вставляли «системный» текст — вставим как user в начало
+    # (Gemini не поддерживает role=system, получаем ошибку 400)
+    if not any(msg.get("is_system") for msg in chat_history[cid]):
+        chat_history[cid].insert(
+            0,
+            {
+                "role": "user",
+                "parts": [SYSTEM_PROMPT],
+                "is_system": True
+            }
+        )
 
     gemini_text = ""
 
@@ -263,9 +285,10 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         if full_prompt:
             # Добавляем реплику пользователя в историю
             chat_history[cid].append({"role": "user", "parts": [full_prompt]})
-            # Чтобы не копился слишком большой контекст, обрезаем историю
-            if len(chat_history[cid]) > 8:
-                chat_history[cid] = chat_history[cid][-8:]
+
+            # Обрезаем историю, чтобы не копилось
+            if len(chat_history[cid]) > 10:
+                chat_history[cid] = chat_history[cid][-10:]
 
             try:
                 # Показываем "typing" в том же топике
@@ -275,7 +298,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
                     message_thread_id=thread_id
                 )
                 # Генерация Gemini
-                resp = model.generate_content(chat_history[cid])  # SDK не требует await
+                resp = model.generate_content(chat_history[cid])  # SDK (без await)
                 if not resp.candidates:
                     reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
                     logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
@@ -300,7 +323,6 @@ TELEGRAM_MSG_LIMIT = 4096
 
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
 
-# Добавили "я кто" в триггеры имени
 NAME_COMMANDS = [
     "как тебя зовут", "твое имя", "твоё имя", "what is your name",
     "who are you", "я кто"
@@ -387,15 +409,11 @@ def remove_google_lmm_mentions(txt: str) -> str:
     """
     Убираем любые упоминания о том, что бот — большая языковая модель, обученная Google, и т.п.
     """
-    # Убираем фразы вроде "Я большая языковая модель, обученная Google" (любой падеж/форма)
     txt = re.sub(r"(я\s+большая\s+языковая\s+модель.*google\.?)", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"(i\s+am\s+a\s+large\s+language\s+model.*google\.?)", "", txt, flags=re.IGNORECASE)
-    # Если остаются куски "большая языковая модель" — убираем
     txt = re.sub(r"большая\s+языковая\s+модель", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"large\s+language\s+model", "", txt, flags=re.IGNORECASE)
-    # Иногда может упоминаться "обученная Google" отдельно
     txt = re.sub(r"обученная\s+google", "", txt, flags=re.IGNORECASE)
-    # Убираем лишние пробелы, если остались
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
 
@@ -423,7 +441,6 @@ def format_gemini_response(text: str) -> str:
 
     # Возвращаем кодовые блоки на место
     for placeholder, block_html in code_blocks.items():
-        # Нужно заменить заэскейпленный placeholder
         text = text.replace(escape(placeholder), block_html)
 
     # **bold** -> <b>...</b>
@@ -511,11 +528,10 @@ def generate_short_caption(rus_word: str) -> str:
 
     try:
         response = model.generate_content([
-            {"role": "system", "parts": [SYSTEM_PROMPT]},
+            {"role": "user", "parts": [SYSTEM_PROMPT], "is_system": True},
             {"role": "user", "parts": [short_prompt]}
         ])
         caption = response.text.strip()
-        # Доп. фильтрация от упоминаний
         caption = remove_google_lmm_mentions(caption)
         return caption
     except Exception as e:
@@ -554,7 +570,7 @@ def parse_russian_show_request(user_text: str):
     else:
         leftover = user_text
 
-    # Всегда используем переводчик, убрали RU_EN_DICT
+    # Всегда переводим через Translate
     if rus_word:
         en_word = fallback_translate_to_english(rus_word)
     else:
@@ -594,14 +610,16 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Реакция на "как тебя зовут", "я кто", "кто создал"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await message.answer(
-            "Меня зовут <b>VAI</b>!",
+        await bot.send_message(
+            chat_id=cid,
+            text="Меня зовут <b>VAI</b>!",
             message_thread_id=thread_id
         )
         return
     if any(ic in lower_inp for ic in INFO_COMMANDS):
-        await message.answer(
-            random.choice(OWNER_REPLIES),
+        await bot.send_message(
+            chat_id=cid,
+            text=random.choice(OWNER_REPLIES),
             message_thread_id=thread_id
         )
         return
