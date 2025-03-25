@@ -129,9 +129,8 @@ async def cmd_stop(message: Message):
 async def cmd_help(message: Message):
     """
     В группе — показывает кнопку, ведущую в ЛС бота.
-    В личке — сразу показывает кнопку «Написать в поддержку» (или можно напрямую включать режим поддержки).
+    В личке — сразу показывает кнопку «Написать в поддержку».
     """
-    # Создаём кнопку «Написать в поддержку»
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -144,14 +143,14 @@ async def cmd_help(message: Message):
     )
 
     if message.chat.type == ChatType.PRIVATE:
-        # Если человек в личке с ботом, просто отправляем /help с этой кнопкой
+        # Если человек в личке с ботом
         await bot.send_message(
             chat_id=message.chat.id,
             text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
             reply_markup=keyboard
         )
     else:
-        # Если человек в группе/супергруппе, аналогично
+        # Если человек в группе/супергруппе
         await bot.send_message(
             chat_id=message.chat.id,
             text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
@@ -167,19 +166,17 @@ async def handle_support_click(callback: CallbackQuery):
     - В группе: показать кнопку-ссылку на ЛС с ботом.
     - В личке: включить «режим поддержки» и попросить пользователя отправить сообщение.
     """
-    chat_type = callback.message.chat.type
+    # Сразу отвечаем, чтобы не было «вечной загрузки»
+    await callback.answer("Открываем поддержку...", show_alert=False)
 
-    # Если пользователь нажал кнопку в личке с ботом
+    chat_type = callback.message.chat.type
     if chat_type == ChatType.PRIVATE:
         # Включаем режим поддержки
         support_mode_users.add(callback.from_user.id)
         await callback.message.answer(SUPPORT_PROMPT_TEXT)
-        await callback.answer()
     else:
         # Если пользователь нажал кнопку в группе — даём ссылку на ЛС бота
-        # Можно использовать прямую ссылку t.me/<бот>?start=anything
         private_url = f"https://t.me/{BOT_USERNAME}"
-        # Собираем клавиатуру с URL-кнопкой
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -195,7 +192,6 @@ async def handle_support_click(callback: CallbackQuery):
             reply_markup=keyboard,
             **thread_kwargs(callback.message)
         )
-        await callback.answer()
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -660,8 +656,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # Проверяем, нет ли запроса "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
-        # Если в leftover осталось "вай" (или "vai") как отдельное слово — убираем, чтобы
-        # не считать его частью запроса
+        # Если в leftover осталось "вай" (или "vai") как отдельное слово — убираем
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
         leftover = replace_pronouns_morph(leftover, rus_word)
 
