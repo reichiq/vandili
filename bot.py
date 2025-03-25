@@ -73,13 +73,17 @@ enabled_chats = load_enabled_chats()
 support_mode_users = set()
 ADMIN_ID = 1936733487
 
-# Общий системный промпт (будет добавлен как обычное user-сообщение)
+# ---------------------- Системный промпт ---------------------- #
+# Делаем упор на то, чтобы не повторять постоянно «Привет!» и «Я не знаю, кто ты».
+# Если пользователь оскорбляет — бот отвечает вежливо, но не зацикливается на представлении.
 SYSTEM_PROMPT = (
     "Ты — VAI, Telegram-бот, созданный Vandili. "
-    "Не упоминай, что ты — AI-модель, обученная Google, или что у тебя есть ограничения, связанные с этим. "
-    "Не пиши дисклеймеров про невозможность показать картинки. "
-    "Отвечай вежливо и дружелюбно. Если пользователь тебя оскорбляет, не груби в ответ. "
-    "Ты — VAI, бот от Vandili, и всё."
+    "Ты всегда вежлив и дружелюбен. Если пользователь оскорбляет тебя, "
+    "не груби в ответ и не повторяй постоянно «Привет!» или «Я не знаю, кто ты». "
+    "Просто ответь коротко и продолжи диалог. "
+    "Если пользователь задаёт вопрос (например, про Париж), дай содержательный ответ по теме. "
+    "Никогда не упоминай, что ты обучен Google или являешься большой языковой моделью. "
+    "Просто будь VAI от Vandili."
 )
 
 # ---------------------- Обработчики команд ---------------------- #
@@ -147,6 +151,7 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
+    # Режим "поддержки"
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -235,58 +240,55 @@ async def handle_all_messages(message: Message):
 
         finally:
             support_mode_users.discard(uid)
-
         return
 
+    # Обычный режим
     await handle_msg(message)
 
-# ---------------------- Декоратор для "вай покажи ..." ---------------------- #
+# ---------------------- "вай покажи" ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
     await handle_msg(message)
 
-# ---------------------- Основная логика бота ---------------------- #
+# ---------------------- Основная логика ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     """
-    Генерируем текст-ответ от модели (Gemini).
-    Если история пуста, перед основным запросом добавляем системный промпт как обычное сообщение.
+    Генерируем ответ от модели. Если в истории нет системного промпта, добавляем.
     """
-    if cid not in chat_history or not chat_history[cid]:
-        chat_history[cid] = [{"role": "user", "parts": [SYSTEM_PROMPT]}]
-    elif not any(msg.get("parts") == [SYSTEM_PROMPT] for msg in chat_history[cid]):
+    # Инициализируем историю для этого чата
+    if cid not in chat_history:
+        chat_history[cid] = []
+
+    # Если нет системного промпта в начале — добавим как первое "user"-сообщение
+    if not chat_history[cid] or not any(msg.get("parts") == [SYSTEM_PROMPT] for msg in chat_history[cid]):
         chat_history[cid].insert(0, {"role": "user", "parts": [SYSTEM_PROMPT]})
 
     gemini_text = ""
 
+    # Если нужна только короткая подпись (картинка + rus_word), а leftover пуст
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
     else:
         if full_prompt:
+            # Добавляем фразу пользователя
             chat_history[cid].append({"role": "user", "parts": [full_prompt]})
+            # Чтобы история не разрасталась бесконечно
             if len(chat_history[cid]) > 10:
                 chat_history[cid] = chat_history[cid][-10:]
+
             try:
-                await bot.send_chat_action(
-                    chat_id=cid,
-                    action="typing",
-                    message_thread_id=thread_id
-                )
+                await bot.send_chat_action(cid, "typing", message_thread_id=thread_id)
                 resp = model.generate_content(chat_history[cid])
                 if not resp.candidates:
                     reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
                     logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-                    gemini_text = (
-                        "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
-                        "чувствительный контент."
-                    )
+                    gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
                 else:
                     gemini_text = format_gemini_response(resp.text)
+
             except Exception as e:
                 logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-                gemini_text = (
-                    "⚠️ Произошла ошибка при генерации ответа. "
-                    "Попробуйте ещё раз позже."
-                )
+                gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
 
     return gemini_text
 
@@ -368,11 +370,13 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     return leftover
 
 def remove_google_lmm_mentions(txt: str) -> str:
+    # Расширили, чтобы убрать "обученная компанией Google" и т.п.
     txt = re.sub(r"(я\s+большая\s+языковая\s+модель.*google\.?)", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"(i\s+am\s+a\s+large\s+language\s+model.*google\.?)", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"большая\s+языковая\s+модель", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"large\s+language\s+model", "", txt, flags=re.IGNORECASE)
-    txt = re.sub(r"обученная\s+google", "", txt, flags=re.IGNORECASE)
+    # убираем "обученная компанией Google" или "обученная Google"
+    txt = re.sub(r"обученная(\s+\S+){0,2}\s+google", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
 
@@ -389,13 +393,21 @@ def format_gemini_response(text: str) -> str:
     text = escape(text)
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
+
+    # **bold** -> <b>...</b>
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # *italic* -> <i>...</i>
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    # `inline code` -> <code>...</code>
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
+
+    # Удаляем упоминания о невозможности показать изображения
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
+
+    # Преобразуем списки "* " -> "• "
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -407,7 +419,10 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
+
+    # Убираем упоминания о "большой языковой модели" и "Google"
     text = remove_google_lmm_mentions(text)
+
     return text
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
@@ -468,6 +483,7 @@ def parse_russian_show_request(user_text: str):
     triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
     if not triggered:
         return (False, "", "", user_text)
+
     match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
     if match:
         raw_rus_word = match.group(3)
@@ -481,11 +497,13 @@ def parse_russian_show_request(user_text: str):
     else:
         rus_word = ""
         raw_rus_word = ""
+
     if raw_rus_word:
         pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
         leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     else:
         leftover = user_text
+
     if rus_word:
         en_word = fallback_translate_to_english(rus_word)
     else:
@@ -496,9 +514,12 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     cid = message.chat.id
     thread_id = message.message_thread_id
     user_input = (message.text or "").strip()
+
+    # Если бот в группе и отключён, не отвечаем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid not in enabled_chats:
             return
+
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
@@ -507,9 +528,14 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             and (message.reply_to_message.from_user.id == bot.id)
         )
         mention_keywords = ["вай", "вэй", "vai"]
+
+        # Если нет упоминания/реплая/ключевых слов — не отвечаем
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
+
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
+
+    # Если фраза совпадает с "как тебя зовут" и т.д. — короткий ответ
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(
@@ -525,22 +551,32 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             message_thread_id=thread_id
         )
         return
+
+    # Проверяем, нет ли запроса "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
+
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
+
+    # Пытаемся получить картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
     has_image = bool(image_url)
+
     logging.info(
         f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
+
+    # Генерация текста через Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover, thread_id
     )
+
+    # Если есть картинка, отправляем фото
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -550,11 +586,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                         tmpf.write(photo_bytes)
                         tmp_path = tmpf.name
                     try:
-                        await bot.send_chat_action(
-                            chat_id=cid,
-                            action="upload_photo",
-                            message_thread_id=thread_id
-                        )
+                        await bot.send_chat_action(cid, "upload_photo", message_thread_id=thread_id)
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text)
                         await bot.send_photo(
@@ -571,6 +603,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                             )
                     finally:
                         os.remove(tmp_path)
+
+    # Иначе, если есть текст, отправляем текст
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
@@ -580,6 +614,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                 message_thread_id=thread_id
             )
 
+# ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
