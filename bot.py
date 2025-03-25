@@ -15,7 +15,6 @@ from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
-import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
@@ -25,6 +24,7 @@ from google.cloud import translate
 from google.oauth2 import service_account
 
 import json
+import requests  # Для обращения к Deepseek
 
 # ---------------------- Инициализация ---------------------- #
 key_path = '/root/vandili/gcloud-key.json'
@@ -34,7 +34,7 @@ translate_client = translate.TranslationServiceClient(credentials=credentials)
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Вместо GEMINI_API_KEY
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
@@ -44,11 +44,10 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
+# Убираем использование Google Generative AI:
+# genai.configure(api_key=GEMINI_API_KEY)
+# model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
 
-# При каждом новом запросе мы обнуляем chat_history[cid], так что
-# бот не вспоминает предыдущие ответы и не дополняет их.
 chat_history = {}
 
 ENABLED_CHATS_FILE = "enabled_chats.json"
@@ -76,17 +75,72 @@ support_mode_users = set()
 ADMIN_ID = 1936733487
 
 # ---------------------- Системный промпт ---------------------- #
-# Теперь мы НЕ запрещаем приветствия совсем, чтобы бот мог здороваться,
-# но просим не делать этого в каждом ответе и перечислять факты построчно.
 SYSTEM_PROMPT = (
     "Ты — VAI, Telegram-бот, созданный Vandili. "
-    "Отвечай вежливо. Если пользователь поздоровался, можешь в ответ тоже поздороваться, "
-    "но не начинай каждое сообщение с приветствия. "
-    "Если пользователь просит факты, обязательно перечисляй их построчно или по пунктам. "
+    "Отвечай вежливо. Если пользователь здоровается — можешь поздороваться. "
+    "Если просят факты, выводи их построчно. "
     "Не упоминай, что ты обучен Google или являешься большой языковой моделью. "
-    "Если пользователь оскорбляет, не груби в ответ, а коротко и вежливо отвечай."
+    "Если пользователь оскорбляет, не груби в ответ."
 )
 
+# ---------------------- Deepseek API ---------------------- #
+def call_deepseek_api(prompt: str, api_key: str) -> str:
+    """
+    Обращаемся к Deepseek API, передаём prompt, получаем text-ответ.
+    Замените URL и логику под реальную спецификацию Deepseek.
+    """
+    url = "https://api.deepseek.ai/v1/generate"  # Пример, выдуманный эндпоинт
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "prompt": prompt,
+        "max_tokens": 400,  # или другой параметр
+        "temperature": 0.7  # пример
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=data, timeout=30)
+        if resp.status_code == 200:
+            js = resp.json()
+            # Допустим, текст лежит в js["text"] или js["choices"][0]["text"]
+            if "text" in js:
+                return js["text"]
+            elif "choices" in js and len(js["choices"]) > 0:
+                return js["choices"][0].get("text", "")
+            else:
+                return "Пустой ответ от Deepseek"
+        else:
+            logging.error(f"[Deepseek] Ошибка {resp.status_code}: {resp.text}")
+            return "Произошла ошибка при запросе к Deepseek."
+    except Exception as e:
+        logging.error(f"[Deepseek] Исключение при запросе: {e}")
+        return "Ошибка при обращении к Deepseek."
+
+def deepseek_generate_content(messages: list[dict]) -> str:
+    """
+    Аналог модели.generate_content(...) из Google,
+    но теперь мы формируем общий prompt из messages и зовём Deepseek.
+    """
+    # Собираем все сообщения в один prompt-стринг.
+    # У нас role=user, role=assistant? Упрощённо:
+    prompt_text = ""
+    for msg in messages:
+        if msg["role"] == "user":
+            prompt_text += f"Пользователь: {msg['parts'][0]}\n"
+        elif msg["role"] == "assistant":
+            prompt_text += f"Помощник: {msg['parts'][0]}\n"
+        # Если нужны system-промпты, мы их тоже ставим как user:
+        # (Тут зависит от формата, как вы хотите передавать)
+
+    # Можно добавить в конец инструкцию:
+    prompt_text += "Помощник:"
+
+    # Вызываем Deepseek
+    result = call_deepseek_api(prompt_text, DEEPSEEK_API_KEY)
+    return result
+
+# ---------------------- Команды ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -136,7 +190,7 @@ async def cmd_help(message: Message):
         message_thread_id=message.message_thread_id
     )
 
-# ---------------------- Режим поддержки ---------------------- #
+# ---------------------- Поддержка ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     await bot.send_message(
@@ -247,42 +301,62 @@ async def handle_all_messages(message: Message):
 async def group_show_request(message: Message):
     await handle_msg(message)
 
-async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
+# ---------------------- Основная логика ---------------------- #
+async def generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     """
-    Генерация ответа от Gemini. При каждом новом запросе обнуляем историю,
-    добавляем системный промпт + текущее сообщение пользователя.
+    Генерация ответа через Deepseek. Обнуляем историю, вставляем системный промпт и текущее сообщение.
     """
-    # Полностью обнуляем историю для этого запроса
     chat_history[cid] = []
 
-    # Вставляем системный промпт как первое user-сообщение
+    # Вставляем системный промпт
     chat_history[cid].append({"role": "user", "parts": [SYSTEM_PROMPT]})
 
-    gemini_text = ""
+    # Если нужно только короткую подпись (картинка + rus_word, leftover пуст)
     if show_image and rus_word and not leftover:
-        # Если нужно только короткую подпись (картинка + rus_word), leftover пуст
-        gemini_text = generate_short_caption(rus_word)
+        text = generate_short_caption(rus_word)
+        return text
     else:
+        text = ""
         if full_prompt:
             chat_history[cid].append({"role": "user", "parts": [full_prompt]})
             try:
                 await bot.send_chat_action(cid, "typing", message_thread_id=thread_id)
-                resp = model.generate_content(chat_history[cid])
-                if not resp.candidates:
-                    reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-                    logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-                    gemini_text = (
-                        "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
-                        "чувствительный контент."
-                    )
-                else:
-                    gemini_text = format_gemini_response(resp.text)
+                # Вызываем нашу функцию deepseek_generate_content
+                text = deepseek_generate_content(chat_history[cid])
+                # Делаем пост-обработку
+                text = format_deepseek_response(text)
             except Exception as e:
-                logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-                gemini_text = (
-                    "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
-                )
-    return gemini_text
+                logging.error(f"[BOT] Ошибка при обращении к Deepseek: {e}")
+                text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+        return text
+
+def format_deepseek_response(text: str) -> str:
+    """
+    Аналог format_gemini_response, но для Deepseek. 
+    Приводим к HTML-формату, удаляем упоминания о Google, делаем списки и т.д.
+    """
+    text = escape(text)
+
+    # Убираем "Я большая языковая модель" и т.д.
+    text = remove_google_lmm_mentions(text)
+
+    # Заменяем "* " -> "• "
+    lines = text.split('\n')
+    new_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        prefix_len = len(line) - len(stripped)
+        if stripped.startswith('* ') and not stripped.startswith('**'):
+            replaced_line = (' ' * prefix_len) + '• ' + stripped[2:]
+            new_lines.append(replaced_line)
+        else:
+            new_lines.append(line)
+    text = '\n'.join(new_lines)
+
+    # Перенос строк между ". •"
+    text = re.sub(r"(\.\s*)•", r".\n•", text)
+
+    return text.strip()
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
@@ -309,9 +383,6 @@ OWNER_REPLIES = [
 ]
 
 def split_smart(text: str, limit: int) -> list[str]:
-    """
-    Разбиваем текст на куски не более limit символов, стараясь не рвать предложения.
-    """
     results = []
     start = 0
     length = len(text)
@@ -335,9 +406,6 @@ def split_smart(text: str, limit: int) -> list[str]:
     return [x for x in results if x]
 
 def split_caption_and_text(text: str) -> tuple[str, list[str]]:
-    """
-    Делим итоговый текст на подпись (до 950 символов) и остальное (до 4096).
-    """
     if len(text) <= CAPTION_LIMIT:
         return text, []
     chunks_950 = split_smart(text, CAPTION_LIMIT)
@@ -357,9 +425,6 @@ def get_prepositional_form(rus_word: str) -> str:
     return loct.word if loct else rus_word
 
 def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
-    """
-    "о нем/нём/ней" -> "о [предложный падеж]"
-    """
     word_prep = get_prepositional_form(rus_word)
     pronoun_map = {
         r"\bо\s+нем\b":  f"о {word_prep}",
@@ -371,9 +436,6 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
     return leftover
 
 def remove_google_lmm_mentions(txt: str) -> str:
-    """
-    Убираем упоминания "большая языковая модель", "обученная Google", и т.п.
-    """
     txt = re.sub(r"(я\s+большая\s+языковая\s+модель.*google\.?)", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"(i\s+am\s+a\s+large\s+language\s+model.*google\.?)", "", txt, flags=re.IGNORECASE)
     txt = re.sub(r"большая\s+языковая\s+модель", "", txt, flags=re.IGNORECASE)
@@ -382,153 +444,24 @@ def remove_google_lmm_mentions(txt: str) -> str:
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
 
-def format_gemini_response(text: str) -> str:
-    """
-    Приводим ответ к HTML-формату, убираем лишние упоминания,
-    добавляем переносы строк между пунктами "• ... . • ..."
-    """
-    code_blocks = {}
-
-    def extract_code(match):
-        lang = match.group(1) or "text"
-        code = escape(match.group(2))
-        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
-        code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
-        return placeholder
-
-    # Извлекаем блоки кода
-    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-
-    # Экранируем остальной текст
-    text = escape(text)
-
-    # Возвращаем кодовые блоки
-    for placeholder, block_html in code_blocks.items():
-        text = text.replace(escape(placeholder), block_html)
-
-    # **bold** -> <b>...</b>
-    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    # *italic* -> <i>...</i>
-    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
-    # `inline code` -> <code>...</code>
-    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-
-    # Удаляем упоминания "я текстовый ассистент..." и т.п.
-    text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
-
-    # Заменяем "* " на "• "
-    lines = text.split('\n')
-    new_lines = []
-    for line in lines:
-        stripped = line.lstrip()
-        prefix_len = len(line) - len(stripped)
-        if stripped.startswith('* ') and not stripped.startswith('**'):
-            replaced_line = (' ' * prefix_len) + '• ' + stripped[2:]
-            new_lines.append(replaced_line)
-        else:
-            new_lines.append(line)
-    text = '\n'.join(new_lines).strip()
-
-    # Ставим переносы строк между "• ... . •"
-    # Пример: "• Факт. • Следующий факт" -> "• Факт.\n• Следующий факт"
-    text = re.sub(r"(\.\s*)•", r".\n•", text)
-
-    # Удаляем упоминания о Google и большой языковой модели
-    text = remove_google_lmm_mentions(text)
-
-    return text
-
-async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
-    if not prompt:
-        return None
-    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
-                    return None
-                data = await response.json()
-                if "urls" not in data or "regular" not in data["urls"]:
-                    logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
-                    return None
-                return data["urls"]["regular"]
-    except Exception as e:
-        logging.warning(f"Ошибка при получении изображения: {e}")
-    return None
-
-def fallback_translate_to_english(rus_word: str) -> str:
-    try:
-        project_id = "gen-lang-client-0588633435"
-        location = "global"
-        parent = f"projects/{project_id}/locations/{location}"
-
-        response = translate_client.translate_text(
-            parent=parent,
-            contents=[rus_word],
-            mime_type="text/plain",
-            source_language_code="ru",
-            target_language_code="en",
-        )
-        return response.translations[0].translated_text
-    except Exception as e:
-        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
-        return rus_word
-
 def generate_short_caption(rus_word: str) -> str:
+    """
+    Генерация короткой подписи через Deepseek.
+    """
     short_prompt = (
-        "ИНСТРУКЦИЯ: Ты — VAI, бот от Vandili. Можешь вежливо поздороваться, если уместно. "
-        "Если есть факты, перечисляй их построчно. "
+        "ИНСТРУКЦИЯ: Ты — VAI, бот от Vandili. Если есть факты, перечисляй их построчно. "
         f"Напиши одну короткую, дружелюбную подпись к изображению с «{rus_word}» (до 15 слов)."
     )
-    try:
-        response = model.generate_content([
-            {"role": "user", "parts": [SYSTEM_PROMPT]},
-            {"role": "user", "parts": [short_prompt]}
-        ])
-        caption = response.text.strip()
-        caption = remove_google_lmm_mentions(caption)
-        # Разбиваем пункты, если они идут подряд
-        caption = re.sub(r"(\.\s*)•", r".\n•", caption)
-        return caption
-    except Exception as e:
-        logging.error(f"[BOT] Error generating short caption: {e}")
-        return rus_word.capitalize()
-
-def parse_russian_show_request(user_text: str):
-    lower_text = user_text.lower()
-    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
-    if not triggered:
-        return (False, "", "", user_text)
-
-    match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
-    if match:
-        raw_rus_word = match.group(3)
-        raw_rus_word_clean = raw_rus_word.strip(punctuation)
-        parsed = morph.parse(raw_rus_word_clean)
-        if parsed:
-            rus_normal = parsed[0].normal_form
-        else:
-            rus_normal = raw_rus_word_clean
-        rus_word = rus_normal
-    else:
-        rus_word = ""
-        raw_rus_word = ""
-
-    if raw_rus_word:
-        pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
-        leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
-    else:
-        leftover = user_text
-
-    if rus_word:
-        en_word = fallback_translate_to_english(rus_word)
-    else:
-        en_word = ""
-    return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
+    # Без истории: просто вызываем Deepseek
+    messages = [
+        {"role": "user", "parts": [SYSTEM_PROMPT]},
+        {"role": "user", "parts": [short_prompt]}
+    ]
+    result = deepseek_generate_content(messages)
+    result = remove_google_lmm_mentions(result)
+    # Разбиваем "•" по строкам
+    result = re.sub(r"(\.\s*)•", r".\n•", result)
+    return result.strip()
 
 async def handle_msg(message: Message, prompt_mode: bool = False):
     cid = message.chat.id
@@ -552,7 +485,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Короткие ответы (имя, создатель)
+    # Короткие ответы
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(
@@ -577,6 +510,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
+    # Запрос к Unsplash
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -587,11 +521,12 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    gemini_text = await generate_and_send_gemini_response(
+    # Генерация ответа через Deepseek
+    deepseek_text = await generate_and_send_deepseek_response(
         cid, full_prompt, show_image, rus_word, leftover, thread_id
     )
 
-    # Отправляем фото + текст
+    # Отправляем фото + текст (с разделением caption + остаток)
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -603,9 +538,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                     try:
                         await bot.send_chat_action(cid, "upload_photo", message_thread_id=thread_id)
                         file = FSInputFile(tmp_path, filename="image.jpg")
-
-                        # Делаем короткую подпись (до 950 символов), остальное — отдельными сообщениями
-                        caption, rest = split_caption_and_text(gemini_text)
+                        caption, rest = split_caption_and_text(deepseek_text)
                         await bot.send_photo(
                             chat_id=cid,
                             photo=file,
@@ -621,9 +554,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                     finally:
                         os.remove(tmp_path)
     else:
-        # Если нет картинки, просто отправляем текст
-        if gemini_text:
-            chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+        if deepseek_text:
+            chunks = split_smart(deepseek_text, TELEGRAM_MSG_LIMIT)
             for c in chunks:
                 await bot.send_message(
                     chat_id=cid,
