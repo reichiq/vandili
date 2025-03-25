@@ -45,7 +45,6 @@ dp = Dispatcher()
 morph = MorphAnalyzer()
 
 chat_history = {}
-
 ENABLED_CHATS_FILE = "enabled_chats.json"
 
 def load_enabled_chats() -> set:
@@ -84,10 +83,11 @@ def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
     Отправляем запрос к DeepSeek Chat API через OpenRouter.
     Запрос отправляется на:
       POST https://openrouter.ai/api/v1/chat/completions
-    Тело запроса содержит:
+    с телом:
       {
          "model": "deepseek/deepseek-chat-v3-0324:free",
-         "messages": [ { "role": "system", "content": "..." }, { "role": "user", "content": "..." } ]
+         "messages": [ { "role": "system", "content": "..." },
+                       { "role": "user", "content": "..." } ]
       }
     """
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -156,7 +156,7 @@ def parse_russian_show_request(user_text: str):
         en_word = ""
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
-# ---------------------- Команды ---------------------- #
+# ---------------------- Команды: /start, /stop, /help ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -218,8 +218,10 @@ async def handle_all_messages(message: Message):
         try:
             caption = message.caption or message.text or "[Без текста]"
             username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
-            content = (f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
-                       f"(id: <code>{uid}</code>):\n\n{caption}")
+            content = (
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
+                f"(id: <code>{uid}</code>):\n\n{caption}"
+            )
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -257,18 +259,10 @@ async def handle_all_messages(message: Message):
                 await bot.send_voice(ADMIN_ID, voice=BufferedInputFile(voice_bytes, filename="voice.ogg"), caption=content)
             else:
                 await bot.send_message(ADMIN_ID, content)
-            await bot.send_message(
-                chat_id=message.chat.id,
-                text="Спасибо! Ваше сообщение отправлено в поддержку.",
-                message_thread_id=message.message_thread_id
-            )
+            await bot.send_message(chat_id=message.chat.id, text="Спасибо! Ваше сообщение отправлено в поддержку.", message_thread_id=message.message_thread_id)
         except Exception as e:
             logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            await bot.send_message(
-                chat_id=message.chat.id,
-                text="Произошла ошибка при отправке сообщения. Попробуйте позже.",
-                message_thread_id=message.message_thread_id
-            )
+            await bot.send_message(chat_id=message.chat.id, text="Произошла ошибка при отправке сообщения. Попробуйте позже.", message_thread_id=message.message_thread_id)
         finally:
             support_mode_users.discard(uid)
         return
