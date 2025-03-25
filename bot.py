@@ -34,7 +34,7 @@ translate_client = translate.TranslationServiceClient(credentials=credentials)
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Ваш ключ OpenRouter: sk-or-v1-...
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # Ваш ключ для DeepSeek
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
@@ -77,31 +77,29 @@ SYSTEM_PROMPT = (
     "Если пользователь оскорбляет, отвечай кратко и вежливо."
 )
 
-# ---------------------- DeepSeek Chat API через OpenRouter ---------------------- #
+# ---------------------- DeepSeek Chat API ---------------------- #
 def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
     """
-    Отправляем запрос к DeepSeek Chat API через OpenRouter.
-    URL: POST https://openrouter.ai/api/v1/chat/completions
-    Тело:
-    {
-      "model": "deepseek/deepseek-chat-v3-0324:free",
-      "messages": [ { "role": "system", "content": "..." }, ... ]
-    }
+    Запрос к DeepSeek API (допустим, docs: https://api-docs.deepseek.com/)
+    Предположим, в доках сказано: 
+      POST https://api.deepseek.com/v1/chat
+      Headers: Authorization: Bearer <API_KEY>
+      Body:
+      {
+        "model": "deepseek-chat-v3-0324:free",
+        "messages": [
+          {"role":"system","content":"..."},
+          {"role":"user","content":"..."}
+        ]
+      }
     """
-    url = "https://openrouter.ai/api/v1/chat/completions"
-
-    # Внимание: добавляем и Authorization: Bearer, и X-OpenRouter-Api-Key,
-    # а также X-Title и HTTP-Referer. Возможно, не все нужны, но так надёжнее.
+    url = "https://api.deepseek.com/v1/chat"  # или другой из доков
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "X-OpenRouter-Api-Key": api_key,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://t.me/YourBotUsername",  # при желании подставьте реальный адрес
-        "X-Title": "VAI-bot"
+        "Content-Type": "application/json"
     }
-
     data = {
-        "model": "deepseek/deepseek-chat-v3-0324:free",
+        "model": "deepseek-chat-v3-0324:free",  # Или подставьте модель, указанную в доках
         "messages": chat_messages
     }
 
@@ -109,6 +107,12 @@ def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
         resp = requests.post(url, headers=headers, json=data, timeout=30)
         if resp.status_code == 200:
             js = resp.json()
+            # Предположим, ответ приходит в формате:
+            # {
+            #   "choices": [
+            #     {"message": {"role": "assistant", "content": "..."}}
+            #   ]
+            # }
             choices = js.get("choices", [])
             if choices:
                 return choices[0]["message"]["content"]
@@ -116,23 +120,25 @@ def call_deepseek_chat_api(chat_messages: list[dict], api_key: str) -> str:
                 return "Пустой ответ от DeepSeek (нет choices)."
         else:
             logging.error(f"[DeepSeek] Ошибка {resp.status_code}: {resp.text}")
-            return f"Произошла ошибка при запросе к DeepSeek. Код: {resp.status_code}"
+            return f"Произошла ошибка при запросе к DeepSeek: {resp.status_code}"
     except Exception as e:
         logging.error(f"[DeepSeek] Исключение при запросе: {e}")
         return "Ошибка при обращении к DeepSeek."
 
 def deepseek_generate_content(messages: list[dict]) -> str:
     """
-    Формируем внутреннюю структуру -> формат Chat API -> зовём call_deepseek_chat_api.
+    Преобразуем внутреннюю структуру в формат Chat API DeepSeek:
+      [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
     """
     chat_messages = []
     for msg in messages:
         role = msg["role"]
         content = msg["parts"][0]
+        # Преобразуем "system" -> "system", "user" -> "user", "assistant" -> "assistant"
         chat_messages.append({"role": role, "content": content})
     return call_deepseek_chat_api(chat_messages, DEEPSEEK_API_KEY)
 
-# ---------------------- Доп. функции ---------------------- #
+# ---------------------- Функции для морфологии, перевода и Unsplash ---------------------- #
 def fallback_translate_to_english(rus_word: str) -> str:
     try:
         project_id = "gen-lang-client-0588633435"
@@ -219,6 +225,7 @@ def parse_russian_show_request(user_text: str):
         en_word = ""
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
+# ---------------------- Генерация короткой подписи ---------------------- #
 def generate_short_caption(rus_word: str) -> str:
     prompt = (
         "ИНСТРУКЦИЯ: Ты — VAI, бот от Vandili. Если есть факты, перечисляй их построчно. "
@@ -287,7 +294,7 @@ OWNER_REPLIES = [
     "Я продукт <i>Vandili</i>. Он мой единственный владелец."
 ]
 
-# ---------------------- Генерация ответа через DeepSeek ---------------------- #
+# ---------------------- Генерация полного ответа ---------------------- #
 async def generate_and_send_deepseek_response(cid, full_prompt, show_image, rus_word, leftover, thread_id):
     chat_history[cid] = []
     chat_history[cid].append({"role": "system", "parts": [SYSTEM_PROMPT]})
@@ -322,13 +329,13 @@ def format_deepseek_response(text: str) -> str:
     text = re.sub(r"(\.\s*)•", r".\n•", text)
     return text.strip()
 
-# ---------------------- handle_msg ---------------------- #
+# ---------------------- Основная функция handle_msg ---------------------- #
 async def handle_msg(message: Message, prompt_mode: bool = False):
     cid = message.chat.id
     thread_id = message.message_thread_id
     user_input = (message.text or "").strip()
 
-    # Если это группа/супергруппа и бот не включён
+    # Если бот выключен в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid not in enabled_chats:
             return
@@ -347,17 +354,17 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
     lower_inp = user_input.lower()
 
-    # 1) / Как тебя зовут
+    # 1) Как тебя зовут
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(cid, "Меня зовут <b>VAI</b>!", message_thread_id=thread_id)
         return
 
-    # 2) / Кто создал
+    # 2) Кто тебя создал
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await bot.send_message(cid, random.choice(OWNER_REPLIES), message_thread_id=thread_id)
         return
 
-    # 3) Парсим "вай покажи ..."
+    # 3) "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = replace_pronouns_morph(leftover, rus_word)
@@ -397,16 +404,14 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             for chunk in chunks:
                 await bot.send_message(cid, chunk, message_thread_id=thread_id)
         else:
-            # fallback, если в ЛС просто "привет" и т.п.
+            # fallback для приватного чата
             if message.chat.type == ChatType.PRIVATE:
                 await bot.send_message(cid, "Привет! Чем могу помочь?", message_thread_id=thread_id)
 
-# ---------------------- Хендлер на ВСЕ остальные сообщения ---------------------- #
+# ---------------------- Хендлер на все остальные сообщения ---------------------- #
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
-
-    # Режим поддержки
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -469,10 +474,10 @@ async def handle_all_messages(message: Message):
             support_mode_users.discard(uid)
         return
 
-    # Если не режим поддержки, вызываем handle_msg
+    # если не в режиме поддержки
     await handle_msg(message)
 
-# ---------------------- Команды /start, /stop, /help ---------------------- #
+# ---------------------- Команды: /start, /stop, /help ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     greet = (
@@ -521,7 +526,6 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Параметры для разбиения
     CAPTION_LIMIT = 950
     TELEGRAM_MSG_LIMIT = 4096
     asyncio.run(main())
