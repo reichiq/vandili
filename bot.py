@@ -51,7 +51,6 @@ model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 chat_history = {}
 
 ENABLED_CHATS_FILE = "enabled_chats.json"
-
 ADMIN_ID = 1936733487
 
 # Текст, который бот присылает в ЛС, когда переходит в «режим поддержки»
@@ -59,7 +58,6 @@ SUPPORT_PROMPT_TEXT = (
     "Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки."
 )
 
-# ---------------------- Вспомогательная функция для топиков ---------------------- #
 def thread_kwargs(message: Message) -> dict:
     """
     Если это супергруппа/группа с топиками, вернём словарь
@@ -128,32 +126,42 @@ async def cmd_stop(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     """
-    В группе — показывает кнопку, ведущую в ЛС бота.
-    В личке — сразу показывает кнопку «Написать в поддержку».
+    1) В личке: колбэк-кнопка «Написать в поддержку».
+    2) В группе: ссылка на личку бота (URL-кнопка).
     """
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✉️ Написать в поддержку",
-                    callback_data="support_request"
-                )
-            ]
-        ]
-    )
-
     if message.chat.type == ChatType.PRIVATE:
-        # Если человек в личке с ботом
+        # В личке — колбэк-кнопка
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✉️ Написать в поддержку",
+                        callback_data="support_request"
+                    )
+                ]
+            ]
+        )
         await bot.send_message(
             chat_id=message.chat.id,
             text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
             reply_markup=keyboard
         )
     else:
-        # Если человек в группе/супергруппе
+        # В группе — ссылка на личку
+        private_url = f"https://t.me/{BOT_USERNAME}"
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✉️ Написать в поддержку",
+                        url=private_url
+                    )
+                ]
+            ]
+        )
         await bot.send_message(
             chat_id=message.chat.id,
-            text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
+            text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:",
             reply_markup=keyboard,
             **thread_kwargs(message)
         )
@@ -162,36 +170,14 @@ async def cmd_help(message: Message):
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     """
-    Если нажали «Написать в поддержку»:
-    - В группе: показать кнопку-ссылку на ЛС с ботом.
-    - В личке: включить «режим поддержки» и попросить пользователя отправить сообщение.
+    Срабатывает только в ЛС, потому что в группе у нас URL-кнопка.
     """
-    # Сразу отвечаем, чтобы не было «вечной загрузки»
-    await callback.answer("Открываем поддержку...", show_alert=False)
+    # Закрываем колбэк, чтобы не было «вечной загрузки»
+    await callback.answer()
 
-    chat_type = callback.message.chat.type
-    if chat_type == ChatType.PRIVATE:
-        # Включаем режим поддержки
-        support_mode_users.add(callback.from_user.id)
-        await callback.message.answer(SUPPORT_PROMPT_TEXT)
-    else:
-        # Если пользователь нажал кнопку в группе — даём ссылку на ЛС бота
-        private_url = f"https://t.me/{BOT_USERNAME}"
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Открыть личный чат с ботом",
-                        url=private_url
-                    )
-                ]
-            ]
-        )
-        await callback.message.answer(
-            "Чтобы написать в поддержку, перейдите в личные сообщения со мной. Нажмите кнопку ниже:",
-            reply_markup=keyboard,
-            **thread_kwargs(callback.message)
-        )
+    # Включаем режим поддержки
+    support_mode_users.add(callback.from_user.id)
+    await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -287,9 +273,6 @@ async def handle_all_messages(message: Message):
                 )
         finally:
             # Можно отключать пользователя от режима сразу
-            # или дать ему возможность продолжить общение в поддержку.
-            # Если хотим отключать сразу после одного сообщения — раскомментируем:
-            # support_mode_users.discard(uid)
             pass
     else:
         # Если не режим поддержки, обрабатываем обычные сообщения
