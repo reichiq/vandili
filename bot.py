@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import (
     FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
-    CallbackQuery, InputFile, BufferedInputFile
+    CallbackQuery, BufferedInputFile
 )
 from aiogram.client.default import DefaultBotProperties
 from html import escape
@@ -298,8 +298,8 @@ async def handle_voice_message(message: Message):
     Обработка голосовых сообщений:
     1. Скачиваем голосовое сообщение (OGG).
     2. Конвертируем в WAV с помощью pydub.
-    3. Распознаём речь через SpeechRecognition.
-    4. Если успешно, отправляем пользователю распознанный текст и передаём его для дальнейшей обработки.
+    3. Распознаём речь через SpeechRecognition (Google).
+    4. Если успешно, отправляем пользователю распознанный текст и обрабатываем его как обычный ввод.
     """
     _register_message_stats(message)
     try:
@@ -351,10 +351,11 @@ async def handle_voice_message(message: Message):
         await message.answer("Не удалось распознать голосовое сообщение.")
         return
 
+    # Сообщаем пользователю распознанный текст
     await message.answer(f"Распознано: {recognized_text}")
-    # Подставляем распознанный текст вместо отсутствующего message.text
-    message.text = recognized_text
-    await handle_msg(message)
+
+    # Передаём распознанный текст в общий обработчик как второй аргумент
+    await handle_msg(message, recognized_text=recognized_text)
 
 # ---------------------- Главный обработчик сообщений ---------------------- #
 @dp.message()
@@ -596,6 +597,7 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
+
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -607,12 +609,15 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
+
+    # Заменяем некоторые фразы для "брендинга"
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
     text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+
     return text
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
@@ -697,9 +702,14 @@ def parse_russian_show_request(user_text: str):
         en_word = fallback_translate_to_english(rus_word)
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
-async def handle_msg(message: Message, prompt_mode: bool = False):
+async def handle_msg(message: Message, recognized_text: str = None):
+    """
+    Общий обработчик логики (ответ Gemini, картинки, голосовой ответ и т.д.).
+    Параметр recognized_text используется, если это результат распознавания голоса.
+    """
     cid = message.chat.id
-    user_input = (message.text or "").strip()
+    # Если есть распознанный текст, используем его, иначе берём обычное message.text
+    user_input = recognized_text or (message.text or "").strip()
 
     # Обнаружение запроса голосового ответа
     voice_response_requested = False
@@ -707,10 +717,10 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         lower_input = user_input.lower()
         if "ответь войсом" in lower_input or "ответь голосом" in lower_input or "голосом ответь" in lower_input:
             voice_response_requested = True
+            # Убираем из prompt все упоминания "ответь голосом/войсом"
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
-            # Обновляем текст сообщения
-            message.text = user_input
 
+    # Обработка вопроса по файлу
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -722,6 +732,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
+    # Если в группе, проверяем, упомянут ли бот или это ответ на него
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -732,28 +743,37 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         mention_keywords = ["вай", "вэй", "vai"]
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
+
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
+
+    # Если пользователь спрашивает имя
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>! 🤖", **thread_kwargs(message))
         return
+    # Если пользователь спрашивает о создателе
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await bot.send_message(chat_id=cid, text=random.choice(OWNER_REPLIES), **thread_kwargs(message))
         return
+
+    # Проверяем, не просит ли пользователь "Вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
         leftover = replace_pronouns_morph(leftover, rus_word)
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
+
+    # Если требуется показать картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
     has_image = bool(image_url)
-    logging.info(f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'")
+
+    # Генерация ответа через Gemini
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
-    # Если голосовой ответ запрошен, генерируем и отправляем голосовое сообщение вместо текста/изображения
+    # Если пользователь просил ответить голосом
     if voice_response_requested:
         if not gemini_text:
             await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
@@ -774,6 +794,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             await bot.send_message(chat_id=cid, text="Произошла ошибка при генерации голосового ответа.", **thread_kwargs(message))
         return
 
+    # Иначе отвечаем обычным текстом или картинкой
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -799,8 +820,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 # ---------------------- Обработка ответов админа в поддержку ---------------------- #
 @dp.message()
 async def handle_all_messages_duplicate(message: Message):
-    # Этот обработчик дублирует предыдущий, чтобы не пропустить сообщения.
-    # 1. Если админ отвечает реплаем в своём чате
+    # Дублирующий обработчик, чтобы не пропускать сообщения,
+    # если они не отфильтровались первыми хендлерами
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
@@ -816,7 +837,7 @@ async def handle_all_messages_duplicate(message: Message):
     uid = message.from_user.id
     cid = message.chat.id
 
-    # 2. Если пользователь в режиме поддержки — пересылаем сообщение админу
+    # Если пользователь в режиме поддержки — пересылаем сообщение админу
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -851,12 +872,10 @@ async def handle_all_messages_duplicate(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # 3. Если сообщение из группы/супергруппы и чат отключён — выходим
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
-    # 4. Если сообщение содержит документ (файл)
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
@@ -872,12 +891,7 @@ async def handle_all_messages_duplicate(message: Message):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-    logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
-    await handle_msg(message)
-
-# ---------------------- "Вай покажи ..." (повтор) ---------------------- #
-@dp.message(F.text.lower().startswith("вай покажи"))
-async def group_show_request_duplicate(message: Message):
+    logging.info(f"[DEBUG] (duplicate) Message from {uid}: content_type={message.content_type}, text={message.text!r}")
     await handle_msg(message)
 
 # ---------------------- Запуск бота ---------------------- #
@@ -886,29 +900,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-# Повторное определение extract_text_from_file (если нужно, можно удалить дубликат)
-from docx import Document
-from PyPDF2 import PdfReader
-
-def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
-    if filename.endswith(".txt") or filename.endswith(".py"):
-        return file_bytes.decode("utf-8", errors="ignore")
-    elif filename.endswith(".pdf"):
-        try:
-            with BytesIO(file_bytes) as pdf_stream:
-                reader = PdfReader(pdf_stream)
-                return "\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception:
-            return ""
-    elif filename.endswith(".docx"):
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
-                tmpf.write(file_bytes)
-                tmp_path = tmpf.name
-            doc = Document(tmp_path)
-            os.remove(tmp_path)
-            return "\n".join(p.text for p in doc.paragraphs)
-        except Exception:
-            return ""
-    return ""
