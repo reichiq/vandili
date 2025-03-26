@@ -217,7 +217,8 @@ async def handle_all_messages(message: Message):
 
     # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и выходим
     if uid in support_mode_users:
-        try:
+    support_mode_users.discard(uid)  # ⬅️ Вот это добавь — отключает режим поддержки
+    try:
             caption = message.caption or message.text or "[Без текста]"
             username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
             content = (
