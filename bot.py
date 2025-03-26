@@ -224,7 +224,7 @@ async def handle_all_messages(message: Message):
                     caption=content
                 )
 
-            elif message.document:
+            elif message.document and uid not in support_mode_users:
                 file = await bot.get_file(message.document.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
