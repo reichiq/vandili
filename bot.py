@@ -668,3 +668,32 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+from docx import Document
+from PyPDF2 import PdfReader
+
+def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
+    if filename.endswith(".txt") or filename.endswith(".py"):
+        return file_bytes.decode("utf-8", errors="ignore")
+
+    elif filename.endswith(".pdf"):
+        try:
+            with BytesIO(file_bytes) as pdf_stream:
+                reader = PdfReader(pdf_stream)
+                return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception:
+            return ""
+
+    elif filename.endswith(".docx"):
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
+                tmpf.write(file_bytes)
+                tmp_path = tmpf.name
+            doc = Document(tmp_path)
+            os.remove(tmp_path)
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception:
+            return ""
+
+    return ""
