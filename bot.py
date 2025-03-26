@@ -594,6 +594,19 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     """
     cid = message.chat.id
     user_input = (message.text or "").strip()
+        # Ответ на вопрос по содержимому ранее загруженного файла
+    if "файл" in user_input.lower() and message.from_user.id in user_documents:
+        text = user_documents[message.from_user.id]
+        short_summary_prompt = (
+            "Кратко и по делу объясни, что делает этот код или что содержится в этом файле. "
+            "Изложи это для пользователя, который только что загрузил файл:\n\n"
+            f"{text}"
+        )
+        gemini_response = await generate_and_send_gemini_response(
+            cid, short_summary_prompt, False, "", ""
+        )
+        await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
+        return
 
     # Если бот в группе/супергруппе и выключен в этом чате — не отвечаем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
