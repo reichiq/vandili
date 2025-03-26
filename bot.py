@@ -73,6 +73,7 @@ morph = MorphAnalyzer()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
+# Храним историю диалогов по chat_id
 chat_history = {}
 user_documents = {}
 
@@ -283,9 +284,13 @@ async def group_show_request(message: Message):
 
 # ---------------------- Логика бота / генерация ответа Gemini ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
+    """
+    Формирует запрос к модели, добавляет сообщение пользователя в историю
+    и сохраняет ответ бота, чтобы избежать повторов.
+    """
     gemini_text = ""
 
-    # Анализ вопроса: если сложный — усиливаем запрос
+    # Ключевые слова, при наличии которых усиливаем запрос
     analysis_keywords = [
         "почему", "зачем", "на кого", "кто", "что такое", "влияние",
         "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
@@ -298,34 +303,51 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    # Короткая подпись к картинке
+    # Если попросили показать картинку (show_image) и leftover пустой,
+    # генерируем короткую подпись, не добавляя в историю
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
 
-    if full_prompt:
-        chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
-        if len(chat_history[cid]) > 5:
-            chat_history[cid].pop(0)
+    # Получаем историю диалога
+    conversation = chat_history.setdefault(cid, [])
 
-        try:
-            await bot.send_chat_action(chat_id=cid, action="typing")
-            resp = model.generate_content(chat_history[cid])
-            if not resp.candidates:
-                reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-                logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-                gemini_text = (
-                    "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
-                    "чувствительный контент."
-                )
-            else:
-                gemini_text = format_gemini_response(resp.text)
-        except Exception as e:
-            logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+    # Добавляем сообщение пользователя в историю
+    conversation.append({"role": "user", "content": full_prompt})
+
+    # Обрезаем, чтобы не копить слишком длинную историю
+    while len(conversation) > 8:
+        conversation.pop(0)
+
+    try:
+        await bot.send_chat_action(chat_id=cid, action="typing")
+        resp = model.generate_content(conversation)
+
+        if not resp.candidates:
+            reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+            logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
             gemini_text = (
-                "⚠️ Произошла ошибка при генерации ответа. "
-                "Попробуйте ещё раз позже."
+                "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
+                "чувствительный контент."
             )
+        else:
+            # Ответ модели
+            raw_model_text = resp.text
+            gemini_text = format_gemini_response(raw_model_text)
+
+            # Сохраняем ответ бота в историю
+            conversation.append({"role": "assistant", "content": raw_model_text})
+
+            # Снова обрезаем историю при необходимости
+            while len(conversation) > 8:
+                conversation.pop(0)
+
+    except Exception as e:
+        logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+        gemini_text = (
+            "⚠️ Произошла ошибка при генерации ответа. "
+            "Попробуйте ещё раз позже."
+        )
 
     return gemini_text
 
@@ -547,10 +569,7 @@ def generate_short_caption(rus_word: str) -> str:
     )
     try:
         response = model.generate_content([
-            {
-                "role": "user",
-                "parts": [short_prompt]
-            }
+            {"role": "user", "content": short_prompt}
         ])
         caption = format_gemini_response(response.text.strip())
         return caption
@@ -603,7 +622,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     """
     cid = message.chat.id
     user_input = (message.text or "").strip()
-    # Ответ на вопрос по содержимому ранее загруженного файла
+
+    # 1. Ответ на вопрос по содержимому ранее загруженного файла
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -617,7 +637,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
-    # Если бот в группе/супергруппе и выключен в этом чате — не отвечаем
+    # 2. Если бот в группе/супергруппе и выключен в этом чате — не отвечаем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid not in enabled_chats:
             return
@@ -637,7 +657,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Реакция на "как тебя зовут" и "кто создал"
+    # 3. Реакция на "как тебя зовут" и "кто создал"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(
@@ -654,7 +674,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         )
         return
 
-    # Проверяем, нет ли запроса "вай покажи ..."
+    # 4. Проверяем, нет ли запроса "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         # Если в leftover осталось "вай" (или "vai") как отдельное слово — убираем
@@ -664,7 +684,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # Пытаемся получить картинку с Unsplash
+    # 5. Пытаемся получить картинку с Unsplash
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -675,12 +695,12 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
-    # Генерация ответа (текст) через Gemini
+    # 6. Генерация ответа (текст) через Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover
     )
 
-    # Если есть изображение — отправляем фото + подпись
+    # 7. Если есть изображение — отправляем фото + подпись
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -703,6 +723,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
                     finally:
                         os.remove(tmp_path)
+    # Если картинки нет, но есть текст — отправляем текст
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
