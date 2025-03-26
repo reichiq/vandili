@@ -33,7 +33,6 @@ import json
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
     if filename.endswith(".txt") or filename.endswith(".py"):
         return file_bytes.decode("utf-8", errors="ignore")
-
     elif filename.endswith(".pdf"):
         try:
             with BytesIO(file_bytes) as pdf_stream:
@@ -41,7 +40,6 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
                 return "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception:
             return ""
-
     elif filename.endswith(".docx"):
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
@@ -52,7 +50,6 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         except Exception:
             return ""
-
     return ""
 
 # ---------------------- Инициализация ---------------------- #
@@ -211,9 +208,9 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-    # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и выходим
+    # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и сообщаем о пересылке
     if uid in support_mode_users:
-        support_mode_users.discard(uid)  # ⬅️ Отключаем режим поддержки
+        support_mode_users.discard(uid)  # Отключаем режим поддержки
         try:
             caption = message.caption or message.text or "[Без текста]"
             username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
@@ -234,7 +231,6 @@ async def handle_all_messages(message: Message):
                     photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
                     caption=content
                 )
-
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -246,14 +242,17 @@ async def handle_all_messages(message: Message):
                     video=BufferedInputFile(video_bytes, filename="video.mp4"),
                     caption=content
                 )
-
             else:
                 await bot.send_message(chat_id=ADMIN_ID, text=content)
+            
+            # Отправляем подтверждение пользователю
+            await message.answer("Сообщение отправлено в поддержку.")
 
         except Exception as e:
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+            await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
 
-        return  # ⛔ Выходим из функции – не обрабатываем дальше
+        return  # Выход из функции – не обрабатываем дальше
 
     # 2. Если это файл — читаем его и сохраняем
     if message.document:
@@ -311,7 +310,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
         try:
             await bot.send_chat_action(chat_id=cid, action="typing")
-
             resp = model.generate_content(chat_history[cid])
             if not resp.candidates:
                 reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
@@ -322,7 +320,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
                 )
             else:
                 gemini_text = format_gemini_response(resp.text)
-
         except Exception as e:
             logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
             gemini_text = (
@@ -526,7 +523,6 @@ def fallback_translate_to_english(rus_word: str) -> str:
         project_id = "gen-lang-client-0588633435"
         location = "global"
         parent = f"projects/{project_id}/locations/{location}"
-
         response = translate_client.translate_text(
             parent=parent,
             contents=[rus_word],
@@ -577,7 +573,6 @@ def parse_russian_show_request(user_text: str):
     if match:
         raw_rus_word = match.group(3)
         raw_rus_word_clean = raw_rus_word.strip(punctuation)
-
         parsed = morph.parse(raw_rus_word_clean)
         if parsed:
             rus_normal = parsed[0].normal_form
@@ -695,24 +690,19 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                         tmpf.write(photo_bytes)
                         tmp_path = tmpf.name
                     try:
-                        # Показываем "upload_photo"
                         await bot.send_chat_action(chat_id=cid, action="upload_photo", **thread_kwargs(message))
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text)
-                        # Отправляем фото
                         await bot.send_photo(
                             chat_id=cid,
                             photo=file,
                             caption=caption if caption else "...",
                             **thread_kwargs(message)
                         )
-                        # Если остался текст после 950 символов, отправляем сообщениями
                         for c in rest:
                             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
                     finally:
                         os.remove(tmp_path)
-
-    # Если картинка не нашлась или не нужна, но есть текст — отправляем текст
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
@@ -733,7 +723,6 @@ from PyPDF2 import PdfReader
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
     if filename.endswith(".txt") or filename.endswith(".py"):
         return file_bytes.decode("utf-8", errors="ignore")
-
     elif filename.endswith(".pdf"):
         try:
             with BytesIO(file_bytes) as pdf_stream:
@@ -741,7 +730,6 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
                 return "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception:
             return ""
-
     elif filename.endswith(".docx"):
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
@@ -752,5 +740,4 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         except Exception:
             return ""
-
     return ""
