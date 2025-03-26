@@ -186,6 +186,21 @@ async def handle_support_click(callback: CallbackQuery):
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
+
+    if message.document and uid not in support_mode_users:
+        file = await bot.get_file(message.document.file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                file_bytes = await resp.read()
+        text = extract_text_from_file(message.document.file_name, file_bytes)
+        if text:
+            user_documents[uid] = text
+            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
+        else:
+            await message.answer("⚠️ Не удалось извлечь текст из файла.")
+        return
+
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
 
 
@@ -224,64 +239,9 @@ async def handle_all_messages(message: Message):
                     caption=content
                 )
 
-            elif message.document and uid not in support_mode_users:
-                file = await bot.get_file(message.document.file_id)
-                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        doc_bytes = await resp.read()
-                await bot.send_document(
-                    chat_id=ADMIN_ID,
-                    document=BufferedInputFile(doc_bytes, filename=message.document.file_name or "document"),
-                    caption=content
-                )
-
-            elif message.audio:
-                file = await bot.get_file(message.audio.file_id)
-                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        audio_bytes = await resp.read()
-                await bot.send_audio(
-                    chat_id=ADMIN_ID,
-                    audio=BufferedInputFile(audio_bytes, filename=message.audio.file_name or "audio.mp3"),
-                    caption=content
-                )
-
-            elif message.voice:
-                file = await bot.get_file(message.voice.file_id)
-                url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        voice_bytes = await resp.read()
-                await bot.send_voice(
-                    chat_id=ADMIN_ID,
-                    voice=BufferedInputFile(voice_bytes, filename="voice.ogg"),
-                    caption=content
-                )
-
-            else:
-                # Если просто текст, без вложений
-                await bot.send_message(ADMIN_ID, content)
-
-            # Ответ пользователю в ЛС
-            if message.chat.type == ChatType.PRIVATE:
-                await bot.send_message(
-                    chat_id=message.chat.id,
-                    text="Спасибо! Ваше сообщение отправлено в поддержку."
-                )
-        except Exception as e:
-            logging.error(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            if message.chat.type == ChatType.PRIVATE:
-                await bot.send_message(
-                    chat_id=message.chat.id,
-                    text="Произошла ошибка при отправке сообщения. Попробуйте позже."
-                )
+                    # Если не режим поддержки, обрабатываем обычные сообщения
         finally:
-            # Можно отключать пользователя от режима сразу
-            support_mode_users.discard(uid)
-    else:
-        # Если не режим поддержки, обрабатываем обычные сообщения
+            pass
         await handle_msg(message)
 
 # ---------------------- Дополнительный декоратор для "вай покажи ..." ---------------------- #
