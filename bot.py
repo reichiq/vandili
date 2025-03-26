@@ -219,12 +219,12 @@ async def handle_all_messages(message: Message):
     if uid in support_mode_users:
     support_mode_users.discard(uid)  # ⬅️ Вот это добавь — отключает режим поддержки
     try:
-            caption = message.caption or message.text or "[Без текста]"
-            username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
-            content = (
-                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
-                f"(id: <code>{uid}</code>):\n\n{caption}"
-            )
+        caption = message.caption or message.text or "[Без текста]"
+        username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
+        content = (
+            f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
+            f"(id: <code>{uid}</code>):\n\n{caption}"
+        )
 
             # Пересылаем вложения, если есть
             if message.photo:
