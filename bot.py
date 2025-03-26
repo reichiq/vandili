@@ -215,26 +215,7 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
 
-    await handle_msg(message)
-
-    if message.document and uid not in support_mode_users:
-        file = await bot.get_file(message.document.file_id)
-        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                file_bytes = await resp.read()
-        text = extract_text_from_file(message.document.file_name, file_bytes)
-        if text:
-            user_documents[uid] = text
-            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
-        else:
-            await message.answer("⚠️ Не удалось извлечь текст из файла.")
-        return
-
-    logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
-
-
-    # Если пользователь в режиме "поддержки", пересылаем сообщение админу
+    # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и выходим
     if uid in support_mode_users:
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -269,10 +250,34 @@ async def handle_all_messages(message: Message):
                     caption=content
                 )
 
-                    # Если не режим поддержки, обрабатываем обычные сообщения
-        finally:
-            pass
-        await handle_msg(message)
+            else:
+                await bot.send_message(chat_id=ADMIN_ID, text=content)
+
+        except Exception as e:
+            logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+
+        return  # ⛔ ВЫХОД из функции — не обрабатываем дальше
+
+    # 2. Если это файл — читаем его и сохраняем
+    if message.document:
+        file = await bot.get_file(message.document.file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                file_bytes = await resp.read()
+        text = extract_text_from_file(message.document.file_name, file_bytes)
+        if text:
+            user_documents[uid] = text
+            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
+        else:
+            await message.answer("⚠️ Не удалось извлечь текст из файла.")
+        return  # После файла — тоже выходим
+
+    # 3. Логируем
+    logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
+
+    # 4. Обычная обработка сообщений
+    await handle_msg(message)
 
 # ---------------------- Дополнительный декоратор для "вай покажи ..." ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
@@ -284,6 +289,19 @@ async def group_show_request(message: Message):
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
 
+# Анализируем вопрос и добавляем умный препромпт
+analysis_keywords = [
+    "почему", "зачем", "на кого", "кто", "что такое", "влияние",
+    "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
+]
+needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
+
+if needs_expansion:
+    smart_prompt = (
+        "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
+        "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
+    )
+    full_prompt = smart_prompt + full_prompt
     # Если нужно только короткая подпись для картинки
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
