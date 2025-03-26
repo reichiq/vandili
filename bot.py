@@ -86,8 +86,7 @@ SUPPORT_PROMPT_TEXT = (
 
 def thread_kwargs(message: Message) -> dict:
     """
-    Если это супергруппа/группа с топиками, вернём словарь
-    {"message_thread_id": ...}, иначе пусто.
+    Если это супергруппа/группа с топиками, вернём словарь {"message_thread_id": ...}, иначе пусто.
     """
     if (
         message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
@@ -290,7 +289,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     """
     gemini_text = ""
 
-    # Ключевые слова, при наличии которых усиливаем запрос
+    # Ключевые слова для усиления запроса
     analysis_keywords = [
         "почему", "зачем", "на кого", "кто", "что такое", "влияние",
         "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
@@ -303,19 +302,18 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    # Если попросили показать картинку (show_image) и leftover пустой,
-    # генерируем короткую подпись, не добавляя в историю
+    # Если запрошена картинка и leftover пустой – генерируем короткую подпись, не добавляя в историю
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
 
-    # Получаем историю диалога
+    # Получаем историю диалога для данного чата
     conversation = chat_history.setdefault(cid, [])
 
-    # Добавляем сообщение пользователя в историю
-    conversation.append({"role": "user", "content": full_prompt})
+    # Добавляем сообщение пользователя в историю с использованием ключа "parts"
+    conversation.append({"role": "user", "parts": [full_prompt]})
 
-    # Обрезаем, чтобы не копить слишком длинную историю
+    # Обрезаем историю, если она слишком длинная
     while len(conversation) > 8:
         conversation.pop(0)
 
@@ -331,14 +329,12 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
                 "чувствительный контент."
             )
         else:
-            # Ответ модели
             raw_model_text = resp.text
             gemini_text = format_gemini_response(raw_model_text)
 
-            # Сохраняем ответ бота в историю
-            conversation.append({"role": "assistant", "content": raw_model_text})
+            # Сохраняем ответ бота в историю с ключом "parts"
+            conversation.append({"role": "assistant", "parts": [raw_model_text]})
 
-            # Снова обрезаем историю при необходимости
             while len(conversation) > 8:
                 conversation.pop(0)
 
@@ -389,8 +385,7 @@ RU_EN_DICT = {
 
 def split_smart(text: str, limit: int) -> list[str]:
     """
-    Разбивает текст на куски не более limit символов,
-    стараясь не рвать предложения и слова.
+    Разбивает текст на куски не более limit символов, стараясь не рвать предложения и слова.
     """
     results = []
     start = 0
@@ -502,7 +497,7 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
 
-    # 7. Убираем любые упоминания, что бот от Google,
+    # 7. Убираем упоминания, что бот от Google,
     #    и заменяем «я большая языковая модель» на «Я VAI, создан командой Vandili»
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
@@ -569,7 +564,7 @@ def generate_short_caption(rus_word: str) -> str:
     )
     try:
         response = model.generate_content([
-            {"role": "user", "content": short_prompt}
+            {"role": "user", "parts": [short_prompt]}
         ])
         caption = format_gemini_response(response.text.strip())
         return caption
@@ -579,7 +574,7 @@ def generate_short_caption(rus_word: str) -> str:
 
 def parse_russian_show_request(user_text: str):
     """
-    Проверяем, содержит ли текст команды "покажи" и т.п., и вычленяем слово (например, 'кота' -> 'кот').
+    Проверяем, содержит ли текст команды "покажи" и вычленяем слово (например, 'кота' -> 'кот').
     Возвращаем:
       (bool: show_image?, str: rus_word, str: en_word, str: leftover)
     """
@@ -651,7 +646,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         )
         mention_keywords = ["вай", "вэй", "vai"]
 
-        # Если бот не упомянут, не ответили на бота и нет ключевых слов — не отвечаем
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
 
@@ -677,7 +671,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     # 4. Проверяем, нет ли запроса "вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
-        # Если в leftover осталось "вай" (или "vai") как отдельное слово — убираем
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
         leftover = replace_pronouns_morph(leftover, rus_word)
 
@@ -691,8 +684,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     has_image = bool(image_url)
 
     logging.info(
-        f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
-        f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
+        f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
     # 6. Генерация ответа (текст) через Gemini
@@ -723,7 +715,6 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
                     finally:
                         os.remove(tmp_path)
-    # Если картинки нет, но есть текст — отправляем текст
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
