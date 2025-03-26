@@ -73,12 +73,26 @@ morph = MorphAnalyzer()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
-# Храним историю диалогов по chat_id
+# ---------------------- Храним историю и статистику ---------------------- #
 chat_history = {}
 user_documents = {}
 
+# Поддержка
+support_mode_users = set()
+# Для умных уведомлений: когда пересылаем сообщение пользователя админу,
+# запоминаем, какому user_id оно принадлежит.
+support_reply_map = {}  # {admin_msg_id: user_id}
+
+# Статистика
+stats = {
+    "messages_total": 0,
+    "unique_users": set(),
+    "files_received": 0,
+    "commands_used": {}
+}
+
 ENABLED_CHATS_FILE = "enabled_chats.json"
-ADMIN_ID = 1936733487
+ADMIN_ID = 1936733487  # Замените на свой ID, если нужно
 
 SUPPORT_PROMPT_TEXT = (
     "Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки."
@@ -114,11 +128,13 @@ def save_enabled_chats(chats: set):
         logging.warning(f"[BOT] Не удалось сохранить enabled_chats: {e}")
 
 enabled_chats = load_enabled_chats()
-support_mode_users = set()
 
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    # Считаем статистику
+    _register_message_stats(message)
+
     # Если пользователь пришёл по ссылке /start support (например, из группы)
     if message.chat.type == ChatType.PRIVATE and message.text.startswith("/start support"):
         support_mode_users.add(message.from_user.id)
@@ -150,6 +166,7 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
+    _register_message_stats(message)
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.discard(message.chat.id)
         save_enabled_chats(enabled_chats)
@@ -162,6 +179,7 @@ async def cmd_stop(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    _register_message_stats(message)
     if message.chat.type == ChatType.PRIVATE:
         # В личке — колбэк-кнопка
         keyboard = InlineKeyboardMarkup(
@@ -191,24 +209,80 @@ async def cmd_help(message: Message):
             **thread_kwargs(message)
         )
 
+@dp.message(Command("adminstats"))
+async def cmd_adminstats(message: Message):
+    """
+    Показываем статистику, доступную только админу.
+    """
+    _register_message_stats(message)
+    if message.from_user.id != ADMIN_ID:
+        return  # игнорируем, если не админ
+
+    total_msgs = stats["messages_total"]
+    unique_users_count = len(stats["unique_users"])
+    files_received = stats["files_received"]
+
+    # Топ-3 команд
+    cmd_usage = stats["commands_used"]
+    if not cmd_usage:
+        top_commands = []
+    else:
+        top_commands = sorted(cmd_usage.items(), key=lambda x: x[1], reverse=True)[:3]
+
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"Всего сообщений: {total_msgs}\n"
+        f"Уникальных пользователей: {unique_users_count}\n"
+        f"Получено файлов: {files_received}\n\n"
+    )
+    if top_commands:
+        text += "Топ команд:\n"
+        for cmd, cnt in top_commands:
+            text += f"  {cmd}: {cnt}\n"
+    else:
+        text += "Команды ещё не использовались."
+
+    await message.answer(text)
+
 # ---------------------- Режим поддержки (callback) ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     """
     Срабатывает только в ЛС, потому что в группе у нас URL-кнопка.
     """
-    # Закрываем колбэк, чтобы не было «вечной загрузки»
-    await callback.answer()
-
-    # Включаем режим поддержки
+    await callback.answer()  # Закрываем колбэк, чтобы не было «вечной загрузки»
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
+# ---------------------- Главный обработчик сообщений ---------------------- #
 @dp.message()
 async def handle_all_messages(message: Message):
+    """
+    Основная точка входа для всех сообщений.
+    """
+    # Считаем статистику
+    _register_message_stats(message)
+
+    # 1. Проверяем, не отвечает ли админ на сообщение в поддержку
+    if message.chat.id == ADMIN_ID and message.reply_to_message:
+        original_id = message.reply_to_message.message_id
+        if original_id in support_reply_map:
+            user_id = support_reply_map[original_id]
+            # Копируем сообщение админу — так пересылается текст, фото, видео и т.д.
+            try:
+                await bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=ADMIN_ID,
+                    message_id=message.message_id
+                )
+            except Exception as e:
+                logging.warning(f"[BOT] Ошибка при пересылке ответа админа пользователю: {e}")
+        # Продолжаем обработку — но обычно этого достаточно
+        return
+
     uid = message.from_user.id
 
-    # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и сообщаем о пересылке
+    # 2. Если пользователь в режиме поддержки — пересылаем сообщение админу и сообщаем о пересылке
     if uid in support_mode_users:
         support_mode_users.discard(uid)  # Отключаем режим поддержки
         try:
@@ -219,14 +293,14 @@ async def handle_all_messages(message: Message):
                 f"(id: <code>{uid}</code>):\n\n{caption}"
             )
 
-            # Пересылаем вложения, если есть
+            sent_msg = None
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                await bot.send_photo(
+                sent_msg = await bot.send_photo(
                     chat_id=ADMIN_ID,
                     photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
                     caption=content
@@ -237,25 +311,29 @@ async def handle_all_messages(message: Message):
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
-                await bot.send_video(
+                sent_msg = await bot.send_video(
                     chat_id=ADMIN_ID,
                     video=BufferedInputFile(video_bytes, filename="video.mp4"),
                     caption=content
                 )
             else:
-                await bot.send_message(chat_id=ADMIN_ID, text=content)
-            
-            # Отправляем подтверждение пользователю
+                # Обычный текст
+                sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=content)
+
+            # Запоминаем, какой admin_msg_id связан с этим пользователем
+            if sent_msg:
+                support_reply_map[sent_msg.message_id] = uid
+
             await message.answer("Сообщение отправлено в поддержку.")
 
         except Exception as e:
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
+        return
 
-        return  # Выход из функции – не обрабатываем дальше
-
-    # 2. Если это файл — читаем его и сохраняем
+    # 3. Если это файл — читаем его и сохраняем
     if message.document:
+        stats["files_received"] += 1  # увеличиваем счётчик файлов
         file = await bot.get_file(message.document.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
@@ -267,29 +345,25 @@ async def handle_all_messages(message: Message):
             await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
         else:
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
-        return  # После файла – тоже выходим
+        return
 
-    # 3. Логируем
+    # 4. Логируем
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
 
-    # 4. Обычная обработка сообщений
+    # 5. Обычная обработка сообщений
     await handle_msg(message)
 
 # ---------------------- Дополнительный декоратор для "вай покажи ..." ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
-    # Просто вызываем основную функцию обработки
+    _register_message_stats(message)
     await handle_msg(message)
 
 # ---------------------- Логика бота / генерация ответа Gemini ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
-    """
-    Формирует запрос к модели, добавляет сообщение пользователя в историю
-    и сохраняет ответ бота, чтобы избежать повторов.
-    """
     gemini_text = ""
 
-    # Ключевые слова для усиления запроса
+    # Ключевые слова, при наличии которых усиливаем запрос
     analysis_keywords = [
         "почему", "зачем", "на кого", "кто", "что такое", "влияние",
         "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
@@ -302,18 +376,16 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    # Если запрошена картинка и leftover пустой – генерируем короткую подпись, не добавляя в историю
     if show_image and rus_word and not leftover:
+        # Генерируем короткую подпись, не добавляя в историю
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
 
-    # Получаем историю диалога для данного чата
     conversation = chat_history.setdefault(cid, [])
-
-    # Добавляем сообщение пользователя в историю с использованием ключа "parts"
+    # Добавляем сообщение пользователя в историю
     conversation.append({"role": "user", "parts": [full_prompt]})
 
-    # Обрезаем историю, если она слишком длинная
+    # Обрезаем историю, если слишком длинная
     while len(conversation) > 8:
         conversation.pop(0)
 
@@ -331,8 +403,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         else:
             raw_model_text = resp.text
             gemini_text = format_gemini_response(raw_model_text)
-
-            # Сохраняем ответ бота в историю с ключом "parts"
+            # Сохраняем ответ бота в историю
             conversation.append({"role": "assistant", "parts": [raw_model_text]})
 
             while len(conversation) > 8:
@@ -497,7 +568,7 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
 
-    # 7. Убираем упоминания, что бот от Google,
+    # 7. Убираем любые упоминания, что бот от Google,
     #    и заменяем «я большая языковая модель» на «Я VAI, создан командой Vandili»
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
@@ -684,7 +755,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     has_image = bool(image_url)
 
     logging.info(
-        f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
+        f"[BOT] show_image={show_image}, rus_word='{rus_word}', "
+        f"image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'"
     )
 
     # 6. Генерация ответа (текст) через Gemini
@@ -719,6 +791,19 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
+
+# ---------------------- Вспомогательные функции ---------------------- #
+def _register_message_stats(message: Message):
+    """
+    Увеличиваем счётчики статистики при каждом сообщении.
+    """
+    stats["messages_total"] += 1
+    stats["unique_users"].add(message.from_user.id)
+
+    # Если это команда, запишем её в stats["commands_used"]
+    if message.text and message.text.startswith('/'):
+        cmd = message.text.split()[0]
+        stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
