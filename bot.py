@@ -277,7 +277,7 @@ async def handle_all_messages(message: Message):
                 )
         finally:
             # Можно отключать пользователя от режима сразу
-            pass
+            support_mode_users.discard(uid)
     else:
         # Если не режим поддержки, обрабатываем обычные сообщения
         await handle_msg(message)
