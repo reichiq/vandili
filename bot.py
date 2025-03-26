@@ -94,12 +94,13 @@ support_mode_users = set()
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    # Если человек пришёл из группы с intent "поддержка"
+    # Если пользователь пришёл по ссылке ?start=support (например, из группы)
     if message.chat.type == ChatType.PRIVATE and message.text and "start=support" in message.text:
         support_mode_users.add(message.from_user.id)
         await message.answer(SUPPORT_PROMPT_TEXT)
-        return
+        return  # Прекращаем выполнение, НЕ шлём приветствие
 
+    # Обычный старт
     greet = (
         "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
@@ -111,6 +112,7 @@ async def cmd_start(message: Message):
         **thread_kwargs(message)
     )
 
+    # Автоматически включаем бота в группе/супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.add(message.chat.id)
         save_enabled_chats(enabled_chats)
