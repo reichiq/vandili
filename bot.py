@@ -289,50 +289,49 @@ async def group_show_request(message: Message):
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
 
-# Анализируем вопрос и добавляем умный препромпт
-analysis_keywords = [
-    "почему", "зачем", "на кого", "кто", "что такое", "влияние",
-    "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
-]
-needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
+    # Анализ вопроса: если сложный — усиливаем запрос
+    analysis_keywords = [
+        "почему", "зачем", "на кого", "кто", "что такое", "влияние",
+        "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
+    ]
+    needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
+    if needs_expansion:
+        smart_prompt = (
+            "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
+            "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
+        )
+        full_prompt = smart_prompt + full_prompt
 
-if needs_expansion:
-    smart_prompt = (
-        "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
-        "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
-    )
-    full_prompt = smart_prompt + full_prompt
-    # Если нужно только короткая подпись для картинки
+    # Короткая подпись к картинке
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
-    else:
-        if full_prompt:
-            chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
-            # Чтобы не копился слишком большой контекст, обрезаем историю
-            if len(chat_history[cid]) > 5:
-                chat_history[cid].pop(0)
+        return gemini_text
 
-            try:
-                # Показываем "typing"
-                await bot.send_chat_action(chat_id=cid, action="typing")
-                # Генерация Gemini
-                resp = model.generate_content(chat_history[cid])
-                if not resp.candidates:
-                    reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-                    logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-                    gemini_text = (
-                        "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
-                        "чувствительный контент."
-                    )
-                else:
-                    gemini_text = format_gemini_response(resp.text)
+    if full_prompt:
+        chat_history.setdefault(cid, []).append({"role": "user", "parts": [full_prompt]})
+        if len(chat_history[cid]) > 5:
+            chat_history[cid].pop(0)
 
-            except Exception as e:
-                logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+        try:
+            await bot.send_chat_action(chat_id=cid, action="typing")
+
+            resp = model.generate_content(chat_history[cid])
+            if not resp.candidates:
+                reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+                logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
                 gemini_text = (
-                    "⚠️ Произошла ошибка при генерации ответа. "
-                    "Попробуйте ещё раз позже."
+                    "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
+                    "чувствительный контент."
                 )
+            else:
+                gemini_text = format_gemini_response(resp.text)
+
+        except Exception as e:
+            logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+            gemini_text = (
+                "⚠️ Произошла ошибка при генерации ответа. "
+                "Попробуйте ещё раз позже."
+            )
 
     return gemini_text
 
