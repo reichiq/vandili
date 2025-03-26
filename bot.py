@@ -136,6 +136,58 @@ def _register_message_stats(message: Message):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
 
+# ---------------------- Функция отправки ответа админа одним сообщением ---------------------- #
+async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
+    """
+    Отправляет пользователю user_id одно сообщение, содержащее:
+    <b>Ответ от поддержки:</b> и контент ответа админа.
+    Для медиа-сообщений префикс добавляется в caption.
+    """
+    prefix = "<b>Ответ от поддержки:</b>"
+    
+    # Если текстовое сообщение
+    if admin_message.text:
+        reply_text = f"{prefix}\n{admin_message.text}"
+        await bot.send_message(chat_id=user_id, text=reply_text)
+    
+    # Фото
+    elif admin_message.photo:
+        caption = prefix
+        if admin_message.caption:
+            caption += f"\n{admin_message.caption}"
+        await bot.send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption)
+    
+    # Голосовое сообщение
+    elif admin_message.voice:
+        caption = prefix
+        if admin_message.caption:
+            caption += f"\n{admin_message.caption}"
+        await bot.send_voice(chat_id=user_id, voice=admin_message.voice.file_id, caption=caption)
+    
+    # Видео
+    elif admin_message.video:
+        caption = prefix
+        if admin_message.caption:
+            caption += f"\n{admin_message.caption}"
+        await bot.send_video(chat_id=user_id, video=admin_message.video.file_id, caption=caption)
+    
+    # Документ
+    elif admin_message.document:
+        caption = prefix
+        if admin_message.caption:
+            caption += f"\n{admin_message.caption}"
+        await bot.send_document(chat_id=user_id, document=admin_message.document.file_id, caption=caption)
+    
+    # Аудио
+    elif admin_message.audio:
+        caption = prefix
+        if admin_message.caption:
+            caption += f"\n{admin_message.caption}"
+        await bot.send_audio(chat_id=user_id, audio=admin_message.audio.file_id, caption=caption)
+    
+    else:
+        await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
+
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -159,7 +211,6 @@ async def cmd_start(message: Message):
             await message.answer("Бот уже активен в этом чате.", **thread_kwargs(message))
         return
 
-    # Обычный старт в ЛС
     greet = """Привет! Я <b>VAI</b> — интеллектуальный помощник 😊
 
 Вот что я умею:
@@ -170,26 +221,18 @@ async def cmd_start(message: Message):
 • Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
-    await bot.send_message(
-        chat_id=message.chat.id,
-        text=greet,
-        **thread_kwargs(message)
-    )
+    await bot.send_message(chat_id=message.chat.id, text=greet, **thread_kwargs(message))
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     """
-    В группе/супергруппе — добавляем чат в disabled_chats, отключая бота в этом чате.
+    В группе/супергруппе — добавляем чат в disabled_chats, отключая бота.
     """
     _register_message_stats(message)
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="Бот отключён в этом чате.",
-            **thread_kwargs(message)
-        )
+        await bot.send_message(chat_id=message.chat.id, text="Бот отключён в этом чате.", **thread_kwargs(message))
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
     else:
         await message.answer("Команда /stop работает только в группе.")
@@ -199,36 +242,18 @@ async def cmd_help(message: Message):
     _register_message_stats(message)
     if message.chat.type == ChatType.PRIVATE:
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(
-                text="✉️ Написать в поддержку",
-                callback_data="support_request"
-            )]]
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
         )
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:",
-            reply_markup=keyboard
-        )
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(
-                text="✉️ Написать в поддержку",
-                url=private_url
-            )]]
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:",
-            reply_markup=keyboard,
-            **thread_kwargs(message)
-        )
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread_kwargs(message))
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
-    """
-    Вывод статистики, доступной только админу.
-    """
     _register_message_stats(message)
     if message.from_user.id != ADMIN_ID:
         return
@@ -257,9 +282,6 @@ async def cmd_adminstats(message: Message):
 # ---------------------- Режим поддержки (callback) ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
-    """
-    В ЛС по нажатию кнопки поддержки.
-    """
     await callback.answer()
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
@@ -269,34 +291,27 @@ async def handle_support_click(callback: CallbackQuery):
 async def handle_all_messages(message: Message):
     """
     Основная точка входа для всех сообщений.
-    1. Проверка ответа админа в режиме поддержки.
-    2. Обработка режима поддержки.
-    3. Если чат в группе отключён, бот игнорирует сообщение.
-    4. Обработка файлов и остального текста.
+    1. Если админ отвечает реплаем – отправляем пользователю одно сообщение с префиксом.
+    2. Если пользователь в режиме поддержки – пересылаем сообщение админу.
+    3. Если чат в группе отключён – игнорируем сообщение.
+    4. Обработка файлов и обычных сообщений.
     """
-    # 1. Если админ отвечает реплаем на сообщение поддержки
+    # 1. Если админ отвечает в своём чате (реплай) на сообщение поддержки
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
             user_id = support_reply_map[original_id]
             try:
-                # Отправляем текст "Ответ от поддержки:" пользователю
-                await bot.send_message(chat_id=user_id, text="Ответ от поддержки:")
-                # Пересылаем ответ админа
-                await bot.copy_message(
-                    chat_id=user_id,
-                    from_chat_id=ADMIN_ID,
-                    message_id=message.message_id
-                )
+                await send_admin_reply_as_single_message(message, user_id)
             except Exception as e:
-                logging.warning(f"[BOT] Ошибка при пересылке ответа админа пользователю: {e}")
+                logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
     _register_message_stats(message)
     uid = message.from_user.id
     cid = message.chat.id
 
-    # 2. Если пользователь находится в режиме поддержки — пересылаем сообщение админу
+    # 2. Если пользователь в режиме поддержки – пересылаем сообщение админу
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -313,22 +328,14 @@ async def handle_all_messages(message: Message):
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                sent_msg = await bot.send_photo(
-                    chat_id=ADMIN_ID,
-                    photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
-                    caption=content
-                )
+                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
-                sent_msg = await bot.send_video(
-                    chat_id=ADMIN_ID,
-                    video=BufferedInputFile(video_bytes, filename="video.mp4"),
-                    caption=content
-                )
+                sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content)
             else:
                 sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=content)
             if sent_msg:
@@ -339,7 +346,7 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # 3. Если сообщение из группы/супергруппы и чат отключён — выходим
+    # 3. Если сообщение из группы/супергруппы и чат отключён – игнорируем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
@@ -382,11 +389,9 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
         )
         full_prompt = smart_prompt + full_prompt
-
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
-
     conversation = chat_history.setdefault(cid, [])
     conversation.append({"role": "user", "parts": [full_prompt]})
     if len(conversation) > 8:
@@ -398,8 +403,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
             logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
             gemini_text = (
-                "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или "
-                "чувствительный контент."
+                "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
             )
         else:
             raw_model_text = resp.text
@@ -410,8 +414,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     except Exception as e:
         logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
         gemini_text = (
-            "⚠️ Произошла ошибка при генерации ответа. "
-            "Попробуйте ещё раз позже."
+            "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
         )
     return gemini_text
 
@@ -634,9 +637,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
             "Изложи это для пользователя, который только что загрузил файл:\n\n"
             f"{text}"
         )
-        gemini_response = await generate_and_send_gemini_response(
-            cid, short_summary_prompt, False, "", ""
-        )
+        gemini_response = await generate_and_send_gemini_response(cid, short_summary_prompt, False, "", "")
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -645,7 +646,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
-            message.reply_to_message and message.reply_to_message.from_user and
+            message.reply_to_message and message.reply_to_message.from_user and 
             (message.reply_to_message.from_user.id == bot.id)
         )
         mention_keywords = ["вай", "вэй", "vai"]
@@ -654,18 +655,10 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
-        await bot.send_message(
-            chat_id=cid,
-            text="Меня зовут <b>VAI</b>! 🤖",
-            **thread_kwargs(message)
-        )
+        await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>! 🤖", **thread_kwargs(message))
         return
     if any(ic in lower_inp for ic in INFO_COMMANDS):
-        await bot.send_message(
-            chat_id=cid,
-            text=random.choice(OWNER_REPLIES),
-            **thread_kwargs(message)
-        )
+        await bot.send_message(chat_id=cid, text=random.choice(OWNER_REPLIES), **thread_kwargs(message))
         return
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
@@ -678,9 +671,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
     has_image = bool(image_url)
     logging.info(f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'")
-    gemini_text = await generate_and_send_gemini_response(
-        cid, full_prompt, show_image, rus_word, leftover
-    )
+    gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -693,12 +684,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
                         await bot.send_chat_action(chat_id=cid, action="upload_photo", **thread_kwargs(message))
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text)
-                        await bot.send_photo(
-                            chat_id=cid,
-                            photo=file,
-                            caption=caption if caption else "...",
-                            **thread_kwargs(message)
-                        )
+                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread_kwargs(message))
                         for c in rest:
                             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
                     finally:
@@ -711,28 +697,23 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 # ---------------------- Обработка ответов админа в поддержку ---------------------- #
 @dp.message()
 async def handle_all_messages(message: Message):
-    # Если сообщение в чате админа и оно является реплаем
+    # 1. Если админ отвечает реплаем в своём чате
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
             user_id = support_reply_map[original_id]
             try:
-                # Отправляем заголовок для пользователя
-                await bot.send_message(chat_id=user_id, text="Ответ от поддержки:")
-                # Пересылаем сообщение
-                await bot.copy_message(
-                    chat_id=user_id,
-                    from_chat_id=ADMIN_ID,
-                    message_id=message.message_id
-                )
+                # Отправляем одним сообщением ответ с префиксом
+                await send_admin_reply_as_single_message(message, user_id)
             except Exception as e:
-                logging.warning(f"[BOT] Ошибка при пересылке ответа админа пользователю: {e}")
+                logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
+    _register_message_stats(message)
     uid = message.from_user.id
     cid = message.chat.id
-    _register_message_stats(message)
-    # Если пользователь в режиме поддержки
+
+    # 2. Если пользователь в режиме поддержки — пересылаем сообщение админу
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -749,22 +730,14 @@ async def handle_all_messages(message: Message):
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                sent_msg = await bot.send_photo(
-                    chat_id=ADMIN_ID,
-                    photo=BufferedInputFile(photo_bytes, filename="image.jpg"),
-                    caption=content
-                )
+                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
-                sent_msg = await bot.send_video(
-                    chat_id=ADMIN_ID,
-                    video=BufferedInputFile(video_bytes, filename="video.mp4"),
-                    caption=content
-                )
+                sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content)
             else:
                 sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=content)
             if sent_msg:
@@ -775,10 +748,12 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
+    # 3. Если сообщение из группы/супергруппы и чат отключён — выходим
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
+    # 4. Если сообщение содержит документ (файл)
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
