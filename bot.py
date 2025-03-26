@@ -4,7 +4,7 @@ import os
 import re
 import random
 import aiohttp
-import requests  # для Яндекс SpeechKit
+import requests
 from io import BytesIO
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
@@ -32,6 +32,7 @@ import json
 
 import speech_recognition as sr
 from pydub import AudioSegment
+from gtts import gTTS  # <-- Возвращаем gTTS
 
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
@@ -67,9 +68,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
-
-# Ключ для Яндекс SpeechKit
-YANDEX_TTS_API_KEY = os.getenv("YANDEX_TTS_API_KEY")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -304,36 +302,6 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
-# ---------------------- Яндекс TTS (голос Алисы) ---------------------- #
-def synthesize_yandex_speechkit(text: str) -> bytes:
-    """
-    Синтез речи через Yandex SpeechKit (голос «alena» — Алиса).
-    Возвращает байты OGG-файла (Opus).
-    """
-    if not YANDEX_TTS_API_KEY:
-        logging.error("YANDEX_TTS_API_KEY не задан!")
-        return b""
-
-    ENDPOINT = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
-    headers = {
-        "Authorization": f"Api-Key {YANDEX_TTS_API_KEY}",
-    }
-    data = {
-        "text": text,
-        "lang": "ru-RU",
-        "voice": "alena",        # голос Алисы
-        "speed": "1.0",
-        "emotion": "good",
-        "format": "oggopus",     # Телеграм voice использует OGG/Opus
-        "sampleRateHertz": 48000,
-    }
-    resp = requests.post(ENDPOINT, headers=headers, data=data, stream=True)
-    if resp.status_code == 200:
-        return resp.content
-    else:
-        logging.error(f"Yandex TTS error: {resp.status_code}, {resp.text}")
-        return b""
-
 # ---------------------- Обработчик голосовых сообщений ---------------------- #
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
@@ -345,7 +313,6 @@ async def handle_voice_message(message: Message):
     4. Вызываем handle_msg(...) с распознанным текстом
     """
     _register_message_stats(message)
-    # Вместо "Распознано: ..." пишем что-то нейтральное
     await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", **thread_kwargs(message))
 
     try:
@@ -392,9 +359,6 @@ async def handle_voice_message(message: Message):
     # Передаём распознанный текст в общий обработчик
     if recognized_text:
         await handle_msg(message, recognized_text=recognized_text)
-    else:
-        # Если не распознали, можно ничего не делать или написать что-то
-        pass
 
 # ---------------------- Главный обработчик сообщений ---------------------- #
 @dp.message()
@@ -734,8 +698,20 @@ def parse_russian_show_request(user_text: str):
         leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
     else:
         leftover = user_text
-    if rus_word in RU_EN_DICT:
-        en_word = RU_EN_DICT[rus_word]
+    RU_EN_DICT_CUSTOM = {
+        "обезьяна": "monkey",
+        "тигр": "tiger",
+        "кошка": "cat",
+        "собака": "dog",
+        "пейзаж": "landscape",
+        "чайка": "seagull",
+        "париж": "paris",
+        "утконос": "platypus",
+        "пудель": "poodle",
+        "медоед": "honey badger"
+    }
+    if rus_word in RU_EN_DICT_CUSTOM:
+        en_word = RU_EN_DICT_CUSTOM[rus_word]
     else:
         en_word = fallback_translate_to_english(rus_word)
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
@@ -817,15 +793,16 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
             return
         try:
-            # Генерируем OGG через Yandex SpeechKit
-            ogg_bytes = synthesize_yandex_speechkit(gemini_text)
-            if not ogg_bytes:
-                await bot.send_message(chat_id=cid, text="Ошибка при синтезе речи.", **thread_kwargs(message))
-                return
+            # Генерируем MP3 через gTTS и конвертируем в OGG
+            tts = gTTS(gemini_text, lang='ru')
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+                tts.save(tmp_audio.name)
+                mp3_path = tmp_audio.name
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as tmpf:
-                tmpf.write(ogg_bytes)
-                ogg_path = tmpf.name
+            audio = AudioSegment.from_file(mp3_path, format="mp3")
+            ogg_path = mp3_path.replace(".mp3", ".ogg")
+            audio.export(ogg_path, format="ogg")
+            os.remove(mp3_path)
 
             await bot.send_voice(chat_id=cid, voice=FSInputFile(ogg_path, filename="voice.ogg"), **thread_kwargs(message))
             os.remove(ogg_path)
