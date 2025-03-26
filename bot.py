@@ -94,6 +94,12 @@ support_mode_users = set()
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    # Если человек пришёл из группы с intent "поддержка"
+    if message.chat.type == ChatType.PRIVATE and message.text and "start=support" in message.text:
+        support_mode_users.add(message.from_user.id)
+        await message.answer(SUPPORT_PROMPT_TEXT)
+        return
+
     greet = (
         "Привет! Я <b>VAI</b> — интеллектуальный помощник 😊\n\n"
         "Просто напиши мне, и я постараюсь ответить или помочь.\n"
@@ -105,7 +111,6 @@ async def cmd_start(message: Message):
         **thread_kwargs(message)
     )
 
-    # Автоматически включаем бота в группе/супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         enabled_chats.add(message.chat.id)
         save_enabled_chats(enabled_chats)
@@ -125,21 +130,15 @@ async def cmd_stop(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    """
-    1) В личке: колбэк-кнопка «Написать в поддержку».
-    2) В группе: ссылка на личку бота (URL-кнопка).
-    """
     if message.chat.type == ChatType.PRIVATE:
         # В личке — колбэк-кнопка
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✉️ Написать в поддержку",
-                        callback_data="support_request"
-                    )
-                ]
-            ]
+            inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="✉️ Написать в поддержку",
+                    callback_data="support_request"
+                )
+            ]]
         )
         await bot.send_message(
             chat_id=message.chat.id,
@@ -147,17 +146,15 @@ async def cmd_help(message: Message):
             reply_markup=keyboard
         )
     else:
-        # В группе — ссылка на личку
-        private_url = f"https://t.me/{BOT_USERNAME}"
+        # В группе — ссылка на ЛС с intent для поддержки
+        private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✉️ Написать в поддержку",
-                        url=private_url
-                    )
-                ]
-            ]
+            inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="✉️ Написать в поддержку",
+                    url=private_url
+                )
+            ]]
         )
         await bot.send_message(
             chat_id=message.chat.id,
