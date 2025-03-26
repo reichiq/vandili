@@ -186,6 +186,8 @@ async def handle_support_click(callback: CallbackQuery):
 @dp.message()
 async def handle_all_messages(message: Message):
     uid = message.from_user.id
+    logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
+
 
     # Если пользователь в режиме "поддержки", пересылаем сообщение админу
     if uid in support_mode_users:
