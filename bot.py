@@ -1,3 +1,4 @@
+# ---------------------- Импорты ---------------------- #
 import logging
 import os
 import re
@@ -24,7 +25,35 @@ from string import punctuation
 from google.cloud import translate
 from google.oauth2 import service_account
 
+from docx import Document
+from PyPDF2 import PdfReader
 import json
+
+# ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
+def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
+    if filename.endswith(".txt") or filename.endswith(".py"):
+        return file_bytes.decode("utf-8", errors="ignore")
+
+    elif filename.endswith(".pdf"):
+        try:
+            with BytesIO(file_bytes) as pdf_stream:
+                reader = PdfReader(pdf_stream)
+                return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception:
+            return ""
+
+    elif filename.endswith(".docx"):
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
+                tmpf.write(file_bytes)
+                tmp_path = tmpf.name
+            doc = Document(tmp_path)
+            os.remove(tmp_path)
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception:
+            return ""
+
+    return ""
 
 # ---------------------- Инициализация ---------------------- #
 key_path = '/root/vandili/gcloud-key.json'
@@ -44,16 +73,15 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
-# Используем модель Gemini 2.0-flash
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
 chat_history = {}
+user_documents = {}
 
 ENABLED_CHATS_FILE = "enabled_chats.json"
 ADMIN_ID = 1936733487
 
-# Текст, который бот присылает в ЛС, когда переходит в «режим поддержки»
 SUPPORT_PROMPT_TEXT = (
     "Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки."
 )
