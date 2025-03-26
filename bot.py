@@ -168,12 +168,10 @@ async def cmd_help(message: Message):
     if message.chat.type == ChatType.PRIVATE:
         # В личке — колбэк-кнопка
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="✉️ Написать в поддержку",
-                    callback_data="support_request"
-                )
-            ]]
+            inline_keyboard=[[InlineKeyboardButton(
+                text="✉️ Написать в поддержку",
+                callback_data="support_request"
+            )]]
         )
         await bot.send_message(
             chat_id=message.chat.id,
@@ -184,12 +182,10 @@ async def cmd_help(message: Message):
         # В группе — ссылка на ЛС с intent для поддержки
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="✉️ Написать в поддержку",
-                    url=private_url
-                )
-            ]]
+            inline_keyboard=[[InlineKeyboardButton(
+                text="✉️ Написать в поддержку",
+                url=private_url
+            )]]
         )
         await bot.send_message(
             chat_id=message.chat.id,
@@ -217,14 +213,14 @@ async def handle_all_messages(message: Message):
 
     # 1. Если пользователь в режиме поддержки — пересылаем сообщение админу и выходим
     if uid in support_mode_users:
-    support_mode_users.discard(uid)  # ⬅️ Вот это добавь — отключает режим поддержки
-    try:
-        caption = message.caption or message.text or "[Без текста]"
-        username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
-        content = (
-            f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
-            f"(id: <code>{uid}</code>):\n\n{caption}"
-        )
+        support_mode_users.discard(uid)  # ⬅️ Отключаем режим поддержки
+        try:
+            caption = message.caption or message.text or "[Без текста]"
+            username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
+            content = (
+                f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
+                f"(id: <code>{uid}</code>):\n\n{caption}"
+            )
 
             # Пересылаем вложения, если есть
             if message.photo:
@@ -257,7 +253,7 @@ async def handle_all_messages(message: Message):
         except Exception as e:
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
 
-        return  # ⛔ ВЫХОД из функции — не обрабатываем дальше
+        return  # ⛔ Выходим из функции – не обрабатываем дальше
 
     # 2. Если это файл — читаем его и сохраняем
     if message.document:
@@ -272,7 +268,7 @@ async def handle_all_messages(message: Message):
             await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
         else:
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
-        return  # После файла — тоже выходим
+        return  # После файла – тоже выходим
 
     # 3. Логируем
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
@@ -612,7 +608,7 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     """
     cid = message.chat.id
     user_input = (message.text or "").strip()
-        # Ответ на вопрос по содержимому ранее загруженного файла
+    # Ответ на вопрос по содержимому ранее загруженного файла
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -730,6 +726,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 
+# Повторное определение extract_text_from_file (если нужно, можно удалить дубликат)
 from docx import Document
 from PyPDF2 import PdfReader
 
