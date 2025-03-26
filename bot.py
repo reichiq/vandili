@@ -245,7 +245,6 @@ async def handle_all_messages(message: Message):
         await handle_msg(message)
 
 # ---------------------- Дополнительный декоратор для "вай покажи ..." ---------------------- #
-    await handle_msg(message)
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
     # Просто вызываем основную функцию обработки
