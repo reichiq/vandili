@@ -29,6 +29,11 @@ from docx import Document
 from PyPDF2 import PdfReader
 import json
 
+# Новые импорты для голосового функционала:
+import speech_recognition as sr
+from pydub import AudioSegment
+from gtts import gTTS
+
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
     if filename.endswith(".txt") or filename.endswith(".py"):
@@ -232,7 +237,7 @@ async def cmd_stop(message: Message):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
-        await bot.send_message(chat_id=message.chat.id, text="Бот отключён в этом чате.", **thread_kwargs(message))
+        await message.answer("Бот отключён в этом чате.", **thread_kwargs(message))
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
     else:
         await message.answer("Команда /stop работает только в группе.")
@@ -285,6 +290,71 @@ async def handle_support_click(callback: CallbackQuery):
     await callback.answer()
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
+
+# ---------------------- Обработчик голосовых сообщений ---------------------- #
+@dp.message(lambda message: message.voice is not None)
+async def handle_voice_message(message: Message):
+    """
+    Обработка голосовых сообщений:
+    1. Скачиваем голосовое сообщение (OGG).
+    2. Конвертируем в WAV с помощью pydub.
+    3. Распознаём речь через SpeechRecognition.
+    4. Если успешно, отправляем пользователю распознанный текст и передаём его для дальнейшей обработки.
+    """
+    _register_message_stats(message)
+    try:
+        file = await bot.get_file(message.voice.file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                voice_bytes = await resp.read()
+    except Exception as e:
+        logging.error(f"Ошибка скачивания голосового файла: {e}")
+        await message.answer("Ошибка скачивания голосового сообщения.")
+        return
+
+    # Сохраняем OGG во временный файл
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as tmpf:
+            tmpf.write(voice_bytes)
+            ogg_path = tmpf.name
+    except Exception as e:
+        logging.error(f"Ошибка сохранения файла: {e}")
+        await message.answer("Ошибка обработки голосового сообщения.")
+        return
+
+    # Конвертируем OGG -> WAV
+    try:
+        audio = AudioSegment.from_file(ogg_path, format="ogg")
+        wav_path = ogg_path.replace(".ogg", ".wav")
+        audio.export(wav_path, format="wav")
+    except Exception as e:
+        logging.error(f"Ошибка конвертации аудио: {e}")
+        await message.answer("Ошибка обработки голосового сообщения.")
+        os.remove(ogg_path)
+        return
+    finally:
+        os.remove(ogg_path)
+
+    # Распознаём речь с помощью SpeechRecognition
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            recognized_text = recognizer.recognize_google(audio_data, language="ru-RU")
+    except Exception as e:
+        logging.error(f"Ошибка распознавания голосового сообщения: {e}")
+        recognized_text = ""
+    os.remove(wav_path)
+
+    if not recognized_text:
+        await message.answer("Не удалось распознать голосовое сообщение.")
+        return
+
+    await message.answer(f"Распознано: {recognized_text}")
+    # Подставляем распознанный текст вместо отсутствующего message.text
+    message.text = recognized_text
+    await handle_msg(message)
 
 # ---------------------- Главный обработчик сообщений ---------------------- #
 @dp.message()
@@ -630,6 +700,17 @@ def parse_russian_show_request(user_text: str):
 async def handle_msg(message: Message, prompt_mode: bool = False):
     cid = message.chat.id
     user_input = (message.text or "").strip()
+
+    # Обнаружение запроса голосового ответа
+    voice_response_requested = False
+    if user_input:
+        lower_input = user_input.lower()
+        if "ответь войсом" in lower_input or "ответь голосом" in lower_input or "голосом ответь" in lower_input:
+            voice_response_requested = True
+            user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
+            # Обновляем текст сообщения
+            message.text = user_input
+
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -640,9 +721,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
         gemini_response = await generate_and_send_gemini_response(cid, short_summary_prompt, False, "", "")
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
+
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        if cid in disabled_chats:
-            return
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
         is_reply_to_bot = (
@@ -672,6 +752,28 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
     has_image = bool(image_url)
     logging.info(f"[BOT] show_image={show_image}, rus_word='{rus_word}', image_en='{image_en}', leftover='{leftover}', image_url='{image_url}'")
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
+
+    # Если голосовой ответ запрошен, генерируем и отправляем голосовое сообщение вместо текста/изображения
+    if voice_response_requested:
+        if not gemini_text:
+            await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
+            return
+        try:
+            tts = gTTS(gemini_text, lang='ru')
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+                tts.save(tmp_audio.name)
+                mp3_path = tmp_audio.name
+            audio = AudioSegment.from_file(mp3_path, format="mp3")
+            ogg_path = mp3_path.replace(".mp3", ".ogg")
+            audio.export(ogg_path, format="ogg")
+            os.remove(mp3_path)
+            await bot.send_voice(chat_id=cid, voice=FSInputFile(ogg_path, filename="voice.ogg"), **thread_kwargs(message))
+            os.remove(ogg_path)
+        except Exception as e:
+            logging.error(f"Ошибка генерации голосового ответа: {e}")
+            await bot.send_message(chat_id=cid, text="Произошла ошибка при генерации голосового ответа.", **thread_kwargs(message))
+        return
+
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -696,7 +798,8 @@ async def handle_msg(message: Message, prompt_mode: bool = False):
 
 # ---------------------- Обработка ответов админа в поддержку ---------------------- #
 @dp.message()
-async def handle_all_messages(message: Message):
+async def handle_all_messages_duplicate(message: Message):
+    # Этот обработчик дублирует предыдущий, чтобы не пропустить сообщения.
     # 1. Если админ отвечает реплаем в своём чате
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
@@ -772,9 +875,9 @@ async def handle_all_messages(message: Message):
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, has_document={bool(message.document)}, text={message.text!r}")
     await handle_msg(message)
 
-# ---------------------- "Вай покажи ..." ---------------------- #
+# ---------------------- "Вай покажи ..." (повтор) ---------------------- #
 @dp.message(F.text.lower().startswith("вай покажи"))
-async def group_show_request(message: Message):
+async def group_show_request_duplicate(message: Message):
     await handle_msg(message)
 
 # ---------------------- Запуск бота ---------------------- #
