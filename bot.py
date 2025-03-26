@@ -94,11 +94,11 @@ support_mode_users = set()
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    # Если пользователь пришёл по ссылке ?start=support (например, из группы)
-    if message.chat.type == ChatType.PRIVATE and message.text and "start=support" in message.text:
+    # Если пользователь пришёл по ссылке /start support (например, из группы)
+    if message.chat.type == ChatType.PRIVATE and message.text.startswith("/start support"):
         support_mode_users.add(message.from_user.id)
         await message.answer(SUPPORT_PROMPT_TEXT)
-        return  # Прекращаем выполнение, НЕ шлём приветствие
+        return
 
     # Обычный старт
     greet = (
