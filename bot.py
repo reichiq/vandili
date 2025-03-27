@@ -35,6 +35,10 @@ from PyPDF2 import PdfReader
 from google.cloud import translate
 from google.oauth2 import service_account
 
+# ---------------------- ПУТИ К ФАЙЛАМ ---------------------- #
+STATS_FILE = "stats.json"  # хранение статистики (чтобы не терять при перезапуске)
+DISABLED_CHATS_FILE = "disabled_chats.json"
+
 # ---------------------- Инициализация переменных ---------------------- #
 key_path = '/root/vandili/gcloud-key.json'
 credentials = service_account.Credentials.from_service_account_file(key_path)
@@ -56,17 +60,62 @@ morph = MorphAnalyzer()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
-# ---------------------- Храним историю диалогов и файлы ---------------------- #
+# ---------------------- Загружаем/сохраняем статистику ---------------------- #
+def load_stats() -> dict:
+    if not os.path.exists(STATS_FILE):
+        return {
+            "messages_total": 0,
+            "unique_users": set(),
+            "files_received": 0,
+            "commands_used": {}
+        }
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # unique_users — это set, но в JSON это list, преобразуем
+            data["unique_users"] = set(data.get("unique_users", []))
+            return data
+    except Exception as e:
+        logging.warning(f"Не удалось загрузить {STATS_FILE}: {e}")
+        return {
+            "messages_total": 0,
+            "unique_users": set(),
+            "files_received": 0,
+            "commands_used": {}
+        }
+
+def save_stats():
+    # У unique_users тип set — нужно преобразовать в list для JSON
+    data = {
+        "messages_total": stats["messages_total"],
+        "unique_users": list(stats["unique_users"]),
+        "files_received": stats["files_received"],
+        "commands_used": stats["commands_used"]
+    }
+    try:
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"Не удалось сохранить {STATS_FILE}: {e}")
+
+stats = load_stats()
+
+def _register_message_stats(message: Message):
+    stats["messages_total"] += 1
+    stats["unique_users"].add(message.from_user.id)
+    if message.text and message.text.startswith('/'):
+        cmd = message.text.split()[0]
+        stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
+    save_stats()
+
+# ---------------------- Храним диалоги, файлы и пр. ---------------------- #
 chat_history = {}
 user_documents = {}
 
-# ---------------------- Поддержка и статистика ---------------------- #
 support_mode_users = set()
 support_reply_map = {}  # {admin_msg_id: user_id}
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
-DISABLED_CHATS_FILE = "disabled_chats.json"
-
 def load_disabled_chats() -> set:
     if not os.path.exists(DISABLED_CHATS_FILE):
         return set()
@@ -75,7 +124,7 @@ def load_disabled_chats() -> set:
             data = json.load(f)
             return set(data)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить disabled_chats: {e}")
+        logging.warning(f"[BOT] Не удалось загрузить {DISABLED_CHATS_FILE}: {e}")
         return set()
 
 def save_disabled_chats(chats: set):
@@ -83,7 +132,7 @@ def save_disabled_chats(chats: set):
         with open(DISABLED_CHATS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(chats), f)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить disabled_chats: {e}")
+        logging.warning(f"[BOT] Не удалось сохранить {DISABLED_CHATS_FILE}: {e}")
 
 disabled_chats = load_disabled_chats()
 
@@ -104,29 +153,13 @@ def thread_kwargs(message: Message) -> dict:
         return {"message_thread_id": message.message_thread_id}
     return {}
 
-# ---------------------- Статистика ---------------------- #
-stats = {
-    "messages_total": 0,
-    "unique_users": set(),
-    "files_received": 0,
-    "commands_used": {}
-}
-
-def _register_message_stats(message: Message):
-    stats["messages_total"] += 1
-    stats["unique_users"].add(message.from_user.id)
-    if message.text and message.text.startswith('/'):
-        cmd = message.text.split()[0]
-        stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
-
-# ---------------------- Ответ от поддержки ---------------------- #
+# ---------------------- Функция отправки ответа админа ---------------------- #
 async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
     """
-    Отправляет пользователю user_id одно сообщение, содержащее:
-    <b>Ответ от поддержки:</b> и контент ответа админа.
+    Отправляет пользователю user_id одно сообщение: <b>Ответ от поддержки:</b> + контент.
     """
     prefix = "<b>Ответ от поддержки:</b>"
-    
+
     if admin_message.text:
         reply_text = f"{prefix}\n{admin_message.text}"
         await bot.send_message(chat_id=user_id, text=reply_text)
@@ -158,15 +191,10 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-# ---------------------- КУРСЫ ЦБ УЗБЕКИСТАНА ---------------------- #
-# Пример ссылки: https://cbu.uz/uz/arkhiv-kursov-valyut/json/
-# Ответ: массив JSON объектов [ {...}, {...} ]
-# Там поля: "Ccy" (USD), "Rate" ("11405.84"), "CcyNm_RU", "Date" и т.д.
-# Обновляется обычно раз в сутки
-
+# ---------------------- КУРСЫ «ЦБ Vandili» (условный ЦБ Узбекистана) ---------------------- #
 CBU_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
-cbu_data_cache = []        # сюда сохраним список словарей, загруженных из cbu.uz
-cbu_data_last_update = None # дата, когда мы обновили кэш
+cbu_data_cache = []
+cbu_data_last_update = None
 
 async def update_cbu_cache():
     global cbu_data_cache, cbu_data_last_update
@@ -177,20 +205,19 @@ async def update_cbu_cache():
                     cbu_data_cache = await response.json()
                     cbu_data_last_update = datetime.date.today()
                 else:
-                    logging.warning(f"ЦБ Узбекистана вернул статус {response.status}")
+                    logging.warning(f"ЦБ Vandili вернул статус {response.status}")
     except Exception as e:
-        logging.warning(f"Ошибка при запросе курсов ЦБ Узбекистана: {e}")
+        logging.warning(f"Ошибка при запросе курсов (ЦБ Vandili): {e}")
 
 def get_cbu_rate(src_currency: str):
     """
-    Получаем курс указанной валюты к суму (UZS).
-    src_currency — например 'USD', 'EUR', 'RUB' и т.д.
-    Если хотим из сумов в доллары, будем считать 1 / rate.
+    Получаем курс src_currency -> UZS.
+    Если нет такой валюты, возвращаем (None, None).
     """
     if not cbu_data_cache:
-        return None, None  # нет данных
+        return None, None
     for item in cbu_data_cache:
-        ccy = item.get("Ccy")  # 'USD', 'RUB', 'EUR' и т.д.
+        ccy = item.get("Ccy")  # 'USD', 'RUB', 'EUR' etc.
         if ccy and ccy.upper() == src_currency.upper():
             rate_str = item.get("Rate", "0")
             date_str = item.get("Date")
@@ -203,15 +230,10 @@ def get_cbu_rate(src_currency: str):
 
 async def process_currency_query(query: str) -> str | None:
     """
-    Простой парсер фразы: "100 долларов в сум" / "100 usd to uzs"
-    Поддерживаем base -> target, если оба есть в ЦБ Узбекистана (или UZS).
-    
-    У ЦБ РУз курс — это "сколько сумов за 1 X".
-    Если нужно из сумов в X, берём 1/rate.
+    Парсим "100 долларов в рубли", "100 usd to sum" и т.д.
+    Вместо "ЦБ Узбекистана" пишем "ЦБ Vandili".
+    Убираем слова "По данным ЦБ..." — только дата, курс, "Курс может отличаться..."
     """
-    # Мини-карта для основных валют
-    # Если хотите расширить, добавьте "иена": "JPY" и т.д. (если в ЦБ Узбекистана есть)
-    # "UZS" считаем "сум", "sum", "сумов" и т.д.
     currency_map = {
         'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
         'евро': 'EUR', 'eur': 'EUR',
@@ -219,7 +241,6 @@ async def process_currency_query(query: str) -> str | None:
         'сум': 'UZS', 'sum': 'UZS', 'узс': 'UZS', 'uzs': 'UZS'
     }
 
-    # Пример шаблона: "100 долларов в сум"
     pattern = re.compile(
         r'(\d+(?:[.,]\d+)?)\s*([a-zA-Zа-яА-ЯёЁ]+)\s*(?:в|to|->)\s*([a-zA-Zа-яА-ЯёЁ]+)',
         re.IGNORECASE
@@ -237,73 +258,46 @@ async def process_currency_query(query: str) -> str | None:
     src = currency_map.get(src_raw.lower())
     tgt = currency_map.get(tgt_raw.lower())
     if not src or not tgt:
-        return None  # не распознали или нет в словаре
+        return None
 
-    # Обновим кэш, если он не обновлялся сегодня
+    # Обновляем кэш, если не сегодня
     global cbu_data_last_update
     if cbu_data_last_update != datetime.date.today():
         await update_cbu_cache()
 
-    # Если src == 'UZS' -> нужно переводить из сумов
-    # Если tgt == 'UZS' -> нужно переводить в сумы
-    # Иначе src -> UZS -> tgt
-    # Шаг 1: получим курс src->UZS (сколько сумов за 1 src)
+    # Если src == 'UZS' -> мы считаем sum -> ...
     if src == 'UZS':
-        # Тогда нам нужно узнать, сколько сумов в 1 tgt, чтобы делать обратное преобразование
-        # Но это tricky: если user говорит "100 сум в доллары"
-        # => 1 USD = X сум => 1 сум = 1/X USD
-        # => 100 сум = 100*(1/X) = 100/X USD
-        # => 100 sum = (100 / rate_src) [USD]
-        # rate_src — это UZS per 1 {targetCurrency}, но targetCurrency != 'UZS' => 
-        # Actually, мы сначала получим курс tgt->UZS, а потом возьмём 1/rate_tgt
-        if tgt == 'UZS':
-            # sum -> sum ? Бессмысленно, но ладно
-            return f"{amount} UZS = {amount} UZS (одна и та же валюта?)"
-        # получим курс (tgt->UZS)
+        # sum -> tgt
         rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
-            return f"ЦБ Узбекистана не даёт курс для {tgt}."
-        # тогда 1 tgt = rate_tgt сум => 1 сум = 1/rate_tgt tgt
-        # amount сум = amount*(1/rate_tgt) tgt
+            return f"ЦБ Vandili не даёт курс для {tgt}."
+        # 1 tgt = rate_tgt UZS => 1 UZS = 1/rate_tgt tgt => amount UZS = amount/rate_tgt
         result = amount / rate_tgt
         msg_date = date_tgt or "неизвестно"
-        return (
-            f"По данным ЦБ Узбекистана (обновление: {msg_date}), {amount} UZS ≈ {result:.2f} {tgt}.\n"
-            "Курс может отличаться в банках или на бирже."
-        )
+        return (f"Обновление: {msg_date}, {amount} UZS ≈ {result:.2f} {tgt}.\n"
+                "Курс может отличаться в банках или на бирже.")
 
     elif tgt == 'UZS':
-        # src -> UZS
+        # src -> sum
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
-            return f"ЦБ Узбекистана не даёт курс для {src}."
-        # 1 src = rate_src сум => amount src = amount*rate_src сум
+            return f"ЦБ Vandili не даёт курс для {src}."
         result = amount * rate_src
         msg_date = date_src or "неизвестно"
-        return (
-            f"По данным ЦБ Узбекистана (обновление: {msg_date}), {amount} {src} ≈ {result:.2f} UZS.\n"
-            "Курс может отличаться в банках или на бирже."
-        )
+        return (f"Обновление: {msg_date}, {amount} {src} ≈ {result:.2f} UZS.\n"
+                "Курс может отличаться в банках или на бирже.")
     else:
         # src -> UZS -> tgt
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
-            return f"ЦБ Узбекистана не даёт курс для {src}."
+            return f"ЦБ Vandili не даёт курс для {src}."
         rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
-            return f"ЦБ Узбекистана не даёт курс для {tgt}."
-        # 1 src = rate_src сум
-        # 1 tgt = rate_tgt сум
-        # => 1 src = (rate_src / rate_tgt) tgt
-        # => amount src = amount*(rate_src/rate_tgt) tgt
+            return f"ЦБ Vandili не даёт курс для {tgt}."
         result = amount * (rate_src / rate_tgt)
-        # возьмём min(date_src, date_tgt)? или просто date_src?
-        # обычно у ЦБ одна и та же дата для всех.
         msg_date = date_src or date_tgt or "неизвестно"
-        return (
-            f"По данным ЦБ Узбекистана (обновление: {msg_date}), {amount} {src} ≈ {result:.2f} {tgt}.\n"
-            "Курс может отличаться в банках или на бирже."
-        )
+        return (f"Обновление: {msg_date}, {amount} {src} ≈ {result:.2f} {tgt}.\n"
+                "Курс может отличаться в банках или на бирже.")
 
 # ---------------------- Погодный информер (wttr.in) ---------------------- #
 async def process_weather_query(query: str) -> str | None:
@@ -399,14 +393,9 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
             return ""
     return ""
 
-# ---------------------- Обработчики команд ---------------------- #
+# ---------------------- Команды ---------------------- #
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    """
-    /start — приветствие.
-    В группе/супергруппе — снимаем отключение.
-    Если /start support в личке — включаем режим поддержки.
-    """
     _register_message_stats(message)
     text_lower = message.text.lower()
 
@@ -415,7 +404,6 @@ async def cmd_start(message: Message):
         await message.answer(SUPPORT_PROMPT_TEXT)
         return
 
-    # Обновлённое приветствие (укажите любые смайлы и текст)
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖✨
 
 Мои возможности:
@@ -424,8 +412,8 @@ async def cmd_start(message: Message):
 • ❓ Отвечаю на вопросы по содержимому файла.
 • 👨‍💻 Помогаю с кодом (#рефактор).
 • 🏞 Показываю изображения по ключевым словам.
-• 💱 Конвертирую валюты по курсам ЦБ Узбекистана (например: "100 долларов в сум").
-• ☁️ Рассказываю о погоде без команд (например: "погода в ташкенте на 3 дня").
+• 💱 Конвертирую валюты (например: "100 долларов в рубли").
+• ☁️ Рассказываю о погоде без команд (например: "погода в москве на 3 дня").
 • 🔎 /help и режим поддержки — для любых вопросов!
 
 Всегда на связи!"""
@@ -533,7 +521,6 @@ async def handle_voice_message(message: Message):
     finally:
         os.remove(ogg_path)
 
-    # Распознаём речь
     recognizer = sr.Recognizer()
     recognized_text = ""
     try:
@@ -550,7 +537,6 @@ async def handle_voice_message(message: Message):
 # ---------------------- Основной обработчик сообщений ---------------------- #
 @dp.message()
 async def handle_all_messages(message: Message):
-    # Если админ отвечает реплаем – отправляем пользователю
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
@@ -565,7 +551,6 @@ async def handle_all_messages(message: Message):
     uid = message.from_user.id
     cid = message.chat.id
 
-    # Режим поддержки
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -600,13 +585,12 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # Если группа/супергруппа отключена — игнор
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and cid in disabled_chats:
         return
 
-    # Если есть документ -> сохранить
     if message.document:
         stats["files_received"] += 1
+        save_stats()  # сохраняем изменения
         file = await bot.get_file(message.document.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
@@ -620,7 +604,6 @@ async def handle_all_messages(message: Message):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-    # Передаём обработку в общий handle_msg
     await handle_msg(message)
 
 # ---------------------- "Вай покажи ..." ---------------------- #
@@ -643,6 +626,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
+    # Если "Вай покажи..." без leftover -> короткая подпись
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
@@ -671,6 +655,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
     return gemini_text
 
+# ---------------------- Утилиты для форматирования ответа ---------------------- #
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
 
@@ -781,9 +766,6 @@ def to_superscript(s: str) -> str:
     return ''.join(SUPERSCRIPT_MAP.get(ch, ch) for ch in s)
 
 def format_gemini_response(text: str) -> str:
-    """
-    Применяем базовые преобразования для вывода, + поддержка <sub>, <sup> в юникод
-    """
     code_blocks = {}
     def extract_code(match):
         lang = match.group(1) or "text"
@@ -792,17 +774,12 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # Ищем блоки вида ```lang\n code ```
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-
-    # Escape HTML
     text = escape(text)
 
-    # Восстанавливаем наши куски кода
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
 
-    # Заменяем **bold** и *italic* на HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
@@ -813,7 +790,6 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
-    # Заменяем * на "• " для списков
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -834,7 +810,6 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
 
-    # Обработка <sub> и <sup> -> юникод
     text = re.sub(
         r'<sub>(.*?)</sub>',
         lambda m: to_subscript(m.group(1)),
@@ -845,7 +820,6 @@ def format_gemini_response(text: str) -> str:
         lambda m: to_superscript(m.group(1)),
         text
     )
-
     return text
 
 async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
@@ -943,16 +917,11 @@ def parse_russian_show_request(user_text: str):
         en_word = fallback_translate_to_english(rus_word)
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
-# ---------------------- Общая логика сообщений ---------------------- #
+# ---------------------- Общая логика ---------------------- #
 async def handle_msg(message: Message, recognized_text: str = None):
-    """
-    Проверка на погоду, конвертер валют (ЦБ Узбекистана),
-    генерация ответа через Gemini, показ картинок, голосовой ответ и т.д.
-    """
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
 
-    # Проверка на запрос голосового ответа
     voice_response_requested = False
     if user_input:
         lower_input = user_input.lower()
@@ -966,13 +935,13 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=weather_answer, **thread_kwargs(message))
         return
 
-    # 2. Конвертер валют (ЦБ Узбекистана)
+    # 2. Конвертер валют (ЦБ Vandili)
     currency_answer = await process_currency_query(user_input)
     if currency_answer:
         await bot.send_message(chat_id=cid, text=currency_answer, **thread_kwargs(message))
         return
 
-    # 3. Вопрос по файлу
+    # 3. Если есть файл в user_documents
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -984,7 +953,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
-    # 4. В группе отвечаем только при упоминании бота / "вай"
+    # 4. Группы: отвечаем только при упоминании или "вай"
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -1015,12 +984,12 @@ async def handle_msg(message: Message, recognized_text: str = None):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # 8. Пытаемся получить картинку
+    # 8. Изображение
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
 
-    # 9. Генерация ответа через Gemini
+    # 9. Генерация Gemini
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
     # 10. Голосовой ответ
@@ -1047,7 +1016,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Произошла ошибка при генерации голосового ответа.", **thread_kwargs(message))
         return
 
-    # 11. Текстовый ответ (с картинкой или без)
+    # 11. Текстовый ответ
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -1070,67 +1039,91 @@ async def handle_msg(message: Message, recognized_text: str = None):
         for c in chunks:
             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
 
-# ---------------------- Команда /broadcast для рассылки (только админ) ---------------------- #
+# ---------------------- Команда /broadcast для рассылки ---------------------- #
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     """
     /broadcast (только для админа).
-    Админ должен ответить (Reply) на то сообщение, которое хочет разослать всем пользователям.
+    Ответ (Reply) на сообщение, которое нужно разослать всем пользователям.
+    Теперь отправляется с "Message from Admin:" в шапке.
     """
     if message.from_user.id != ADMIN_ID:
-        return  # игнорируем, если не админ
+        return
 
     if not message.reply_to_message:
         await message.answer("Сделайте реплай (ответ) на сообщение или медиа, которое хотите разослать.")
         return
 
-    # Все пользователи, которые когда-либо писали боту (или были в группах с ним)
+    # Все пользователи
     targets = list(stats["unique_users"])
 
     content_msg = message.reply_to_message
     sent_count = 0
     error_count = 0
 
-    # Берём текст либо из text, либо из caption
+    # Префикс для рассылки
+    admin_prefix = "<b>Message from Admin:</b>"
+
     if content_msg.text:
-        broadcast_text = content_msg.text
+        broadcast_text = f"{admin_prefix}\n{content_msg.text}"
     else:
-        broadcast_text = content_msg.caption or ""
+        broadcast_text = f"{admin_prefix}"
+        if content_msg.caption:
+            broadcast_text += f"\n{content_msg.caption}"
 
     for user_id in targets:
-        # Если хотите исключить группы, можно добавить:
-        # if user_id < 0:
-        #     continue
+        # при желании отфильтровать группы: if user_id < 0: continue
         try:
             if content_msg.photo:
-                photo_id = content_msg.photo[-1].file_id
-                await bot.send_photo(chat_id=user_id, photo=photo_id, caption=broadcast_text)
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=content_msg.photo[-1].file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.video:
-                await bot.send_video(chat_id=user_id, video=content_msg.video.file_id, caption=broadcast_text)
+                await bot.send_video(
+                    chat_id=user_id,
+                    video=content_msg.video.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.voice:
-                await bot.send_voice(chat_id=user_id, voice=content_msg.voice.file_id, caption=broadcast_text)
+                await bot.send_voice(
+                    chat_id=user_id,
+                    voice=content_msg.voice.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.document:
-                await bot.send_document(chat_id=user_id, document=content_msg.document.file_id, caption=broadcast_text)
+                await bot.send_document(
+                    chat_id=user_id,
+                    document=content_msg.document.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.audio:
-                await bot.send_audio(chat_id=user_id, audio=content_msg.audio.file_id, caption=broadcast_text)
+                await bot.send_audio(
+                    chat_id=user_id,
+                    audio=content_msg.audio.file_id,
+                    caption=broadcast_text
+                )
             else:
-                # Текст
-                if broadcast_text.strip():
+                # Обычный текст (если в reply_to_message нет медиа)
+                if content_msg.text:
+                    # Уже добавили admin_prefix + text
                     await bot.send_message(chat_id=user_id, text=broadcast_text)
                 else:
+                    # Пустое
                     continue
+
             sent_count += 1
-            await asyncio.sleep(0.05)  # небольшая пауза во избежание rate limit
+            await asyncio.sleep(0.05)
         except Exception as e:
             error_count += 1
-            logging.warning(f"Ошибка при отправке рассылки user_id={user_id}: {e}")
+            logging.warning(f"Ошибка при отправке /broadcast user_id={user_id}: {e}")
 
     await message.answer(f"Рассылка завершена: отправлено {sent_count}, ошибок {error_count}.")
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
-    # При старте один раз подгружаем кэш ЦБ Узбекистана
-    await update_cbu_cache()
+    await update_cbu_cache()  # подгружаем курсы при старте
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
