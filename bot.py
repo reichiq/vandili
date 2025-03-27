@@ -191,15 +191,15 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-# ---------------------- КУРСЫ «ЦБ Vandili» (но фактически ЦБ РФ) ---------------------- #
+# ---------------------- КУРСЫ «ЦБ Vandili» ---------------------- #
 CBR_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
-cbu_data_cache = {}  # используем те же имена если нужно, но логика – ЦБ РФ
+cbu_data_cache = {}  # используем те же имена для данных
 cbu_data_last_update = None  # дата, когда мы обновляли кэш
 
 async def update_cbu_cache():
     """
-    Вместо cbu.uz теперь берём курсы с cbr-xml-daily.ru,
-    но всё равно называем "ЦБ Vandili".
+    Запрашиваем курсы с cbr-xml-daily.ru,
+    но называем это «ЦБ Vandili».
     """
     global cbu_data_cache, cbu_data_last_update
     try:
@@ -217,15 +217,14 @@ async def update_cbu_cache():
                         nom = info.get("Nominal", 1)
                         cbu_data_cache[code.upper()] = (val, nom)
                 else:
-                    logging.warning(f"ЦБ Vandili (ЦБ РФ) вернул статус {response.status}")
+                    logging.warning(f"ЦБ Vandili вернул статус {response.status}")
     except Exception as e:
-        logging.warning(f"Ошибка при запросе курсов (ЦБ Vandili - ЦБ РФ): {e}")
+        logging.warning(f"Ошибка при запросе курсов (ЦБ Vandili): {e}")
 
 def get_cbu_rate(src_currency: str):
     """
-    Аналогично get_cbu_rate, но теперь
-    cbu_data_cache[code.upper()] = (value, nominal).
-    Возвращаем (kurs, "DateString")? – в daily_json нет отдельного "Date" на каждую валюту.
+    Возвращает (курс, дата), где курс – float, а дата — строка.
+    Если такой валюты в кэше нет — (None, None).
     """
     if not cbu_data_cache:
         return None, None
@@ -233,20 +232,44 @@ def get_cbu_rate(src_currency: str):
     if not data:
         return None, None
     val, nom = data
-    # У daily_json нет даты валют, есть общая cbu_data_last_update
-    # Превратим её в строку
+    # Общая дата для всех валют
     date_str = str(cbu_data_last_update) if cbu_data_last_update else "неизвестно"
-    # value – сколько рублей за nom единиц
-    # например "USD": (76.66, 1)
-    # => 1 usd = 76.66 rub
     return val, date_str
+
+# <-- ADDED: показываем полный список доступных валют
+def process_all_currencies_request(user_text: str) -> str | None:
+    """
+    Если в тексте запрос типа «все курсы», «курсы всех валют» или «все валюты»,
+    возвращаем список всех валют из cbu_data_cache.
+    Иначе — None.
+    """
+    triggers = ["все курсы", "курсы всех валют", "все валюты"]
+    lower = user_text.lower()
+    if not any(t in lower for t in triggers):
+        return None
+
+    if not cbu_data_cache:
+        return "Данные ЦБ Vandili в данный момент недоступны."
+
+    # cbu_data_cache[code] = (value, nominal)
+    # Собираем строки
+    date_str = str(cbu_data_last_update) if cbu_data_last_update else "неизвестно"
+    lines = [f"Курсы (ЦБ Vandili) на дату {date_str}:"]
+    for code, (val, nom) in cbu_data_cache.items():
+        # Для наглядности: "1 <code> = <val> RUB"
+        # Или если nominal != 1: "<nom> <code> = <val> RUB"
+        if nom == 1:
+            lines.append(f"1 {code} = {val} RUB")
+        else:
+            lines.append(f"{nom} {code} = {val} RUB")
+
+    lines.append("\nКурс может отличаться в банках или на бирже.")
+    return "\n".join(lines)
 
 async def process_currency_query(query: str) -> str | None:
     """
-    Здесь оставляем вашу текущую логику:
-    - если src==UZS -> ...
-    - if src==RUB -> ...
-    Но фактически, у ЦБ РФ нет UZS. Просто возвращаем «ЦБ Vandili не даёт курс для ...» если нет.
+    Конвертация вида: "100 долларов в рубли", "45 usd в eur" и т.п.
+    Если валюта не найдена, возвращаем "ЦБ Vandili не предоставляет курс для ...".
     """
     currency_map = {
         'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
@@ -278,18 +301,13 @@ async def process_currency_query(query: str) -> str | None:
     if cbu_data_last_update != datetime.date.today():
         await update_cbu_cache()
 
-    # мы считаем: 1) RUB -> tgt, 2) src -> RUB, 3) src->UZS->tgt. Но у ЦБ РФ нет UZS.
-    # оставляем ваш код, просто если нет пары – "ЦБ Vandili не даёт курс...".
+    # src->RUB->tgt (кроме UZS, которого у ЦБ нет)
     if src == 'UZS':
-        # sum -> tgt
+        # sum -> tgt (но фактически нет в cbu_data_cache)
         rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
-            return f"ЦБ Vandili не даёт курс для {tgt}."
-        # 1 tgt = rate_tgt rub => 1 rub = 1/rate_tgt tgt (?), но у вас "sum" => non existing
-        # На самом деле у ЦБ РФ нет sum -> rub
-        # => "Не даёт курс" если UZS
-        result = 1.0  # Но это фикция, если хотите
-        # Логика, как была
+            return f"ЦБ Vandili не предоставляет курс для {tgt}."
+        # По факту не можем перевести UZS->RUB, так что имитация:
         ret = amount / rate_tgt
         msg_date = date_tgt or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} UZS ≈ {ret:.2f} {tgt}.\n"
@@ -299,20 +317,19 @@ async def process_currency_query(query: str) -> str | None:
         # src -> sum
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
-            return f"ЦБ Vandili не даёт курс для {src}."
-        # ...
+            return f"ЦБ Vandili не предоставляет курс для {src}."
         ret = amount * rate_src
         msg_date = date_src or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} {src} ≈ {ret:.2f} UZS.\n"
                 "Курс может отличаться в банках или на бирже.")
     else:
-        # src->UZS->tgt? фактически src->rub->tgt
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
-            return f"ЦБ Vandili не даёт курс для {src}."
+            return f"ЦБ Vandili не предоставляет курс для {src}."
         rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
-            return f"ЦБ Vandili не даёт курс для {tgt}."
+            return f"ЦБ Vandili не предоставляет курс для {tgt}."
+
         ret = amount * (rate_src / rate_tgt)
         msg_date = date_src or date_tgt or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} {src} ≈ {ret:.2f} {tgt}.\n"
@@ -948,6 +965,12 @@ async def handle_msg(message: Message, recognized_text: str = None):
             voice_response_requested = True
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
+    # 0. Проверка: "все курсы"/"курсы всех валют"
+    all_rates_answer = process_all_currencies_request(user_input)  # <-- ADDED
+    if all_rates_answer:
+        await bot.send_message(chat_id=cid, text=all_rates_answer, **thread_kwargs(message))
+        return
+
     # 1. Погода
     weather_answer = await process_weather_query(user_input)
     if weather_answer:
@@ -1064,7 +1087,7 @@ async def cmd_broadcast(message: Message):
     """
     /broadcast (только для админа).
     Ответ (Reply) на сообщение, которое нужно разослать всем пользователям.
-    Теперь отправляется с "Message from Admin:" в шапке.
+    Отправляется с "Message from Admin:" в шапке.
     """
     if message.from_user.id != ADMIN_ID:
         return
@@ -1126,7 +1149,7 @@ async def cmd_broadcast(message: Message):
             else:
                 # Обычный текст (если в reply_to_message нет медиа)
                 if content_msg.text:
-                    # Уже добавили admin_prefix + text
+                    # Уже есть admin_prefix + text
                     await bot.send_message(chat_id=user_id, text=broadcast_text)
                 else:
                     # Пустое
@@ -1142,7 +1165,7 @@ async def cmd_broadcast(message: Message):
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
-    await update_cbu_cache()  # подгружаем "ЦБ Vandili" (на самом деле ЦБ РФ)
+    await update_cbu_cache()  # подгружаем «ЦБ Vandili»
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
