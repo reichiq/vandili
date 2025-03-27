@@ -102,10 +102,18 @@ stats = load_stats()
 
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
-    stats["unique_users"].add(message.from_user.id)
+
+    # Если это приватный чат, добавляем user_id
+    # Если это группа/супергруппа, добавляем chat.id (т. е. отрицательное)
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        stats["unique_users"].add(message.chat.id)
+    else:
+        stats["unique_users"].add(message.from_user.id)
+
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
+
     save_stats()
 
 # ---------------------- Храним диалоги, файлы и пр. ---------------------- #
@@ -156,7 +164,7 @@ def thread_kwargs(message: Message) -> dict:
 # ---------------------- Функция отправки ответа админа ---------------------- #
 async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
     """
-    Отправляет пользователю user_id одно сообщение: <b>Ответ от поддержки:</b> + контент.
+    Отправляет пользователю (или группе) user_id одно сообщение: <b>Ответ от поддержки:</b> + контент.
     """
     prefix = "<b>Ответ от поддержки:</b>"
 
@@ -191,15 +199,16 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-# ---------------------- КУРСЫ «ЦБ Vandili» ---------------------- #
+# ---------------------- КУРСЫ «ЦБ Vandili» (фактически cbr-xml-daily.ru) ---------------------- #
 CBR_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
 cbu_data_cache = {}  # используем те же имена для данных
-cbu_data_last_update = None  # дата, когда мы обновляли кэш
+cbu_data_last_update = None  # дата, когда мы обновляли кэш (строка или datetime)
 
 async def update_cbu_cache():
     """
-    Запрашиваем курсы с cbr-xml-daily.ru,
-    но называем это «ЦБ Vandili».
+    Запрашиваем курсы с cbr-xml-daily.ru, пересохраняем в cbu_data_cache.
+    Убираем логику "не обновлять если сегодня уже обновляли".
+    Теперь просто каждый раз пытаемся взять свежие данные.
     """
     global cbu_data_cache, cbu_data_last_update
     try:
@@ -208,9 +217,8 @@ async def update_cbu_cache():
                 if response.status == 200:
                     data = await response.json()
                     cbu_data_cache.clear()
-                    date_str = data.get("Date")  # формат "2025-04-07T11:30:00+03:00"
-                    if date_str:
-                        cbu_data_last_update = datetime.date.fromisoformat(date_str.split("T")[0])
+                    date_str = data.get("Date")  # формат "2023-03-26T11:30:00+03:00"
+                    cbu_data_last_update = date_str  # сохраним «как есть»
                     valutes = data.get("Valute", {})
                     for code, info in valutes.items():
                         val = info.get("Value")  # курс к рублю
@@ -223,8 +231,7 @@ async def update_cbu_cache():
 
 def get_cbu_rate(src_currency: str):
     """
-    Возвращает (курс, дата), где курс – float, а дата — строка.
-    Если такой валюты в кэше нет — (None, None).
+    Возвращает (курс, дата-строка).
     """
     if not cbu_data_cache:
         return None, None
@@ -232,32 +239,27 @@ def get_cbu_rate(src_currency: str):
     if not data:
         return None, None
     val, nom = data
-    # Общая дата для всех валют
-    date_str = str(cbu_data_last_update) if cbu_data_last_update else "неизвестно"
-    return val, date_str
+    return val, cbu_data_last_update or "неизвестно"
 
-# <-- ADDED: показываем полный список доступных валют
-def process_all_currencies_request(user_text: str) -> str | None:
+async def process_all_currencies_request(user_text: str) -> str | None:
     """
-    Если в тексте запрос типа «все курсы», «курсы всех валют» или «все валюты»,
-    возвращаем список всех валют из cbu_data_cache.
-    Иначе — None.
+    Если пользователь запрашивает "все курсы", "курсы всех валют", "все валюты",
+    возвращаем список всех доступных валют из cbu_data_cache.
     """
     triggers = ["все курсы", "курсы всех валют", "все валюты"]
-    lower = user_text.lower()
-    if not any(t in lower for t in triggers):
+    lower_text = user_text.lower()
+    if not any(t in lower_text for t in triggers):
         return None
+
+    # СТЯГИВАЕМ ДАННЫЕ ПРЯМО СЕЙЧАС
+    await update_cbu_cache()
 
     if not cbu_data_cache:
         return "Данные ЦБ Vandili в данный момент недоступны."
 
-    # cbu_data_cache[code] = (value, nominal)
-    # Собираем строки
-    date_str = str(cbu_data_last_update) if cbu_data_last_update else "неизвестно"
+    date_str = cbu_data_last_update or "неизвестно"
     lines = [f"Курсы (ЦБ Vandili) на дату {date_str}:"]
     for code, (val, nom) in cbu_data_cache.items():
-        # Для наглядности: "1 <code> = <val> RUB"
-        # Или если nominal != 1: "<nom> <code> = <val> RUB"
         if nom == 1:
             lines.append(f"1 {code} = {val} RUB")
         else:
@@ -268,9 +270,12 @@ def process_all_currencies_request(user_text: str) -> str | None:
 
 async def process_currency_query(query: str) -> str | None:
     """
-    Конвертация вида: "100 долларов в рубли", "45 usd в eur" и т.п.
-    Если валюта не найдена, возвращаем "ЦБ Vandili не предоставляет курс для ...".
+    Парсит строку вида "100 долларов в рубли" или "45 usd в eur" и возвращает сообщение.
+    Если валюта не найдена — "ЦБ Vandili не предоставляет курс для ...".
     """
+    # Сначала обязательно обновим кэш, чтобы всегда брать "свежий" курс
+    await update_cbu_cache()
+
     currency_map = {
         'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
         'евро': 'EUR', 'eur': 'EUR',
@@ -297,25 +302,22 @@ async def process_currency_query(query: str) -> str | None:
     if not src or not tgt:
         return None
 
-    global cbu_data_last_update
-    if cbu_data_last_update != datetime.date.today():
-        await update_cbu_cache()
+    rate_src, date_src = get_cbu_rate(src)
+    rate_tgt, date_tgt = get_cbu_rate(tgt)
 
-    # src->RUB->tgt (кроме UZS, которого у ЦБ нет)
     if src == 'UZS':
-        # sum -> tgt (но фактически нет в cbu_data_cache)
-        rate_tgt, date_tgt = get_cbu_rate(tgt)
+        # но фактически у ЦБ РФ нет сумов, значит rate_tgt только rub
         if not rate_tgt:
             return f"ЦБ Vandili не предоставляет курс для {tgt}."
-        # По факту не можем перевести UZS->RUB, так что имитация:
+        # Теоретически sum->rub->tgt
+        # Но мы просто возвращаем "не можем" или делаем условно
         ret = amount / rate_tgt
         msg_date = date_tgt or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} UZS ≈ {ret:.2f} {tgt}.\n"
                 "Курс может отличаться в банках или на бирже.")
 
     elif tgt == 'UZS':
-        # src -> sum
-        rate_src, date_src = get_cbu_rate(src)
+        # src->rub->sum
         if not rate_src:
             return f"ЦБ Vandili не предоставляет курс для {src}."
         ret = amount * rate_src
@@ -323,13 +325,12 @@ async def process_currency_query(query: str) -> str | None:
         return (f"Обновление: {msg_date}, {amount} {src} ≈ {ret:.2f} UZS.\n"
                 "Курс может отличаться в банках или на бирже.")
     else:
-        rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
             return f"ЦБ Vandili не предоставляет курс для {src}."
-        rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
             return f"ЦБ Vandili не предоставляет курс для {tgt}."
 
+        # src->rub->tgt
         ret = amount * (rate_src / rate_tgt)
         msg_date = date_src or date_tgt or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} {src} ≈ {ret:.2f} {tgt}.\n"
@@ -503,7 +504,7 @@ async def cmd_adminstats(message: Message):
     text = (
         f"📊 <b>Статистика бота</b>\n\n"
         f"Всего сообщений: {total_msgs}\n"
-        f"Уникальных пользователей: {unique_users_count}\n"
+        f"Уникальных «чатов/пользователей»: {unique_users_count}\n"
         f"Получено файлов: {files_received}\n\n"
     )
     if top_commands:
@@ -587,7 +588,8 @@ async def handle_all_messages(message: Message):
     uid = message.from_user.id
     cid = message.chat.id
 
-    if uid in support_mode_users:
+    if uid in support_mode_users and message.chat.type == ChatType.PRIVATE:
+        # (Если человек в режиме поддержки и это приват)
         support_mode_users.discard(uid)
         try:
             caption = message.caption or message.text or "[Без текста]"
@@ -965,8 +967,8 @@ async def handle_msg(message: Message, recognized_text: str = None):
             voice_response_requested = True
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
-    # 0. Проверка: "все курсы"/"курсы всех валют"
-    all_rates_answer = process_all_currencies_request(user_input)  # <-- ADDED
+    # 0. «Все курсы»
+    all_rates_answer = await process_all_currencies_request(user_input)
     if all_rates_answer:
         await bot.send_message(chat_id=cid, text=all_rates_answer, **thread_kwargs(message))
         return
@@ -1086,8 +1088,8 @@ async def handle_msg(message: Message, recognized_text: str = None):
 async def cmd_broadcast(message: Message):
     """
     /broadcast (только для админа).
-    Ответ (Reply) на сообщение, которое нужно разослать всем пользователям.
-    Отправляется с "Message from Admin:" в шапке.
+    Нужно сделать реплай (Reply) на сообщение/медиа, которое хотим разослать всем.
+    Бот отправит это сообщение (текст, фото, видео и т.д.) с припиской "Message from Admin:".
     """
     if message.from_user.id != ADMIN_ID:
         return
@@ -1096,7 +1098,7 @@ async def cmd_broadcast(message: Message):
         await message.answer("Сделайте реплай (ответ) на сообщение или медиа, которое хотите разослать.")
         return
 
-    # Все пользователи
+    # Все чаты/пользователи
     targets = list(stats["unique_users"])
 
     content_msg = message.reply_to_message
@@ -1106,6 +1108,7 @@ async def cmd_broadcast(message: Message):
     # Префикс для рассылки
     admin_prefix = "<b>Message from Admin:</b>"
 
+    # Если в ответном сообщении есть text - добавим
     if content_msg.text:
         broadcast_text = f"{admin_prefix}\n{content_msg.text}"
     else:
@@ -1114,7 +1117,6 @@ async def cmd_broadcast(message: Message):
             broadcast_text += f"\n{content_msg.caption}"
 
     for user_id in targets:
-        # при желании отфильтровать группы: if user_id < 0: continue
         try:
             if content_msg.photo:
                 await bot.send_photo(
@@ -1146,13 +1148,19 @@ async def cmd_broadcast(message: Message):
                     audio=content_msg.audio.file_id,
                     caption=broadcast_text
                 )
+            elif content_msg.animation:
+                await bot.send_animation(
+                    chat_id=user_id,
+                    animation=content_msg.animation.file_id,
+                    caption=broadcast_text
+                )
             else:
                 # Обычный текст (если в reply_to_message нет медиа)
                 if content_msg.text:
-                    # Уже есть admin_prefix + text
+                    # Уже добавили admin_prefix + text
                     await bot.send_message(chat_id=user_id, text=broadcast_text)
                 else:
-                    # Пустое
+                    # Пустое?
                     continue
 
             sent_count += 1
@@ -1165,7 +1173,9 @@ async def cmd_broadcast(message: Message):
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
-    await update_cbu_cache()  # подгружаем «ЦБ Vandili»
+    # При запуске можно один раз обновить кэш,
+    # но теперь всё равно при запросах мы делаем update_cbu_cache()
+    await update_cbu_cache()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
