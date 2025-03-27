@@ -667,7 +667,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             raw_model_text = resp.text
                     # Удаляем ссылки ТОЛЬКО если raw_model_text определён
         import re
-        raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
+            raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
             gemini_text = format_gemini_response(raw_model_text)
             conversation.append({"role": "assistant", "parts": [raw_model_text]})
             if len(conversation) > 8:
