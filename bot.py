@@ -158,13 +158,12 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-# ---------------------- Конвертер валют ---------------------- #
+# ---------------------- Конвертер валют (через /latest) ---------------------- #
 async def process_currency_query(query: str) -> str | None:
     """
-    Если запрос похож на конвертацию валют (например: "100 долларов в рубли"), то
-    используем сервис exchangerate.host для получения курса.
+    Запрашиваем курс через /latest?base=...&symbols=... для более свежих данных,
+    а затем умножаем на нужную сумму.
     """
-    # Дополнили карту для поддержки "долларов", "рублях", "сум" и т.д.
     currency_map = {
         'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
         'евро': 'EUR', 'eur': 'EUR',
@@ -181,6 +180,7 @@ async def process_currency_query(query: str) -> str | None:
     match = pattern.search(query)
     if not match:
         return None
+
     amount_str, src_raw, tgt_raw = match.groups()
 
     try:
@@ -193,24 +193,28 @@ async def process_currency_query(query: str) -> str | None:
     if not src or not tgt:
         return None
 
-    url = f"https://api.exchangerate.host/convert?from={src}&to={tgt}&amount={amount}"
+    # Запрашиваем свежий курс
+    url = f"https://api.exchangerate.host/latest?base={src}&symbols={tgt}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
-                return f"Ошибка при получении курса валют для {src} в {tgt}."
+                return f"Ошибка при получении курса для {src} в {tgt}."
             data = await response.json()
-    result_value = data.get("result")
-    if result_value is None:
+
+    rates = data.get("rates", {})
+    rate_value = rates.get(tgt)
+    if not rate_value:
         return None
 
-    return f"{amount} {src} = {result_value:.2f} {tgt}"
+    converted = amount * rate_value
+    date_info = data.get("date")  # Дата обновления курса
+    return (
+        f"По курсу на {date_info}, {amount} {src} это примерно {converted:.2f} {tgt}.\n\n"
+        "Учтите, что фактический курс может отличаться в зависимости от конкретного банка или пункта обмена."
+    )
 
-# ---------------------- Погодный информер (wttr.in) ---------------------- #
+# ---------------------- Погодный информер ---------------------- #
 async def process_weather_query(query: str) -> str | None:
-    """
-    Если запрос содержит слово "погода", то пытаемся извлечь название города.
-    Используем wttr.in с параметром lang=ru для возвращения описания на русском.
-    """
     if "погода" not in query.lower():
         return None
     match = re.search(r"(?:погода\s*(?:в|на)?\s*)([a-zа-яё -]+)", query, re.IGNORECASE)
@@ -229,9 +233,8 @@ async def process_weather_query(query: str) -> str | None:
     elif forecast_3d:
         days = 3
     else:
-        days = 1  # Текущая погода
+        days = 1
 
-    # Добавили ?lang=ru чтобы wttr.in пытался возвращать русские описания
     url = f"https://wttr.in/{city_clean}?format=j1&lang=ru"
     try:
         async with aiohttp.ClientSession() as session:
@@ -260,7 +263,6 @@ async def process_weather_query(query: str) -> str | None:
             f"ветер {wind_speed} км/ч."
         )
     else:
-        # Прогноз на несколько дней
         if not weather:
             return f"Нет данных о прогнозе погоды для {city_clean}."
         forecast_lines = [f"Прогноз погоды для {city_clean.capitalize()}:"]
@@ -321,17 +323,18 @@ async def cmd_start(message: Message):
         await message.answer(SUPPORT_PROMPT_TEXT)
         return
 
-    greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
+    # Обновлённое приветствие с дополнительными смайлами и всем функционалом
+    greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖✨
 
-Что нового?
-• Голосовые ответы: скажи "ответь войсом" или "ответь голосом".
-• Читаю PDF, DOCX, TXT и .py-файлы — отправь мне файл.
-• Отвечаю на вопросы по содержимому файла.
-• Помогаю с кодом (#рефактор).
-• Показываю изображения по ключевым словам.
-• Конвертирую валюты (например: "100 долларов в рубли").
-• Рассказываю о погоде без команд (например: "погода в москве на 3 дня").
-• /help и режим поддержки — для вопросов.
+Мои возможности:
+• 🔊 Голосовые ответы: просто скажи "ответь войсом" или "ответь голосом".
+• 📄 Читаю PDF, DOCX, TXT и .py-файлы — отправь мне файл.
+• ❓ Отвечаю на вопросы по содержимому файла.
+• 👨‍💻 Помогаю с кодом (#рефактор).
+• 🏞 Показываю изображения по ключевым словам.
+• 💱 Конвертирую валюты (например: "100 долларов в рубли").
+• ☁️ Рассказываю о погоде без команд (например: "погода в москве на 3 дня").
+• 🔎 /help и режим поддержки — для любых вопросов!
 
 Всегда на связи!"""
 
@@ -510,7 +513,7 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # Если группа/супергруппа отключён
+    # Если группа/супергруппа отключена
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and cid in disabled_chats:
         return
 
@@ -553,7 +556,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    # Если «Вай покажи ...» и нет leftover
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
@@ -745,8 +747,7 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
 
-    # -------------- Обработка <sub> и <sup> -> юникод --------------
-    # Пример: "<sub>a</sub>" -> "ₐ"
+    # Обработка <sub> и <sup> -> юникод
     text = re.sub(
         r'<sub>(.*?)</sub>',
         lambda m: to_subscript(m.group(1)),
@@ -864,7 +865,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
 
-    # Проверяем на голосовой ответ
+    # Проверяем, не попросили ли голосовой ответ
     voice_response_requested = False
     if user_input:
         lower_input = user_input.lower()
@@ -872,19 +873,19 @@ async def handle_msg(message: Message, recognized_text: str = None):
             voice_response_requested = True
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
-    # 1. Проверка на запрос погоды (wttr.in)
+    # 1. Погода
     weather_answer = await process_weather_query(user_input)
     if weather_answer:
         await bot.send_message(chat_id=cid, text=weather_answer, **thread_kwargs(message))
         return
 
-    # 2. Проверка на конвертер валют
+    # 2. Конвертер валют
     currency_answer = await process_currency_query(user_input)
     if currency_answer:
         await bot.send_message(chat_id=cid, text=currency_answer, **thread_kwargs(message))
         return
 
-    # 3. Если "файл" + загруженный документ
+    # 3. Вопрос по файлу
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -896,7 +897,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
-    # 4. В группах: если не упоминают бота и не пишут "вай" — не отвечаем
+    # 4. В группе отвечаем только при упоминании бота / "вай"
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -927,7 +928,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # 8. Попытка получить картинку
+    # 8. Пытаемся получить картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -941,7 +942,6 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
             return
         try:
-            # Удаляем HTML-теги для голосового ответа
             clean_text = re.sub(r'<[^>]+>', '', gemini_text)
             tts = gTTS(clean_text, lang='ru')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
