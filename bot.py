@@ -161,25 +161,31 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
 # ---------------------- Конвертер валют ---------------------- #
 async def process_currency_query(query: str) -> str | None:
     """
-    Если запрос похож на конвертацию валют (например: "100 USD в рубли"), то
-    используем сервис exchangerate.host для получения актуального курса.
+    Если запрос похож на конвертацию валют (например: "100 долларов в рубли"), то
+    используем сервис exchangerate.host для получения курса.
     """
+    # Дополнили карту для поддержки "долларов", "рублях", "сум" и т.д.
     currency_map = {
-        'доллар': 'USD', 'доллары': 'USD', 'usd': 'USD',
+        'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
         'евро': 'EUR', 'eur': 'EUR',
-        'рубль': 'RUB', 'рублей': 'RUB', 'rub': 'RUB',
+        'рубль': 'RUB', 'рублей': 'RUB', 'рублях': 'RUB', 'rub': 'RUB',
         'йена': 'JPY', 'иена': 'JPY', 'yen': 'JPY', 'jpy': 'JPY',
-        'фунт': 'GBP', 'фунты': 'GBP', 'gbp': 'GBP'
+        'фунт': 'GBP', 'фунты': 'GBP', 'gbp': 'GBP',
+        'сум': 'UZS', 'uzs': 'UZS', 'узс': 'UZS'
     }
-    # Пример: "100 usd в рубли", "200 евро to usd", "300 dollars -> рубли"
-    pattern = re.compile(r'(\d+(?:[.,]\d+)?)\s*([a-zа-яё]+)\s*(?:в|to|->)\s*([a-zа-яё]+)', re.IGNORECASE)
+
+    pattern = re.compile(
+        r'(\d+(?:[.,]\d+)?)\s*([a-zA-Zа-яА-ЯёЁ]+)\s*(?:в|to|->)\s*([a-zA-Zа-яА-ЯёЁ]+)',
+        re.IGNORECASE
+    )
     match = pattern.search(query)
     if not match:
         return None
     amount_str, src_raw, tgt_raw = match.groups()
+
     try:
         amount = float(amount_str.replace(',', '.'))
-    except Exception:
+    except ValueError:
         return None
 
     src = currency_map.get(src_raw.lower())
@@ -196,44 +202,37 @@ async def process_currency_query(query: str) -> str | None:
     result_value = data.get("result")
     if result_value is None:
         return None
+
     return f"{amount} {src} = {result_value:.2f} {tgt}"
 
 # ---------------------- Погодный информер (wttr.in) ---------------------- #
 async def process_weather_query(query: str) -> str | None:
     """
-    Если запрос содержит слово "погода", то пытаемся извлечь название города из запроса.
-    Затем используем wttr.in в формате JSON для получения погоды.
-    Примеры запроса: "какая погода в москве?", "погода в питере на 3 дня", "погода в минске на неделю"
+    Если запрос содержит слово "погода", то пытаемся извлечь название города.
+    Используем wttr.in с параметром lang=ru для возвращения описания на русском.
     """
     if "погода" not in query.lower():
         return None
-    # Шаблон, чтобы вытащить фразу после "погода" (город)
-    # Например, "погода в Москве", "погода москве", "погода на 3 дня в Ростове"
     match = re.search(r"(?:погода\s*(?:в|на)?\s*)([a-zа-яё -]+)", query, re.IGNORECASE)
     if not match:
         return None
     
-    # Название города (всё, что совпало)
     city_part = match.group(1).strip()
-    # Ищем, попросили ли прогноз "на 3 дня" или "на неделю"
     forecast_3d = re.search(r"на\s*(3\s*дня|три\s*дня)", query, re.IGNORECASE)
     forecast_7d = re.search(r"на\s*(неделю|7\s*дней)", query, re.IGNORECASE)
-
-    # Выделяем сам город, удаляя упоминания "на 3 дня", "на неделю" внутри match
-    # например, "москва на 3 дня" -> "москва"
     city_clean = re.sub(r"(на\s*\d+\s*дня|на\s*неделю|\d+\s*дней)", "", city_part, flags=re.IGNORECASE).strip()
     if not city_clean:
         return None
 
-    # Определяем, на сколько дней нужен прогноз
     if forecast_7d:
         days = 7
     elif forecast_3d:
         days = 3
     else:
-        days = 1  # по умолчанию текущая погода
+        days = 1  # Текущая погода
 
-    url = f"https://wttr.in/{city_clean}?format=j1"
+    # Добавили ?lang=ru чтобы wttr.in пытался возвращать русские описания
+    url = f"https://wttr.in/{city_clean}?format=j1&lang=ru"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -241,10 +240,9 @@ async def process_weather_query(query: str) -> str | None:
                     return f"Не удалось получить данные о погоде для {city_clean}."
                 data = await response.json()
     except Exception as e:
-        logging.error(f"Ошибка при запросе погоды в wttr.in: {e}")
+        logging.error(f"Ошибка при запросе погоды (wttr.in): {e}")
         return f"Ошибка при получении погоды для {city_clean}."
 
-    # В ответе wttr.in есть ключи: "current_condition", "weather" (массив с прогнозом)
     current = data.get("current_condition", [])
     weather = data.get("weather", [])
 
@@ -265,31 +263,23 @@ async def process_weather_query(query: str) -> str | None:
         # Прогноз на несколько дней
         if not weather:
             return f"Нет данных о прогнозе погоды для {city_clean}."
-        # Каждая запись в "weather" соответствует одному дню
-        # ограничимся нужным количеством дней
         forecast_lines = [f"Прогноз погоды для {city_clean.capitalize()}:"]
-        for idx, wday in enumerate(weather[:days]):
+        for wday in weather[:days]:
             date_str = wday.get("date")
-            # min/max temps
             mintemp = wday.get("mintempC")
             maxtemp = wday.get("maxtempC")
-            # описание погоды (берём, например, первую часть из hourly)
             hourly = wday.get("hourly", [])
             descs = []
-            if hourly:
-                for hour_data in hourly:
-                    desc_val = hour_data.get("weatherDesc", [{}])[0].get("value", "")
-                    descs.append(desc_val)
+            for hour_data in hourly:
+                desc_val = hour_data.get("weatherDesc", [{}])[0].get("value", "")
+                descs.append(desc_val)
             if descs:
-                # возьмём самое частое описание за день
                 desc_common = max(set(descs), key=descs.count)
             else:
                 desc_common = ""
-
             forecast_lines.append(
                 f"{date_str}: от {mintemp}°C до {maxtemp}°C, {desc_common.lower()}"
             )
-
         return "\n".join(forecast_lines)
 
 # ---------------------- Извлечение текста из файла ---------------------- #
@@ -320,13 +310,12 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
 async def cmd_start(message: Message):
     """
     /start — приветствие.
-    В группе/супергруппе — снимаем отключение (удаляем chat.id из disabled_chats).
+    В группе/супергруппе — снимаем отключение.
     Если /start support в личке — включаем режим поддержки.
     """
     _register_message_stats(message)
     text_lower = message.text.lower()
 
-    # Если /start support в личке
     if message.chat.type == ChatType.PRIVATE and "support" in text_lower:
         support_mode_users.add(message.from_user.id)
         await message.answer(SUPPORT_PROMPT_TEXT)
@@ -338,11 +327,11 @@ async def cmd_start(message: Message):
 • Голосовые ответы: скажи "ответь войсом" или "ответь голосом".
 • Читаю PDF, DOCX, TXT и .py-файлы — отправь мне файл.
 • Отвечаю на вопросы по содержимому файла.
-• Помогаю с кодом — напиши #рефактор и вставь код.
+• Помогаю с кодом (#рефактор).
 • Показываю изображения по ключевым словам.
-• Конвертирую валюты (например: "100 USD в рубли").
-• Рассказываю о погоде без команд (например: "какая погода в москве на 3 дня?").
-• Поддерживаю /help и режим поддержки.
+• Конвертирую валюты (например: "100 долларов в рубли").
+• Рассказываю о погоде без команд (например: "погода в москве на 3 дня").
+• /help и режим поддержки — для вопросов.
 
 Всегда на связи!"""
 
@@ -357,9 +346,6 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
-    """
-    /stop — отключает бота в чате/приватке.
-    """
     _register_message_stats(message)
     await message.answer("Бот отключён 🚫", **thread_kwargs(message))
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -567,7 +553,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    # Если запрос только «Вай покажи <что-то>», и нет вопросов – отдаем короткую подпись (генерация caption)
+    # Если «Вай покажи ...» и нет leftover
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
@@ -685,9 +671,29 @@ def replace_pronouns_morph(leftover: str, rus_word: str) -> str:
         leftover = re.sub(pattern, repl, leftover, flags=re.IGNORECASE)
     return leftover
 
+# ---------------------- Преобразование <sub>, <sup> в юникод ---------------------- #
+SUBSCRIPT_MAP = {
+    '0': '₀','1': '₁','2': '₂','3': '₃','4': '₄','5': '₅','6': '₆','7': '₇','8': '₈','9': '₉',
+    'a': 'ₐ','e': 'ₑ','h': 'ₕ','i': 'ᵢ','j': 'ⱼ','k': 'ₖ','l': 'ₗ','m': 'ₘ','n': 'ₙ','o': 'ₒ',
+    'p': 'ₚ','r': 'ᵣ','s': 'ₛ','t': 'ₜ','u': 'ᵤ','v': 'ᵥ','x': 'ₓ','+': '₊','-': '₋','=': '₌',
+    '(': '₍',')': '₎'
+}
+SUPERSCRIPT_MAP = {
+    '0': '⁰','1': '¹','2': '²','3': '³','4': '⁴','5': '⁵','6': '⁶','7': '⁷','8': '⁸','9': '⁹',
+    'a': 'ᵃ','b': 'ᵇ','c': 'ᶜ','d': 'ᵈ','e': 'ᵉ','f': 'ᶠ','g': 'ᵍ','h': 'ʰ','i': 'ⁱ','j': 'ʲ',
+    'k': 'ᵏ','l': 'ˡ','m': 'ᵐ','n': 'ⁿ','o': 'ᵒ','p': 'ᵖ','r': 'ʳ','s': 'ˢ','t': 'ᵗ','u': 'ᵘ',
+    'v': 'ᵛ','w': 'ʷ','x': 'ˣ','y': 'ʸ','z': 'ᶻ','+': '⁺','-': '⁻','=': '⁼','(': '⁽',')': '⁾'
+}
+
+def to_subscript(s: str) -> str:
+    return ''.join(SUBSCRIPT_MAP.get(ch, ch) for ch in s)
+
+def to_superscript(s: str) -> str:
+    return ''.join(SUPERSCRIPT_MAP.get(ch, ch) for ch in s)
+
 def format_gemini_response(text: str) -> str:
     """
-    Применяем базовые преобразования для вывода
+    Применяем базовые преобразования для вывода, + поддержка <sub>, <sup> в юникод
     """
     code_blocks = {}
     def extract_code(match):
@@ -731,13 +737,26 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
 
-    # Небольшой "ребрендинг"
+    # "Ребрендинг"
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
     text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+
+    # -------------- Обработка <sub> и <sup> -> юникод --------------
+    # Пример: "<sub>a</sub>" -> "ₐ"
+    text = re.sub(
+        r'<sub>(.*?)</sub>',
+        lambda m: to_subscript(m.group(1)),
+        text
+    )
+    text = re.sub(
+        r'<sup>(.*?)</sup>',
+        lambda m: to_superscript(m.group(1)),
+        text
+    )
 
     return text
 
@@ -839,7 +858,7 @@ def parse_russian_show_request(user_text: str):
 # ---------------------- Общая логика сообщений ---------------------- #
 async def handle_msg(message: Message, recognized_text: str = None):
     """
-    Общий обработчик: проверка на погоду, конвертер валют,
+    Проверка на погоду, конвертер валют,
     генерация ответа через Gemini, показ картинок, голосовой ответ и т.д.
     """
     cid = message.chat.id
@@ -853,7 +872,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
             voice_response_requested = True
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
-    # 1. Проверка на запрос погоды (без команд).
+    # 1. Проверка на запрос погоды (wttr.in)
     weather_answer = await process_weather_query(user_input)
     if weather_answer:
         await bot.send_message(chat_id=cid, text=weather_answer, **thread_kwargs(message))
@@ -877,7 +896,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
-    # 4. В группах: если не упоминают бота или "вай", не отвечаем
+    # 4. В группах: если не упоминают бота и не пишут "вай" — не отвечаем
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -889,7 +908,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
         if not mention_bot and not is_reply_to_bot and not any(k in text_lower for k in mention_keywords):
             return
 
-    # 5. Проверяем вопрос: "Как тебя зовут?"
+    # 5. "Как тебя зовут?"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>! 🤖", **thread_kwargs(message))
@@ -908,7 +927,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # 8. Если требуется показать картинку
+    # 8. Попытка получить картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
@@ -924,7 +943,6 @@ async def handle_msg(message: Message, recognized_text: str = None):
         try:
             # Удаляем HTML-теги для голосового ответа
             clean_text = re.sub(r'<[^>]+>', '', gemini_text)
-            # ГТТС
             tts = gTTS(clean_text, lang='ru')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
                 tts.save(tmp_audio.name)
