@@ -392,12 +392,11 @@ async def get_moex_rate(currency: str) -> float:
     Возвращает курс валюты к рублю с MOEX.
     Если валюта RUB, возвращает 1.0.
     Для USD используется специальный код, для остальных предполагается код вида "{CURRENCY}_RUB_TOM".
-    Если не найдёт нужного инструмента, вернёт None.
+    Если не найдёт нужного инструмента или все цены None, вернёт None.
     """
     currency = currency.upper()
     if currency == "RUB":
         return 1.0
-    # отдельная проверка на USD
     if currency == "USD":
         code = "USD000UTSTOM"
     else:
@@ -413,23 +412,31 @@ async def get_moex_rate(currency: str) -> float:
     except Exception as e:
         logging.error(f"Ошибка получения курса с MOEX для {code}: {e}")
         return None
+
     try:
         marketdata = data["marketdata"]
         columns = marketdata["columns"]
         values = marketdata["data"]
         if not values or not values[0]:
-            # пустой массив
             logging.warning(f"marketdata['data'] пуст для {code}")
             return None
+
         row = values[0]
-        if "LAST" in columns:
-            idx = columns.index("LAST")
-        elif "last" in columns:
-            idx = columns.index("last")
-        else:
-            # fallback
-            idx = 1
-        last_price = row[idx]
+        # Возможные ключи с ценой, в порядке приоритета
+        possible_keys = ["LAST", "CLOSE", "LCLOSEPRICE", "PREVPRICE", "PREVWAPRICE", "OPEN"]
+        last_price = None
+        for key in possible_keys:
+            if key in columns:
+                idx = columns.index(key)
+                val = row[idx]
+                if val is not None:  # как только нашли не-None, пытаемся преобразовать
+                    last_price = val
+                    break
+
+        if last_price is None:
+            # Все поля либо отсутствуют, либо равны None
+            return None
+
         return float(last_price)
     except Exception as e:
         logging.error(f"Ошибка обработки данных MOEX для {code}: {e}")
