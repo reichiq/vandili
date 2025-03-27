@@ -793,8 +793,10 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
             return
         try:
+            # Удаляем HTML-теги для голосового ответа
+            clean_text = re.sub(r'<[^>]+>', '', gemini_text)
             # Генерируем MP3 через gTTS и конвертируем в OGG
-            tts = gTTS(gemini_text, lang='ru')
+            tts = gTTS(clean_text, lang='ru')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
                 tts.save(tmp_audio.name)
                 mp3_path = tmp_audio.name
