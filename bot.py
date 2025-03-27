@@ -182,31 +182,132 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-# ---------------------- Функции для новой функциональности ---------------------- #
+# ---------------------- Словари для преобразования валют и транслитерации ---------------------- #
+CURRENCY_SYNONYMS = {
+    # русский -> английский ISO код
+    "доллар": "USD",
+    "долларов": "USD",
+    "бакс": "USD",
+    "баксов": "USD",
+    "евро": "EUR",
+    "вона": "KRW",
+    "вон": "KRW",
+    "вонах": "KRW",
+    "иен": "JPY",
+    "иена": "JPY",
+    "йена": "JPY",
+    "юань": "CNY",
+    "юаней": "CNY",
+    "юаня": "CNY",
+    "рубль": "RUB",
+    "рублей": "RUB",
+    "рублях": "RUB",
+    "₽": "RUB",
+    # можно дополнять...
+}
 
-# Функция для получения погоды через Open‑Meteo (без OpenWeatherMap)
-async def get_weather_info(city: str, days: int = 1) -> str:
-    # Получаем координаты города через геокодинг Open‑Meteo
-    geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}"
+def normalize_currency_name(name: str) -> str:
+    """
+    Приводит строку (возможно, на русском) к ISO-коду валюты,
+    если такая валюта есть в словаре. Иначе возвращаем name.upper().
+    """
+    name_clean = name.lower().strip()
+    return CURRENCY_SYNONYMS.get(name_clean, name.upper())
+
+# Простейшая транслитерация кириллицы -> латиницы (для fallback)
+TRANSLIT_MAP = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
+    'е': 'e', 'ё': 'yo','ж': 'zh','з': 'z', 'и': 'i',
+    'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+    'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
+    'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts','ч': 'ch',
+    'ш': 'sh','щ': 'sch','ъ': '',  'ы': 'y', 'ь': '',
+    'э': 'e', 'ю': 'yu','я': 'ya'
+}
+
+def simple_transliterate(s: str) -> str:
+    result = []
+    for ch in s:
+        lower_ch = ch.lower()
+        if lower_ch in TRANSLIT_MAP:
+            # сохраняем регистр
+            tr = TRANSLIT_MAP[lower_ch]
+            if ch.isupper():
+                tr = tr.capitalize()
+            result.append(tr)
+        else:
+            result.append(ch)
+    return "".join(result)
+
+# ---------------------- Функции для погоды ---------------------- #
+async def geocode_city(city_name: str) -> dict:
+    """
+    Пытается найти город через Open-Meteo Geocoding.
+    Если не находит, пытается перевести или транслитерировать и повторяет запрос.
+    Возвращает dict с полями lat, lon, timezone или None.
+    """
+    # 1) Прямой запрос
+    data = await do_geocoding_request(city_name)
+    if data:
+        return data
+    # 2) Пробуем перевести через Google
+    try:
+        project_id = "gen-lang-client-0588633435"
+        location = "global"
+        parent = f"projects/{project_id}/locations/{location}"
+        response = translate_client.translate_text(
+            parent=parent,
+            contents=[city_name],
+            mime_type="text/plain",
+            source_language_code="ru",
+            target_language_code="en",
+        )
+        en_city = response.translations[0].translated_text
+        data = await do_geocoding_request(en_city)
+        if data:
+            return data
+    except Exception as e:
+        logging.warning(f"Не удалось перевести город {city_name}: {e}")
+    # 3) Если перевод не сработал — пробуем транслитерацию
+    translit_city = simple_transliterate(city_name)
+    data = await do_geocoding_request(translit_city)
+    if data:
+        return data
+    return None
+
+async def do_geocoding_request(name: str) -> dict:
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={name}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(geo_url) as resp:
+            async with session.get(url) as resp:
                 if resp.status != 200:
-                    logging.warning(f"Ошибка геокодинга для города {city}: статус {resp.status}")
+                    logging.warning(f"Ошибка геокодинга для {name}: статус {resp.status}")
                     return None
                 geo_data = await resp.json()
     except Exception as e:
         logging.error(f"Ошибка запроса геокодинга: {e}")
         return None
-
     if "results" not in geo_data or not geo_data["results"]:
+        return None
+    best = geo_data["results"][0]
+    return {
+        "lat": best["latitude"],
+        "lon": best["longitude"],
+        "timezone": best.get("timezone", "Europe/Moscow")
+    }
+
+async def get_weather_info(city: str, days: int = 1) -> str:
+    """
+    Возвращает строку с погодой или прогнозом на N дней.
+    Если город не найден, возвращает "Город ... не найден."
+    """
+    geo_data = await geocode_city(city)
+    if not geo_data:
         return f"Город {city} не найден."
-    
-    result = geo_data["results"][0]
-    lat = result.get("latitude")
-    lon = result.get("longitude")
-    timezone = result.get("timezone", "Europe/Moscow")
-    
+    lat = geo_data["lat"]
+    lon = geo_data["lon"]
+    timezone = geo_data["timezone"]
+
     if days == 1:
         # Текущая погода
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
@@ -225,11 +326,15 @@ async def get_weather_info(city: str, days: int = 1) -> str:
         wind = current.get("windspeed")
         weather_code = current.get("weathercode")
         description = weather_code_to_description(weather_code)
-        return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, скорость ветра {wind} км/ч."
+        return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, ветер {wind} км/ч."
     else:
         # Прогноз на несколько дней
-        weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-                       f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
+        weather_url = (
+            f"https://api.open-meteo.com/v1/forecast?"
+            f"latitude={lat}&longitude={lon}"
+            f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
+            f"&timezone={timezone}"
+        )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(weather_url) as resp:
@@ -281,16 +386,18 @@ def weather_code_to_description(code: int) -> str:
     else:
         return "Неизвестная погода"
 
-# Функция для получения курса валют с MOEX для любой валютной пары
+# ---------------------- Функции для курса валют ---------------------- #
 async def get_moex_rate(currency: str) -> float:
     """
     Возвращает курс валюты к рублю с MOEX.
     Если валюта RUB, возвращает 1.0.
     Для USD используется специальный код, для остальных предполагается код вида "{CURRENCY}_RUB_TOM".
+    Если не найдёт нужного инструмента, вернёт None.
     """
     currency = currency.upper()
     if currency == "RUB":
         return 1.0
+    # отдельная проверка на USD
     if currency == "USD":
         code = "USD000UTSTOM"
     else:
@@ -309,14 +416,20 @@ async def get_moex_rate(currency: str) -> float:
     try:
         marketdata = data["marketdata"]
         columns = marketdata["columns"]
-        values = marketdata["data"][0]
+        values = marketdata["data"]
+        if not values or not values[0]:
+            # пустой массив
+            logging.warning(f"marketdata['data'] пуст для {code}")
+            return None
+        row = values[0]
         if "LAST" in columns:
             idx = columns.index("LAST")
         elif "last" in columns:
             idx = columns.index("last")
         else:
+            # fallback
             idx = 1
-        last_price = values[idx]
+        last_price = row[idx]
         return float(last_price)
     except Exception as e:
         logging.error(f"Ошибка обработки данных MOEX для {code}: {e}")
@@ -334,7 +447,8 @@ async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
     conversion_factor = rate_from / rate_to
     result = amount * conversion_factor
     today = datetime.now().strftime("%Y-%m-%d")
-    return f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\nКурс в банках и на биржах может отличаться."
+    return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
+            "Курс в банках и на биржах может отличаться.")
 
 # ---------------------- Обработчики команд ---------------------- #
 
@@ -355,14 +469,14 @@ async def cmd_start(message: Message):
 
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
-•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Только скажи мне "ответь войсом" или "ответь голосом".
-•📄Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
-•❓Отвечаю на вопросы по содержимому файла.
-•👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
-•🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
-•💱Курс валют: узнай курс "100 долларов в евро", "100 USD в VND" и т.д. 
-•🔎Поддерживаю команды /help и режим поддержки.
+• Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
+• Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
+• Отвечаю на вопросы по содержимому файла.
+• Помогаю с кодом — напиши #рефактор и вставь код.
+• Показываю изображения по ключевым словам.
+• Погода: спроси "погода в Москве" или "погода в Ташкенте на 3 дня" ☀️
+• Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 💱
+• Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
 
@@ -436,13 +550,13 @@ async def cmd_adminstats(message: Message):
 async def cmd_broadcast(message: Message):
     """
     /broadcast — позволяет админу разослать сообщение всем пользователям и группам.
-    Сообщение отправляется с префиксом "<b>Admin Message:</b>" (для медиа в Caption).
+    Сообщение отправляется с префиксом "Admin Message:" (для медиа в Caption).
     """
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
     if message.from_user.id != ADMIN_ID:
         return
-    broadcast_prefix = "<b>Admin Message:</b>"
+    broadcast_prefix = "Admin Message:"
     if message.reply_to_message:
         broadcast_msg = message.reply_to_message
     else:
@@ -559,6 +673,7 @@ async def handle_all_messages(message: Message):
     uid = message.from_user.id
     cid = message.chat.id
 
+    # Режим поддержки
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -593,10 +708,12 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
+    # Если в группе бот отключён
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
+    # Если прислали документ
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
@@ -614,7 +731,7 @@ async def handle_all_messages(message: Message):
 
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, text={message.text!r}")
     
-    # Обработка запроса курса валют
+    # Обработка запроса курса валют (пример: "100 долларов в рублях", "100 баксов в KRW")
     user_input = (message.text or "").strip()
     lower_input = user_input.lower()
     exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё]+)\s*(в|to)\s*([a-zа-яё₽]+)", lower_input)
@@ -626,14 +743,8 @@ async def handle_all_messages(message: Message):
             amount = 0
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(4)
-        # Приводим к общему формату (например, "доллар", "usd", "вьетнамских донгов" и т.д.)
-        from_curr = from_curr_raw.strip().upper()
-        to_curr = to_curr_raw.strip().upper()
-        # Если встречаются слова, обозначающие рубли, нормализуем их
-        if "РУБ" in from_curr or "₽" in from_curr or "РUBLE" in from_curr:
-            from_curr = "RUB"
-        if "РУБ" in to_curr or "₽" in to_curr or "RUBLE" in to_curr:
-            to_curr = "RUB"
+        from_curr = normalize_currency_name(from_curr_raw)
+        to_curr = normalize_currency_name(to_curr_raw)
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
         if exchange_text:
             await message.answer(exchange_text, **thread_kwargs(message))
@@ -642,6 +753,7 @@ async def handle_all_messages(message: Message):
         return
 
     # Обработка запроса погоды
+    # Например: "погода в ташкенте", "погода в москве на 3 дня", "погода в самара на неделю"
     if "погода" in lower_input:
         weather_match = re.search(r"погода(?:\s+в)?\s+([а-яё\s]+)(?:\s+на\s+(\d+|неделю))?", lower_input)
         if weather_match:
@@ -658,6 +770,7 @@ async def handle_all_messages(message: Message):
                 await message.answer("Не удалось получить данные о погоде.", **thread_kwargs(message))
             return
 
+    # Если не погода и не курс — переходим к обычной обработке Gemini/картинок
     await handle_msg(message)
 
 # ---------------------- "Вай покажи ..." ---------------------- #
@@ -943,6 +1056,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
             voice_response_requested = True
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
+    # Вопрос по загруженному файлу
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -954,6 +1068,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
+    # Если в группе, реагируем только на упоминание бота, реплай боту или ключевое слово
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -967,15 +1082,18 @@ async def handle_msg(message: Message, recognized_text: str = None):
 
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
+    # Имя бота
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>! 🤖", **thread_kwargs(message))
         return
 
+    # Создатель бота
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await bot.send_message(chat_id=cid, text=random.choice(OWNER_REPLIES), **thread_kwargs(message))
         return
 
+    # "Вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -983,16 +1101,19 @@ async def handle_msg(message: Message, recognized_text: str = None):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
+    # Если нужно показать картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
     has_image = bool(image_url)
 
+    # Генерируем ответ от Gemini
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
+    # Голосовой ответ
     if voice_response_requested:
         if not gemini_text:
-            await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
+            await bot.send_message(chat_id=cid, text="Нет ответа для голосового сообщения.", **thread_kwargs(message))
             return
         try:
             clean_text = re.sub(r'<[^>]+>', '', gemini_text)
@@ -1011,6 +1132,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Произошла ошибка при генерации голосового ответа.", **thread_kwargs(message))
         return
 
+    # Если картинка есть, шлём фото + подпись
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -1029,6 +1151,7 @@ async def handle_msg(message: Message, recognized_text: str = None):
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
+        # Иначе шлём обычное текстовое сообщение
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
