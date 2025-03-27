@@ -645,10 +645,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
-    import re
-    # Удаляем любые http/https ссылки
-    raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
-
 
     # Если "Вай покажи..." без leftover -> короткая подпись
     if show_image and rus_word and not leftover:
@@ -669,6 +665,9 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
         else:
             raw_model_text = resp.text
+                    # Удаляем ссылки ТОЛЬКО если raw_model_text определён
+        import re
+        raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
             gemini_text = format_gemini_response(raw_model_text)
             conversation.append({"role": "assistant", "parts": [raw_model_text]})
             if len(conversation) > 8:
