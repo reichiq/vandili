@@ -72,7 +72,8 @@ def load_stats() -> dict:
     try:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            data["unique_users"] = set(data.get("unique_users", []))  # list -> set
+            # unique_users — это set, но в JSON это list, преобразуем
+            data["unique_users"] = set(data.get("unique_users", []))
             return data
     except Exception as e:
         logging.warning(f"Не удалось загрузить {STATS_FILE}: {e}")
@@ -84,6 +85,7 @@ def load_stats() -> dict:
         }
 
 def save_stats():
+    # У unique_users тип set — нужно преобразовать в list для JSON
     data = {
         "messages_total": stats["messages_total"],
         "unique_users": list(stats["unique_users"]),
@@ -142,7 +144,7 @@ SUPPORT_PROMPT_TEXT = (
 
 def thread_kwargs(message: Message) -> dict:
     """
-    Если это супергруппа/группа с топиками, возвращаем {"message_thread_id": ...}.
+    Если это супергруппа/группа с топиками, возвращаем словарь {"message_thread_id": ...}.
     """
     if (
         message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
@@ -191,8 +193,8 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
 
 # ---------------------- КУРСЫ «ЦБ Vandili» (но фактически ЦБ РФ) ---------------------- #
 CBR_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
-cbu_data_cache = {}
-cbu_data_last_update = None
+cbu_data_cache = {}  # используем те же имена если нужно, но логика – ЦБ РФ
+cbu_data_last_update = None  # дата, когда мы обновляли кэш
 
 async def update_cbu_cache():
     """
@@ -206,12 +208,12 @@ async def update_cbu_cache():
                 if response.status == 200:
                     data = await response.json()
                     cbu_data_cache.clear()
-                    date_str = data.get("Date")
+                    date_str = data.get("Date")  # формат "2025-04-07T11:30:00+03:00"
                     if date_str:
                         cbu_data_last_update = datetime.date.fromisoformat(date_str.split("T")[0])
                     valutes = data.get("Valute", {})
                     for code, info in valutes.items():
-                        val = info.get("Value")
+                        val = info.get("Value")  # курс к рублю
                         nom = info.get("Nominal", 1)
                         cbu_data_cache[code.upper()] = (val, nom)
                 else:
@@ -223,6 +225,7 @@ def get_cbu_rate(src_currency: str):
     """
     Аналогично get_cbu_rate, но теперь
     cbu_data_cache[code.upper()] = (value, nominal).
+    Возвращаем (kurs, "DateString")? – в daily_json нет отдельного "Date" на каждую валюту.
     """
     if not cbu_data_cache:
         return None, None
@@ -230,13 +233,20 @@ def get_cbu_rate(src_currency: str):
     if not data:
         return None, None
     val, nom = data
+    # У daily_json нет даты валют, есть общая cbu_data_last_update
+    # Превратим её в строку
     date_str = str(cbu_data_last_update) if cbu_data_last_update else "неизвестно"
+    # value – сколько рублей за nom единиц
+    # например "USD": (76.66, 1)
+    # => 1 usd = 76.66 rub
     return val, date_str
 
 async def process_currency_query(query: str) -> str | None:
     """
-    Здесь оставляем вашу текущую логику (UZS->, RUB-> ...),
-    фактически src->rub->tgt, если валюта не найдена -> 'ЦБ Vandili не даёт...'
+    Здесь оставляем вашу текущую логику:
+    - если src==UZS -> ...
+    - if src==RUB -> ...
+    Но фактически, у ЦБ РФ нет UZS. Просто возвращаем «ЦБ Vandili не даёт курс для ...» если нет.
     """
     currency_map = {
         'доллар': 'USD', 'доллары': 'USD', 'долларов': 'USD', 'usd': 'USD',
@@ -268,24 +278,35 @@ async def process_currency_query(query: str) -> str | None:
     if cbu_data_last_update != datetime.date.today():
         await update_cbu_cache()
 
+    # мы считаем: 1) RUB -> tgt, 2) src -> RUB, 3) src->UZS->tgt. Но у ЦБ РФ нет UZS.
+    # оставляем ваш код, просто если нет пары – "ЦБ Vandili не даёт курс...".
     if src == 'UZS':
+        # sum -> tgt
         rate_tgt, date_tgt = get_cbu_rate(tgt)
         if not rate_tgt:
             return f"ЦБ Vandili не даёт курс для {tgt}."
+        # 1 tgt = rate_tgt rub => 1 rub = 1/rate_tgt tgt (?), но у вас "sum" => non existing
+        # На самом деле у ЦБ РФ нет sum -> rub
+        # => "Не даёт курс" если UZS
+        result = 1.0  # Но это фикция, если хотите
+        # Логика, как была
         ret = amount / rate_tgt
         msg_date = date_tgt or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} UZS ≈ {ret:.2f} {tgt}.\n"
                 "Курс может отличаться в банках или на бирже.")
 
     elif tgt == 'UZS':
+        # src -> sum
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
             return f"ЦБ Vandili не даёт курс для {src}."
+        # ...
         ret = amount * rate_src
         msg_date = date_src or "неизвестно"
         return (f"Обновление: {msg_date}, {amount} {src} ≈ {ret:.2f} UZS.\n"
                 "Курс может отличаться в банках или на бирже.")
     else:
+        # src->UZS->tgt? фактически src->rub->tgt
         rate_src, date_src = get_cbu_rate(src)
         if not rate_src:
             return f"ЦБ Vandili не даёт курс для {src}."
@@ -304,7 +325,7 @@ async def process_weather_query(query: str) -> str | None:
     match = re.search(r"(?:погода\s*(?:в|на)?\s*)([a-zа-яё -]+)", query, re.IGNORECASE)
     if not match:
         return None
-
+    
     city_part = match.group(1).strip()
     forecast_3d = re.search(r"на\s*(3\s*дня|три\s*дня)", query, re.IGNORECASE)
     forecast_7d = re.search(r"на\s*(неделю|7\s*дней)", query, re.IGNORECASE)
@@ -350,7 +371,6 @@ async def process_weather_query(query: str) -> str | None:
         if not weather:
             return f"Нет данных о прогнозе погоды для {city_clean}."
         forecast_lines = [f"Прогноз погоды для {city_clean.capitalize()}:"]
-
         for wday in weather[:days]:
             date_str = wday.get("date")
             mintemp = wday.get("mintempC")
@@ -508,6 +528,7 @@ async def handle_voice_message(message: Message):
         logging.error(f"Ошибка сохранения файла: {e}")
         return
 
+    # Конвертация OGG -> WAV
     try:
         audio = AudioSegment.from_file(ogg_path, format="ogg")
         wav_path = ogg_path.replace(".ogg", ".wav")
@@ -588,7 +609,7 @@ async def handle_all_messages(message: Message):
 
     if message.document:
         stats["files_received"] += 1
-        save_stats()
+        save_stats()  # сохраняем изменения
         file = await bot.get_file(message.document.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
@@ -642,12 +663,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
             gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
         else:
-            # Здесь всё выравнено на один уровень отступа внутри else:
             raw_model_text = resp.text
-
-            # Удаляем ссылки ТОЛЬКО если raw_model_text уже определён
-            raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
-
             gemini_text = format_gemini_response(raw_model_text)
             conversation.append({"role": "assistant", "parts": [raw_model_text]})
             if len(conversation) > 8:
@@ -1057,36 +1073,63 @@ async def cmd_broadcast(message: Message):
         await message.answer("Сделайте реплай (ответ) на сообщение или медиа, которое хотите разослать.")
         return
 
+    # Все пользователи
     targets = list(stats["unique_users"])
+
     content_msg = message.reply_to_message
     sent_count = 0
     error_count = 0
 
+    # Префикс для рассылки
     admin_prefix = "<b>Message from Admin:</b>"
 
     if content_msg.text:
         broadcast_text = f"{admin_prefix}\n{content_msg.text}"
     else:
-        broadcast_text = admin_prefix
+        broadcast_text = f"{admin_prefix}"
         if content_msg.caption:
             broadcast_text += f"\n{content_msg.caption}"
 
     for user_id in targets:
+        # при желании отфильтровать группы: if user_id < 0: continue
         try:
             if content_msg.photo:
-                await bot.send_photo(chat_id=user_id, photo=content_msg.photo[-1].file_id, caption=broadcast_text)
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=content_msg.photo[-1].file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.video:
-                await bot.send_video(chat_id=user_id, video=content_msg.video.file_id, caption=broadcast_text)
+                await bot.send_video(
+                    chat_id=user_id,
+                    video=content_msg.video.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.voice:
-                await bot.send_voice(chat_id=user_id, voice=content_msg.voice.file_id, caption=broadcast_text)
+                await bot.send_voice(
+                    chat_id=user_id,
+                    voice=content_msg.voice.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.document:
-                await bot.send_document(chat_id=user_id, document=content_msg.document.file_id, caption=broadcast_text)
+                await bot.send_document(
+                    chat_id=user_id,
+                    document=content_msg.document.file_id,
+                    caption=broadcast_text
+                )
             elif content_msg.audio:
-                await bot.send_audio(chat_id=user_id, audio=content_msg.audio.file_id, caption=broadcast_text)
+                await bot.send_audio(
+                    chat_id=user_id,
+                    audio=content_msg.audio.file_id,
+                    caption=broadcast_text
+                )
             else:
+                # Обычный текст (если в reply_to_message нет медиа)
                 if content_msg.text:
+                    # Уже добавили admin_prefix + text
                     await bot.send_message(chat_id=user_id, text=broadcast_text)
                 else:
+                    # Пустое
                     continue
 
             sent_count += 1
