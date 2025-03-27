@@ -793,9 +793,7 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    text = re.sub(r"
-(\w+)?\n([\s\S]+?)
-", extract_code, text)
+    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     text = escape(text)
 
     for placeholder, block_html in code_blocks.items():
@@ -803,7 +801,7 @@ def format_gemini_response(text: str) -> str:
 
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
-    text = re.sub(r'([^]+?)', r'<code>\1</code>', text)
+    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
 
     # Удаляем фразы про невозможность показывать изображения
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
