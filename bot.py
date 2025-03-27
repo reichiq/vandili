@@ -22,17 +22,15 @@ import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
-
 from google.cloud import translate
 from google.oauth2 import service_account
-
 from docx import Document
 from PyPDF2 import PdfReader
 import json
-
 import speech_recognition as sr
 from pydub import AudioSegment
-from gtts import gTTS  # <-- Возвращаем gTTS
+from gtts import gTTS
+from datetime import datetime
 
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
@@ -115,6 +113,9 @@ SUPPORT_PROMPT_TEXT = (
     "Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки."
 )
 
+# Глобальное множество для хранения chat_id для рассылки
+all_chat_ids = set()
+
 def thread_kwargs(message: Message) -> dict:
     """
     Если это супергруппа/группа с топиками, возвращаем словарь {"message_thread_id": ...}.
@@ -150,103 +151,239 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     """
     prefix = "<b>Ответ от поддержки:</b>"
     
-    # Если текстовое сообщение
     if admin_message.text:
         reply_text = f"{prefix}\n{admin_message.text}"
         await bot.send_message(chat_id=user_id, text=reply_text)
-    
-    # Фото
     elif admin_message.photo:
         caption = prefix
         if admin_message.caption:
             caption += f"\n{admin_message.caption}"
         await bot.send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption)
-    
-    # Голосовое сообщение
     elif admin_message.voice:
         caption = prefix
         if admin_message.caption:
             caption += f"\n{admin_message.caption}"
         await bot.send_voice(chat_id=user_id, voice=admin_message.voice.file_id, caption=caption)
-    
-    # Видео
     elif admin_message.video:
         caption = prefix
         if admin_message.caption:
             caption += f"\n{admin_message.caption}"
         await bot.send_video(chat_id=user_id, video=admin_message.video.file_id, caption=caption)
-    
-    # Документ
     elif admin_message.document:
         caption = prefix
         if admin_message.caption:
             caption += f"\n{admin_message.caption}"
         await bot.send_document(chat_id=user_id, document=admin_message.document.file_id, caption=caption)
-    
-    # Аудио
     elif admin_message.audio:
         caption = prefix
         if admin_message.caption:
             caption += f"\n{admin_message.caption}"
         await bot.send_audio(chat_id=user_id, audio=admin_message.audio.file_id, caption=caption)
-    
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
+
+# ---------------------- Функции для новой функциональности ---------------------- #
+
+# Функция для получения погоды через Open‑Meteo (без OpenWeatherMap)
+async def get_weather_info(city: str, days: int = 1) -> str:
+    # Получаем координаты города через геокодинг Open‑Meteo
+    geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(geo_url) as resp:
+                if resp.status != 200:
+                    logging.warning(f"Ошибка геокодинга для города {city}: статус {resp.status}")
+                    return None
+                geo_data = await resp.json()
+    except Exception as e:
+        logging.error(f"Ошибка запроса геокодинга: {e}")
+        return None
+
+    if "results" not in geo_data or not geo_data["results"]:
+        return f"Город {city} не найден."
+    
+    result = geo_data["results"][0]
+    lat = result.get("latitude")
+    lon = result.get("longitude")
+    timezone = result.get("timezone", "Europe/Moscow")
+    
+    if days == 1:
+        # Текущая погода
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(weather_url) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"Ошибка получения текущей погоды: статус {resp.status}")
+                        return None
+                    weather_data = await resp.json()
+        except Exception as e:
+            logging.error(f"Ошибка запроса погоды: {e}")
+            return None
+        current = weather_data.get("current_weather", {})
+        temp = current.get("temperature")
+        wind = current.get("windspeed")
+        weather_code = current.get("weathercode")
+        description = weather_code_to_description(weather_code)
+        return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, скорость ветра {wind} км/ч."
+    else:
+        # Прогноз на несколько дней
+        weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                       f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(weather_url) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"Ошибка получения прогноза погоды: статус {resp.status}")
+                        return None
+                    weather_data = await resp.json()
+        except Exception as e:
+            logging.error(f"Ошибка запроса прогноза погоды: {e}")
+            return None
+        daily = weather_data.get("daily", {})
+        dates = daily.get("time", [])
+        weathercodes = daily.get("weathercode", [])
+        temps_max = daily.get("temperature_2m_max", [])
+        temps_min = daily.get("temperature_2m_min", [])
+        forecast_lines = [f"Прогноз погоды в {city.capitalize()}:"]
+        for i in range(min(days, len(dates))):
+            desc = weather_code_to_description(weathercodes[i])
+            forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
+        return "\n".join(forecast_lines)
+
+def weather_code_to_description(code: int) -> str:
+    if code == 0:
+        return "Ясно ☀️"
+    elif code in [1, 2, 3]:
+        return "Облачно ☁️"
+    elif code in [45, 48]:
+        return "Туман 🌫️"
+    elif code in [51, 53, 55]:
+        return "Небольшой дождь 🌦️"
+    elif code in [56, 57]:
+        return "Холодный дождь ❄️"
+    elif code in [61, 63, 65]:
+        return "Дождь 🌧️"
+    elif code in [66, 67]:
+        return "Ледяной дождь 🌨️"
+    elif code in [71, 73, 75]:
+        return "Снег 🌨️"
+    elif code == 77:
+        return "Снежные зерна ❄️"
+    elif code in [80, 81, 82]:
+        return "Ливень 🌦️"
+    elif code in [85, 86]:
+        return "Снежные ливни ❄️"
+    elif code == 95:
+        return "Гроза ⛈️"
+    elif code in [96, 99]:
+        return "Сильная гроза ⛈️"
+    else:
+        return "Неизвестная погода"
+
+# Функция для получения курса валют с MOEX для любой валютной пары
+async def get_moex_rate(currency: str) -> float:
+    """
+    Возвращает курс валюты к рублю с MOEX.
+    Если валюта RUB, возвращает 1.0.
+    Для USD используется специальный код, для остальных предполагается код вида "{CURRENCY}_RUB_TOM".
+    """
+    currency = currency.upper()
+    if currency == "RUB":
+        return 1.0
+    if currency == "USD":
+        code = "USD000UTSTOM"
+    else:
+        code = f"{currency}_RUB_TOM"
+    url = f"https://iss.moex.com/iss/engines/currency/markets/selt/securities/{code}.json"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logging.warning(f"MOEX API вернул статус {response.status} для кода {code}")
+                    return None
+                data = await response.json()
+    except Exception as e:
+        logging.error(f"Ошибка получения курса с MOEX для {code}: {e}")
+        return None
+    try:
+        marketdata = data["marketdata"]
+        columns = marketdata["columns"]
+        values = marketdata["data"][0]
+        if "LAST" in columns:
+            idx = columns.index("LAST")
+        elif "last" in columns:
+            idx = columns.index("last")
+        else:
+            idx = 1
+        last_price = values[idx]
+        return float(last_price)
+    except Exception as e:
+        logging.error(f"Ошибка обработки данных MOEX для {code}: {e}")
+        return None
+
+async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
+    """
+    Получает курс для конвертации между любыми валютами, поддерживаемыми MOEX.
+    Рассчитывает результат через отношение курсов обеих валют к рублю.
+    """
+    rate_from = await get_moex_rate(from_curr)
+    rate_to = await get_moex_rate(to_curr)
+    if rate_from is None or rate_to is None:
+        return None
+    conversion_factor = rate_from / rate_to
+    result = amount * conversion_factor
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\nКурс в банках и на биржах может отличаться."
 
 # ---------------------- Обработчики команд ---------------------- #
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """
-    /start — теперь везде выдаёт приветствие бота.
-    В группе/супергруппе — также снимаем отключение (удаляем chat.id из disabled_chats).
-    Если /start support в личке — включаем режим поддержки.
+    /start — выдаёт приветствие бота и, в группе, включает его, если он был отключён.
+    В личке при /start support включается режим поддержки.
     """
     _register_message_stats(message)
+    all_chat_ids.add(message.chat.id)
     text_lower = message.text.lower()
 
-    # Если /start support в личке
     if message.chat.type == ChatType.PRIVATE and "support" in text_lower:
         support_mode_users.add(message.from_user.id)
         await message.answer(SUPPORT_PROMPT_TEXT)
         return
 
-    # Единое приветствие
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
-• Я могу отвечать не только текстом, но и голосовыми сообщениями. Только скажи мне "ответь войсом" или "ответь голосом".
-• Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
-• Отвечаю на вопросы по содержимому файла.
-• Помогаю с кодом — напиши #рефактор и вставь код.
-• Показываю изображения по ключевым словам.
-• Поддерживаю команды /help и режим поддержки.
+•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Только скажи мне "ответь войсом" или "ответь голосом".
+•📄Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
+•❓Отвечаю на вопросы по содержимому файла.
+•👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
+•🏞Показываю изображения по ключевым словам.
+•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
+•💱Курс валют: узнай курс "100 долларов в евро", "100 USD в VND" и т.д. 
+•🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
 
-    # В группе или супергруппе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        # Если бот был отключён, включаем
         if message.chat.id in disabled_chats:
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-
-        # Отправляем приветствие
         await message.answer(greet, **thread_kwargs(message))
         return
 
-    # Иначе — личка
     await message.answer(greet)
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     """
-    /stop — и в группе, и в личке отвечает «Бот отключён 🚫».
-    В группе добавляет чат в disabled_chats, в личке просто выводит сообщение.
+    /stop — отключает бота в группе/личке.
+    В группе добавляет chat.id в disabled_chats.
     """
     _register_message_stats(message)
     await message.answer("Бот отключён 🚫", **thread_kwargs(message))
-
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
@@ -255,6 +392,7 @@ async def cmd_stop(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     _register_message_stats(message)
+    all_chat_ids.add(message.chat.id)
     if message.chat.type == ChatType.PRIVATE:
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
@@ -294,6 +432,59 @@ async def cmd_adminstats(message: Message):
         text += "Команды ещё не использовались."
     await message.answer(text)
 
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    """
+    /broadcast — позволяет админу разослать сообщение всем пользователям и группам.
+    Сообщение отправляется с префиксом "<b>Admin Message:</b>" (для медиа в Caption).
+    """
+    _register_message_stats(message)
+    all_chat_ids.add(message.chat.id)
+    if message.from_user.id != ADMIN_ID:
+        return
+    broadcast_prefix = "<b>Admin Message:</b>"
+    if message.reply_to_message:
+        broadcast_msg = message.reply_to_message
+    else:
+        text_parts = message.text.split(maxsplit=1)
+        if len(text_parts) < 2:
+            await message.answer("Нет текста для рассылки.")
+            return
+        broadcast_text = text_parts[1]
+        broadcast_msg = None
+    for chat_id in all_chat_ids.copy():
+        try:
+            if broadcast_msg:
+                if broadcast_msg.text:
+                    await bot.send_message(chat_id=chat_id, text=f"{broadcast_prefix}\n{broadcast_msg.text}")
+                elif broadcast_msg.photo:
+                    caption = broadcast_msg.caption or ""
+                    caption = f"{broadcast_prefix}\n{caption}"
+                    await bot.send_photo(chat_id=chat_id, photo=broadcast_msg.photo[-1].file_id, caption=caption)
+                elif broadcast_msg.video:
+                    caption = broadcast_msg.caption or ""
+                    caption = f"{broadcast_prefix}\n{caption}"
+                    await bot.send_video(chat_id=chat_id, video=broadcast_msg.video.file_id, caption=caption)
+                elif broadcast_msg.voice:
+                    caption = broadcast_msg.caption or ""
+                    caption = f"{broadcast_prefix}\n{caption}"
+                    await bot.send_voice(chat_id=chat_id, voice=broadcast_msg.voice.file_id, caption=caption)
+                elif broadcast_msg.document:
+                    caption = broadcast_msg.caption or ""
+                    caption = f"{broadcast_prefix}\n{caption}"
+                    await bot.send_document(chat_id=chat_id, document=broadcast_msg.document.file_id, caption=caption)
+                elif broadcast_msg.audio:
+                    caption = broadcast_msg.caption or ""
+                    caption = f"{broadcast_prefix}\n{caption}"
+                    await bot.send_audio(chat_id=chat_id, audio=broadcast_msg.audio.file_id, caption=caption)
+                else:
+                    await bot.send_message(chat_id=chat_id, text=f"{broadcast_prefix}\n[Сообщение в неподдерживаемом формате]")
+            else:
+                await bot.send_message(chat_id=chat_id, text=f"{broadcast_prefix}\n{broadcast_text}")
+        except Exception as e:
+            logging.warning(f"[BROADCAST] Ошибка при отправке в чат {chat_id}: {e}")
+    await message.answer("Рассылка завершена.")
+
 # ---------------------- Режим поддержки (callback) ---------------------- #
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
@@ -304,16 +495,8 @@ async def handle_support_click(callback: CallbackQuery):
 # ---------------------- Обработчик голосовых сообщений ---------------------- #
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
-    """
-    При получении голосового:
-    1. Пишем "Секундочку, я обрабатываю ваше голосовое сообщение..."
-    2. Скачиваем OGG, конвертируем в WAV
-    3. Распознаём речь (SpeechRecognition, Google)
-    4. Вызываем handle_msg(...) с распознанным текстом
-    """
     _register_message_stats(message)
     await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", **thread_kwargs(message))
-
     try:
         file = await bot.get_file(message.voice.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -323,7 +506,6 @@ async def handle_voice_message(message: Message):
     except Exception as e:
         logging.error(f"Ошибка скачивания голосового файла: {e}")
         return
-
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as tmpf:
             tmpf.write(voice_bytes)
@@ -331,8 +513,6 @@ async def handle_voice_message(message: Message):
     except Exception as e:
         logging.error(f"Ошибка сохранения файла: {e}")
         return
-
-    # Конвертация OGG -> WAV
     try:
         audio = AudioSegment.from_file(ogg_path, format="ogg")
         wav_path = ogg_path.replace(".ogg", ".wav")
@@ -343,8 +523,6 @@ async def handle_voice_message(message: Message):
         return
     finally:
         os.remove(ogg_path)
-
-    # Распознаём речь
     recognizer = sr.Recognizer()
     recognized_text = ""
     try:
@@ -354,8 +532,6 @@ async def handle_voice_message(message: Message):
     except Exception as e:
         logging.error(f"Ошибка распознавания голосового сообщения: {e}")
     os.remove(wav_path)
-
-    # Передаём распознанный текст в общий обработчик
     if recognized_text:
         await handle_msg(message, recognized_text=recognized_text)
 
@@ -368,7 +544,7 @@ async def handle_all_messages(message: Message):
     3. Если чат в группе отключён – игнорируем сообщение.
     4. Обработка файлов и обычных сообщений.
     """
-    # 1. Ответ админа в своём чате
+    all_chat_ids.add(message.chat.id)
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
@@ -383,7 +559,6 @@ async def handle_all_messages(message: Message):
     uid = message.from_user.id
     cid = message.chat.id
 
-    # 2. Режим поддержки
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -418,12 +593,10 @@ async def handle_all_messages(message: Message):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # 3. Если это группа/супергруппа и чат отключён
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
-    # 4. Если есть документ
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
@@ -440,6 +613,51 @@ async def handle_all_messages(message: Message):
         return
 
     logging.info(f"[DEBUG] Message from {uid}: content_type={message.content_type}, text={message.text!r}")
+    
+    # Обработка запроса курса валют
+    user_input = (message.text or "").strip()
+    lower_input = user_input.lower()
+    exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё]+)\s*(в|to)\s*([a-zа-яё₽]+)", lower_input)
+    if exchange_match:
+        amount_str = exchange_match.group(1).replace(',', '.')
+        try:
+            amount = float(amount_str)
+        except:
+            amount = 0
+        from_curr_raw = exchange_match.group(2)
+        to_curr_raw = exchange_match.group(4)
+        # Приводим к общему формату (например, "доллар", "usd", "вьетнамских донгов" и т.д.)
+        from_curr = from_curr_raw.strip().upper()
+        to_curr = to_curr_raw.strip().upper()
+        # Если встречаются слова, обозначающие рубли, нормализуем их
+        if "РУБ" in from_curr or "₽" in from_curr or "РUBLE" in from_curr:
+            from_curr = "RUB"
+        if "РУБ" in to_curr or "₽" in to_curr or "RUBLE" in to_curr:
+            to_curr = "RUB"
+        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
+        if exchange_text:
+            await message.answer(exchange_text, **thread_kwargs(message))
+        else:
+            await message.answer("Не удалось получить курс валюты.", **thread_kwargs(message))
+        return
+
+    # Обработка запроса погоды
+    if "погода" in lower_input:
+        weather_match = re.search(r"погода(?:\s+в)?\s+([а-яё\s]+)(?:\s+на\s+(\d+|неделю))?", lower_input)
+        if weather_match:
+            city = weather_match.group(1).strip()
+            days_str = weather_match.group(2)
+            if days_str:
+                days = 7 if days_str == "неделю" else int(days_str)
+            else:
+                days = 1
+            weather_info = await get_weather_info(city, days)
+            if weather_info:
+                await message.answer(weather_info, **thread_kwargs(message))
+            else:
+                await message.answer("Не удалось получить данные о погоде.", **thread_kwargs(message))
+            return
+
     await handle_msg(message)
 
 # ---------------------- "Вай покажи ..." ---------------------- #
@@ -611,7 +829,6 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
 
-    # Заменяем некоторые фразы для "брендинга"
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
@@ -716,23 +933,16 @@ def parse_russian_show_request(user_text: str):
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
 async def handle_msg(message: Message, recognized_text: str = None):
-    """
-    Общий обработчик логики (ответ Gemini, картинки, голосовой ответ и т.д.).
-    Параметр recognized_text используется, если это результат распознавания голоса.
-    """
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
 
-    # Обнаружение запроса голосового ответа
     voice_response_requested = False
     if user_input:
         lower_input = user_input.lower()
         if "ответь войсом" in lower_input or "ответь голосом" in lower_input or "голосом ответь" in lower_input:
             voice_response_requested = True
-            # Убираем эти слова из prompt
             user_input = re.sub(r"(ответь (войсом|голосом)|голосом ответь)", "", user_input, flags=re.IGNORECASE).strip()
 
-    # Обработка вопроса по файлу
     if "файл" in user_input.lower() and message.from_user.id in user_documents:
         text = user_documents[message.from_user.id]
         short_summary_prompt = (
@@ -744,7 +954,6 @@ async def handle_msg(message: Message, recognized_text: str = None):
         await bot.send_message(chat_id=cid, text=gemini_response, **thread_kwargs(message))
         return
 
-    # Если в группе, проверяем упоминание бота
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         text_lower = user_input.lower()
         mention_bot = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text_lower
@@ -758,18 +967,15 @@ async def handle_msg(message: Message, recognized_text: str = None):
 
     logging.info(f"[BOT] cid={cid}, text='{user_input}'")
 
-    # Если пользователь спрашивает имя
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         await bot.send_message(chat_id=cid, text="Меня зовут <b>VAI</b>! 🤖", **thread_kwargs(message))
         return
 
-    # Если пользователь спрашивает о создателе
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         await bot.send_message(chat_id=cid, text=random.choice(OWNER_REPLIES), **thread_kwargs(message))
         return
 
-    # Проверяем, не просит ли пользователь "Вай покажи ..."
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -777,34 +983,27 @@ async def handle_msg(message: Message, recognized_text: str = None):
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    # Если требуется показать картинку
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
     has_image = bool(image_url)
 
-    # Генерация ответа через Gemini
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
-    # Если пользователь просил ответить голосом
     if voice_response_requested:
         if not gemini_text:
             await bot.send_message(chat_id=cid, text="Нет ответа для голосового ответа.", **thread_kwargs(message))
             return
         try:
-            # Удаляем HTML-теги для голосового ответа
             clean_text = re.sub(r'<[^>]+>', '', gemini_text)
-            # Генерируем MP3 через gTTS и конвертируем в OGG
             tts = gTTS(clean_text, lang='ru')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
                 tts.save(tmp_audio.name)
                 mp3_path = tmp_audio.name
-
             audio = AudioSegment.from_file(mp3_path, format="mp3")
             ogg_path = mp3_path.replace(".mp3", ".ogg")
             audio.export(ogg_path, format="ogg")
             os.remove(mp3_path)
-
             await bot.send_voice(chat_id=cid, voice=FSInputFile(ogg_path, filename="voice.ogg"), **thread_kwargs(message))
             os.remove(ogg_path)
         except Exception as e:
@@ -812,7 +1011,6 @@ async def handle_msg(message: Message, recognized_text: str = None):
             await bot.send_message(chat_id=cid, text="Произошла ошибка при генерации голосового ответа.", **thread_kwargs(message))
         return
 
-    # Иначе отвечаем обычным текстом или картинкой
     if has_image:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
