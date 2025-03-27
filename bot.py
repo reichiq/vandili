@@ -409,51 +409,14 @@ def weather_code_to_description(code: int) -> str:
         return "Неизвестная погода"
 
 # ---------------------- Обработчики для курса валют ---------------------- #
-
-@dp.message()
-async def handle_all_messages(message: Message):
-    user_input = (message.text or "").strip().lower()
-
-    # 1) Проверяем «<число> [валюта] в [валюта]»
-    match_with_amount = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё]+)\s*(?:в|to)\s*([a-zа-яё₽]+)", user_input)
-    if match_with_amount:
-        amount_str = match_with_amount.group(1).replace(',', '.')
-        try:
-            amount = float(amount_str)
-        except:
-            amount = 0.0
-        from_curr_raw = match_with_amount.group(2)
-        to_curr_raw   = match_with_amount.group(3)
-
-        from_curr = normalize_currency_name(from_curr_raw)
-        to_curr   = normalize_currency_name(to_curr_raw)
-
-        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if exchange_text is None:
-            # Если get_exchange_rate вернул None
-            await message.answer("ЦБ Vandili не предоставляет курс по данной валюте 😢")
-        else:
-            await message.answer(exchange_text)
-        return
-
-    # 2) Проверяем «курс [валюта] (к|в|to [валюта])?»
-    match_no_amount = re.search(r"\bкурс\s+([a-zа-яё]+)(?:\s+(?:к|в|to)\s+([a-zа-яё₽]+))?", user_input)
-    if match_no_amount:
-        from_curr_raw = match_no_amount.group(1)
-        to_curr_raw   = match_no_amount.group(2)
-        if not to_curr_raw:
-            to_curr_raw = "рубль"
-        amount = 1.0
-
-        from_curr = normalize_currency_name(from_curr_raw)
-        to_curr   = normalize_currency_name(to_curr_raw)
-
-        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if exchange_text is None:
-            await message.answer("ЦБ Vandili не предоставляет курс по данной валюте 😢")
-        else:
-            await message.answer(exchange_text)
-        return
+async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
+    rate = await get_floatrates_rate(from_curr, to_curr)
+    if rate is None:
+        return None
+    result = amount * rate
+    today = datetime.now().strftime("%Y-%m-%d")
+    return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
+            "Курс в банках и на биржах может отличаться.")
 
 # ---------------------- Обработчики команд ---------------------- #
 @dp.message(Command("start"))
