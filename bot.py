@@ -645,6 +645,11 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         )
         full_prompt = smart_prompt + full_prompt
 
+import re
+# Удаляем любые http/https ссылки
+raw_model_text = re.sub(r'https?://\S+', '', raw_model_text)
+
+
     # Если "Вай покажи..." без leftover -> короткая подпись
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
