@@ -453,7 +453,6 @@ async def get_weather_info(city: str, days: int = 1) -> str:
             forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
         return "\n".join(forecast_lines)
 
-    else:
         # текущая погода
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
         try:
