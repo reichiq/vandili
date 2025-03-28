@@ -766,33 +766,23 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
 
     # 3) Обработка погоды — ЛЕНИВЫЙ квантификатор для города
-    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?"
+    weather_pattern = r"погода(?:\s+в)?\s+(.+?)(?:\s+на\s+(?:(\d+)\s*(?:дней|дня)?|(неделю)))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
-    if weather_match:
-        city_raw = weather_match.group(1).strip()
-        days_part = weather_match.group(2)
-
-        city_norm = normalize_city_name(city_raw)
-        if days_part:
-            # может быть либо число, либо слово "неделю"
-            digit_match = re.search(r"(\d+)", days_part)
-            if digit_match:
-                days = int(digit_match.group(1))
-            elif "неделю" in days_part:
-                days = 7
-            else:
-                days = 1
-        else:
-            days = 1
+    if days_week == "неделю":
+        days = 7
+    elif days_number:
+        days = int(days_number)
+    else:
+        days = 1
 
         weather_info = await get_weather_info(city_norm, days)
         if not weather_info:
-            weather_info = "Не удалось получить данные о погоде."
-        if voice_response_requested:
-            await send_voice_message(cid, weather_info)
-        else:
-            await message.answer(weather_info, **thread_kwargs(message))
-        return
+            weather_info = f"Не удалось получить данные о погоде для {city_norm.capitalize()}."
+            if voice_response_requested:
+                await send_voice_message(cid, weather_info)
+            else:
+                await message.answer(weather_info, **thread_kwargs(message))
+           return
 
     # 4) Всё остальное идёт в handle_msg
     await handle_msg(message, user_input, voice_response_requested)
