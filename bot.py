@@ -500,10 +500,11 @@ async def send_voice_message(chat_id: int, text: str):
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
 
-@dp.message(Command(commands=["start"]))
+@dp.message(Command("start", prefix="/!"))
 async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
+    text_lower = (message.text or "").lower()
 
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
@@ -513,7 +514,7 @@ async def cmd_start(message: Message, command: CommandObject):
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
 •☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
-•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д.
+•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
@@ -523,14 +524,15 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
+        await message.answer("Бот включён ✅", message_thread_id=message.message_thread_id)
         await message.answer(greet, message_thread_id=message.message_thread_id)
-    else:
-        await message.answer(greet)
+        return
 
-@dp.message(Command(commands=["stop"]))
+    await message.answer(greet)
+
+@dp.message(Command("stop", prefix="/!"))
 async def cmd_stop(message: Message, command: CommandObject):
     _register_message_stats(message)
-
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
@@ -838,7 +840,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
 
     # Все остальные запросы идут сюда:
-    await handle_msg(message, user_input, voice_response_requested)
+    gemini_text = await handle_msg(message, user_input, voice_response_requested)
+    if not gemini_text:
+        return
 
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
