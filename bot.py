@@ -497,6 +497,13 @@ async def send_voice_message(chat_id: int, text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(ogg_path, filename="voice.ogg"))
     os.remove(ogg_path)
 
+# ---------------------- Вспомогательная функция для thread ---------------------- #
+
+def thread(message: Message) -> dict:
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
+        return {"message_thread_id": message.message_thread_id}
+    return {}
+
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
 
@@ -507,13 +514,13 @@ async def cmd_start(message: Message, command: CommandObject):
 
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
-•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи \"ответь голосом\" или \"ответь войсом\".
+•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
 •📄Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
 •❓Отвечаю на вопросы по содержимому файла.
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси \"погода в Москве\" или \"погода в Варшаве на 3 дня\" 
-•💱Курс валют: узнай курс \"100 долларов в рублях\", \"100 USD в KRW\" и т.д. 
+•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
+•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
@@ -523,8 +530,8 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer("Бот включён ✅")
-        await message.answer(greet)
+        await message.answer("Бот включён ✅", **thread(message))
+        await message.answer(greet, **thread(message))
         return
 
     await message.answer(greet)
@@ -536,9 +543,9 @@ async def cmd_stop(message: Message, command: CommandObject):
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫")
+        await message.answer("Бот отключён в группе 🚫", **thread(message))
     else:
-        await message.answer("Бот отключён 🚫")
+        await message.answer("Бот отключён 🚫", **thread(message))
         
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -552,9 +559,9 @@ async def cmd_help(message: Message):
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]] 
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard)
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
@@ -581,7 +588,7 @@ async def cmd_adminstats(message: Message):
             text += f"  {cmd}: {cnt}\n"
     else:
         text += "Команды ещё не использовались."
-    await message.answer(text)
+    await message.answer(text, **thread(message))
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
@@ -594,7 +601,7 @@ async def cmd_broadcast(message: Message):
     else:
         text_parts = message.text.split(maxsplit=1)
         if len(text_parts) < 2:
-            await message.answer("Нет текста для рассылки.")
+            await message.answer("Нет текста для рассылки.", **thread(message))
             return
         broadcast_text = text_parts[1]
         broadcast_msg = None
@@ -631,18 +638,18 @@ async def cmd_broadcast(message: Message):
                 await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_text}")
         except Exception as e:
             logging.warning(f"[BROADCAST] Ошибка при отправке в чат {recipient}: {e}")
-    await message.answer("Рассылка завершена.")
+    await message.answer("Рассылка завершена.", **thread(message))
 
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
     await callback.answer()
     support_mode_users.add(callback.from_user.id)
-    await callback.message.answer(SUPPORT_PROMPT_TEXT)
+    await callback.message.answer(SUPPORT_PROMPT_TEXT, **thread(message))
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
     _register_message_stats(message)
-    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...")
+    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", **thread(message))
     try:
         file = await bot.get_file(message.voice.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -732,10 +739,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=content)
             if sent_msg:
                 support_reply_map[sent_msg.message_id] = uid
-            await message.answer("Сообщение отправлено в поддержку.")
+            await message.answer("Сообщение отправлено в поддержку.", **thread(message))
         except Exception as e:
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
+            await message.answer("Произошла ошибка при отправке сообщения в поддержку.", **thread(message))
         return
 
     # Если бот отключён в группе
@@ -754,9 +761,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         text = extract_text_from_file(message.document.file_name, file_bytes)
         if text:
             user_documents[uid] = text
-            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
+            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.", **thread(message))
         else:
-            await message.answer("⚠️ Не удалось извлечь текст из файла.")
+            await message.answer("⚠️ Не удалось извлечь текст из файла.", **thread(message))
         return
 
     # Проверка запроса на ответ голосом
@@ -791,7 +798,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             if voice_response_requested:
                 await send_voice_message(cid, exchange_text)
             else:
-                await message.answer(exchange_text)
+                await message.answer(exchange_text, **thread(message))
             return
 
     # Исправленная обработка запроса погоды
@@ -821,7 +828,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         if voice_response_requested:
             await send_voice_message(cid, weather_info)
         else:
-            await message.answer(weather_info)
+            await message.answer(weather_info, **thread(message))
         return
 
         # Проверка на вопрос по файлу (исправленная позиция, после return)
@@ -835,7 +842,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
-            await message.answer(gemini_text)
+            await message.answer(gemini_text, **thread(message))
         return
 
     # Все остальные запросы идут сюда:
@@ -846,7 +853,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        await message.answer(gemini_text)
+        await message.answer(gemini_text, **thread(message))
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -1060,7 +1067,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         if voice_response_requested:
             await send_voice_message(cid, answer)
         else:
-            await message.answer(answer)
+            await message.answer(answer, **thread(message))
         return
 
     if any(ic in lower_inp for ic in INFO_COMMANDS):
@@ -1068,7 +1075,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         if voice_response_requested:
             await send_voice_message(cid, reply_text)
         else:
-            await message.answer(reply_text)
+            await message.answer(reply_text, **thread(message))
         return
 
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
@@ -1110,7 +1117,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
-            await message.answer(c)
+            await message.answer(c, **thread(message))
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
