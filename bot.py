@@ -415,7 +415,7 @@ def weather_code_to_description(code: int) -> str:
     else:
         return "Неизвестная погода"
 
-async def get_weather_info(city: str, days: int = 1) -> str:
+async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     geo_data = await geocode_city(city)
     if not geo_data:
         return f"Город {city} не найден."
@@ -423,8 +423,11 @@ async def get_weather_info(city: str, days: int = 1) -> str:
     lon = geo_data["lon"]
     timezone = geo_data["timezone"]
 
+    if mode in ["завтра", "послезавтра"]:
+        days = 2 if mode == "послезавтра" else 1
+
     if days > 1:
-        # прогноз на несколько дней
+        # Прогноз на несколько дней
         weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                        f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
         try:
@@ -432,11 +435,11 @@ async def get_weather_info(city: str, days: int = 1) -> str:
                 async with session.get(weather_url) as resp:
                     if resp.status != 200:
                         logging.warning(f"Ошибка получения прогноза погоды: статус {resp.status}")
-                        return None
+                        return "Не удалось получить прогноз погоды."
                     weather_data = await resp.json()
         except Exception as e:
-            logging.error(f"Ошибка запроса прогноза погоды: {e}")
-            return None
+            logging.error(f"Ошибка прогноза погоды: {e}")
+            return "Ошибка при получении прогноза."
 
         daily = weather_data.get("daily", {})
         dates = daily.get("time", [])
@@ -447,25 +450,35 @@ async def get_weather_info(city: str, days: int = 1) -> str:
         if not dates:
             return "Не удалось получить данные о погоде."
 
-        forecast_lines = [f"Прогноз погоды в {city.capitalize()} на {days} дней:"]
+        forecast_lines = [f"<b>Прогноз погоды в {city.capitalize()}:</b>"]
+
+        if mode == "завтра" or mode == "послезавтра":
+            index = 1 if mode == "завтра" else 2
+            desc = weather_code_to_description(weathercodes[index])
+            forecast_lines.append(
+                f"{dates[index]}: {desc}, от {temps_min[index]}°C до {temps_max[index]}°C"
+            )
+            return "\n".join(forecast_lines)
+
+        # обычный прогноз на days дней
         for i in range(min(days, len(dates))):
             desc = weather_code_to_description(weathercodes[i])
-            forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
+            forecast_lines.append(f"• {dates[i]} — {desc}, {temps_min[i]}..{temps_max[i]}°C")
+
         return "\n".join(forecast_lines)
 
-
-   else:
+    # Текущая погода
     weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(weather_url) as resp:
                 if resp.status != 200:
                     logging.warning(f"Ошибка получения текущей погоды: статус {resp.status}")
-                    return None
+                    return "Не удалось получить текущую погоду."
                 weather_data = await resp.json()
     except Exception as e:
-        logging.error(f"Ошибка запроса текущей погоды: {e}")
-        return None
+        logging.error(f"Ошибка текущей погоды: {e}")
+        return "Ошибка при получении текущей погоды."
 
     current = weather_data.get("current_weather", {})
     temp = current.get("temperature")
@@ -785,16 +798,26 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
 
     # Исправленная обработка запроса погоды
-    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+на\s+(?:(\d+)|неделю))?$"
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(на\s+(\d+)\s+дн(я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
+        week_flag = weather_match.group(5)
+        mode_flag = weather_match.group(6)
         
         city_norm = normalize_city_name(city_raw)
-        days = 7 if "неделю" in lower_input else int(days_part) if days_part else 1
+        if week_flag:
+            days = 7
+            mode = ""
+        elif mode_flag:
+            days = 2
+            mode = mode_flag
+        else:
+            days = int(days_part) if days_part else 1
+            mode = ""
         
-        weather_info = await get_weather_info(city_norm, days)
+        weather_info = await get_weather_info(city_norm, days, mode)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
         if voice_response_requested:
