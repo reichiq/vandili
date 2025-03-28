@@ -676,7 +676,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
     cid = message.chat.id
+    
+    voice_response_requested = False  # Объявили тут заранее!
 
+    # Если админ отвечает на сообщение поддержки
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
@@ -687,6 +690,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
+    # Если пользователь только что нажал кнопку "Написать в поддержку"
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -719,13 +723,14 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
+    # Если бот отключён в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
+    # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
-        save_stats()
         file = await bot.get_file(message.document.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
@@ -739,26 +744,26 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-    # Проверка на вопрос по файлу
+    # ⬇️ Проверка на вопрос по файлу (новый блок!)
     if uid in user_documents:
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
-                        f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-                        f"Ответь чётко и кратко, основываясь на содержимом файла.")
+                            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+                            f"Ответь чётко и кратко, основываясь на содержимом файла.")
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
-        
+
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
             await message.answer(gemini_text, **thread_kwargs(message))
         return
 
-
+    # 👇 Обязательно дальше обработка голоса должна быть уже после того, как объявили переменную:
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
-    voice_response_requested = False
     if voice_regex.search(user_input):
         voice_response_requested = True
         user_input = voice_regex.sub("", user_input).strip()
+    
     lower_input = user_input.lower()
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
