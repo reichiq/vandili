@@ -453,25 +453,6 @@ async def get_weather_info(city: str, days: int = 1) -> str:
             forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
         return "\n".join(forecast_lines)
 
-        # текущая погода
-        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(weather_url) as resp:
-                    if resp.status != 200:
-                        logging.warning(f"Ошибка получения текущей погоды: статус {resp.status}")
-                        return None
-                    weather_data = await resp.json()
-        except Exception as e:
-            logging.error(f"Ошибка запроса текущей погоды: {e}")
-            return None
-
-        current = weather_data.get("current_weather", {})
-        temp = current.get("temperature")
-        wind = current.get("windspeed")
-        weather_code = current.get("weathercode")
-        description = weather_code_to_description(weather_code)
-        return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, ветер {wind} км/ч."
 
     else:
         weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
