@@ -497,6 +497,13 @@ async def send_voice_message(chat_id: int, text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(ogg_path, filename="voice.ogg"))
     os.remove(ogg_path)
 
+# ---------------------- Вспомогательная функция для thread_id ---------------------- #
+def thread_kwargs(message: Message) -> dict:
+    if (message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
+            and message.message_thread_id is not None):
+        return {"message_thread_id": message.message_thread_id}
+    return {}
+
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
 
