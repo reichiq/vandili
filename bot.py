@@ -258,7 +258,6 @@ CURRENCY_SYNONYMS = {
 
 # ---------------------- Функция для получения курса через Floatrates ---------------------- #
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
-    # приведение к нижнему регистру для запроса
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
     url = f"https://www.floatrates.com/daily/{from_curr}.json"
@@ -272,11 +271,8 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     except Exception as e:
         logging.error(f"Ошибка при запросе к Floatrates: {e}")
         return None
-
-    # Проверяем, есть ли нужная целевая валюта в ответе
     if to_curr not in data:
         return None
-
     rate = data[to_curr].get("rate")
     if rate is None:
         return None
@@ -285,7 +281,7 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
     rate = await get_floatrates_rate(from_curr, to_curr)
     if rate is None:
-        return None
+        return None  # Если не удалось получить курс, возвращаем None
     result = amount * rate
     today = datetime.now().strftime("%Y-%m-%d")
     return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
@@ -330,10 +326,10 @@ def simple_transliterate(s: str) -> str:
     return "".join(result)
 
 async def geocode_city(city_name: str) -> dict:
-    # Предполагается, что city_name уже прошёл через normalize_city_name
     data = await do_geocoding_request(city_name)
     if data:
         return data
+    # Попробуем перевод на английский
     try:
         project_id = "gen-lang-client-0588633435"
         location = "global"
@@ -351,6 +347,7 @@ async def geocode_city(city_name: str) -> dict:
             return data
     except Exception as e:
         logging.warning(f"Не удалось перевести город {city_name}: {e}")
+    # Третий вариант — простая транслитерация
     translit_city = simple_transliterate(city_name)
     data = await do_geocoding_request(translit_city)
     return data
@@ -393,6 +390,7 @@ async def get_weather_info(city: str, days: int = 1) -> str:
     lon = geo_data["lon"]
     timezone = geo_data["timezone"]
     if days == 1:
+        # Текущая погода
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
         try:
             async with aiohttp.ClientSession() as session:
@@ -411,6 +409,7 @@ async def get_weather_info(city: str, days: int = 1) -> str:
         description = weather_code_to_description(weather_code)
         return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, ветер {wind} км/ч."
     else:
+        # Прогноз на несколько дней
         weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                        f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
         try:
@@ -739,27 +738,29 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(4)
 
-        # Приводим к базовой форме (доллар, рубль, евро, сум, тенге и т.д.)
+        # Приводим к базовой форме
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
 
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
 
-        # Пытаемся получить курс
+        # Получаем курс
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if not exchange_text:
-            exchange_text = "Не удалось получить курс валюты."
-        if voice_response_requested:
-            await send_voice_message(cid, exchange_text)
-        else:
-            await message.answer(exchange_text, **thread_kwargs(message))
-        return
+        # Если курс найден, отвечаем и завершаем
+        if exchange_text is not None:
+            if voice_response_requested:
+                await send_voice_message(cid, exchange_text)
+            else:
+                await message.answer(exchange_text, **thread_kwargs(message))
+            return
+        # Если же не удалось получить курс, пропускаем (не выводим "Не удалось..."),
+        # а продолжаем логику дальше, чтобы не ломать другие сценарии
 
     # 3) Обработка погоды (например, "погода в Ташкенте на 3 дня")
-    # Добавили поддержку фраз вида "3 дня", "5 дней" и т.д.
+    # Обновлённое регулярное выражение с lazy-квантификатором
     weather_match = re.search(
-        r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+)(?:\s+на\s+((\d+)\s*(?:дня|дней)?|неделю))?",
+        r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?",
         lower_input,
         re.IGNORECASE
     )
