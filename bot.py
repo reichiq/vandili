@@ -737,14 +737,21 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
 
-        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if not exchange_text:
-            exchange_text = "Не удалось получить курс валюты."
-        if voice_response_requested:
-            await send_voice_message(cid, exchange_text)
-        else:
-            await message.answer(exchange_text, **thread_kwargs(message))
-        return
+        # --- ВАЖНАЯ ПРАВКА: проверяем, что обе валюты - из известных кодов --- #
+        known_codes = {"USD", "EUR", "RUB", "CNY", "JPY", "KRW"}
+        if from_curr not in known_codes or to_curr not in known_codes:
+            # Значит, это не реальная пара валют; пропускаем
+            exchange_match = None
+
+        if exchange_match:
+            exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
+            if not exchange_text:
+                exchange_text = "Не удалось получить курс валюты."
+            if voice_response_requested:
+                await send_voice_message(cid, exchange_text)
+            else:
+                await message.answer(exchange_text, **thread_kwargs(message))
+            return
 
     # 3) Обработка погоды (например, "погода в Ташкенте на 3 дня")
     if "погода" in lower_input:
