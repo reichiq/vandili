@@ -744,19 +744,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-    # ⬇️ Проверка на вопрос по файлу (новый блок!)
-    if uid in user_documents:
-        file_content = user_documents[uid]
-        prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
-                            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-                            f"Ответь чётко и кратко, основываясь на содержимом файла.")
-        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
-
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-        else:
-            await message.answer(gemini_text, **thread_kwargs(message))
-        return
 
     # 👇 Обязательно дальше обработка голоса должна быть уже после того, как объявили переменную:
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
@@ -812,6 +799,20 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
 
     await handle_msg(message, user_input, voice_response_requested)
+
+        # ⬇️ Проверка на вопрос по файлу (новый блок!)
+    if uid in user_documents:
+        file_content = user_documents[uid]
+        prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
+                            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+                            f"Ответь чётко и кратко, основываясь на содержимом файла.")
+        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
+
+        if voice_response_requested:
+            await send_voice_message(cid, gemini_text)
+        else:
+            await message.answer(gemini_text, **thread_kwargs(message))
+        return
 
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
