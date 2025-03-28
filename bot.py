@@ -555,7 +555,7 @@ async def cmd_help(message: Message):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши нам:", reply_markup=keyboard)
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
@@ -1109,9 +1109,9 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
                         await bot.send_chat_action(chat_id=cid, action="upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text or "...")
-                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...")
+                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
                         for c in rest:
-                            await bot.send_message(chat_id=cid, text=c)
+                            await bot.send_message(chat_id=cid, text=c, **thread(message))
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
