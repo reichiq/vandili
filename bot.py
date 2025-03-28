@@ -773,24 +773,15 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
 
     # ЛЕНИВЫЙ квантификатор для города
-    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?"
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+на\s+(?:(\d+)|неделю))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
-
+        
         city_norm = normalize_city_name(city_raw)
-        if days_part:
-            digit_match = re.search(r"(\d+)", days_part)
-            if digit_match:
-                days = int(digit_match.group(1))
-            elif "неделю" in days_part:
-                days = 7
-            else:
-                days = 1
-        else:
-            days = 1
-
+        days = 7 if "неделю" in lower_input else int(days_part) if days_part else 1
+        
         weather_info = await get_weather_info(city_norm, days)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
