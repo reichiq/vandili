@@ -498,17 +498,12 @@ async def send_voice_message(chat_id: int, text: str):
     os.remove(ogg_path)
 
 # ---------------------- Обработчики команд ---------------------- #
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
+from aiogram.filters import CommandObject
+
+@dp.message(Command(commands=["start"]))
+async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
-    text_lower = message.text.lower()
-
-    # Если пользователь запускает режим поддержки
-    if message.chat.type == ChatType.PRIVATE and "support" in text_lower:
-        support_mode_users.add(message.from_user.id)
-        await message.answer(SUPPORT_PROMPT_TEXT)
-        return
 
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
@@ -532,18 +527,18 @@ async def cmd_start(message: Message):
     else:
         await message.answer(greet)
 
-@dp.message(Command("stop"))
-async def cmd_stop(message: Message):
+@dp.message(Command(commands=["stop"]))
+async def cmd_stop(message: Message, command: CommandObject):
     _register_message_stats(message)
 
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫😴", message_thread_id=message.message_thread_id)
+        await message.answer("Бот отключён в группе 🚫", message_thread_id=message.message_thread_id)
     else:
-        await message.answer("Бот отключён 🚫😉")
-
+        await message.answer("Бот отключён 🚫")
+        
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     _register_message_stats(message)
