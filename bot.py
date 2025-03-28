@@ -503,10 +503,13 @@ async def cmd_start(message: Message):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
     text_lower = message.text.lower()
+
+    # Если пользователь запускает режим поддержки
     if message.chat.type == ChatType.PRIVATE and "support" in text_lower:
         support_mode_users.add(message.from_user.id)
         await message.answer(SUPPORT_PROMPT_TEXT)
         return
+
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
 •🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
@@ -514,28 +517,32 @@ async def cmd_start(message: Message):
 •❓Отвечаю на вопросы по содержимому файла.
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси "погода в Москве" или "погода в Ташкенте на 3 дня" 
-•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 💱
+•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
+•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д.
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
+
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id in disabled_chats:
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
         await message.answer(greet, message_thread_id=message.message_thread_id)
-        return
-    await message.answer(greet)
+    else:
+        await message.answer(greet)
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     _register_message_stats(message)
-    await message.answer("Бот отключён 🚫", message_thread_id=message.message_thread_id)
+
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
+        await message.answer("Бот отключён в группе 🚫😴", message_thread_id=message.message_thread_id)
+    else:
+        await message.answer("Бот отключён 🚫😉")
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
