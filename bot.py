@@ -238,21 +238,27 @@ def normalize_city_name(raw_city: str) -> str:
             norm_words.append(w_clean)
     return " ".join(norm_words)
 
-# ---------------------- Словарь базовых форм валют ---------------------- #
+# ---------------------- Словарь базовых форм валют (расширенный) ---------------------- #
 CURRENCY_SYNONYMS = {
-    "доллар": "USD",
+    # основные формы
+    "доллар": "USD", "доллары": "USD", "долларов": "USD",
     "евро": "EUR",
-    "рубль": "RUB",
-    "юань": "CNY",
-    "иена": "JPY",
-    "вон": "KRW",
+    "рубль": "RUB", "рубли": "RUB", "рублей": "RUB",
+    "юань": "CNY", "юани": "CNY",
+    "иена": "JPY", "иены": "JPY", "йена": "JPY",
+    "вон": "KRW", "воны": "KRW",
+    "сум": "UZS", "сума": "UZS", "сумы": "UZS", "сумов": "UZS",
+    "тенге": "KZT",
+    # символы
     "$": "USD",
     "€": "EUR",
+    "₽": "RUB",
     "¥": "JPY",
 }
 
 # ---------------------- Функция для получения курса через Floatrates ---------------------- #
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
+    # приведение к нижнему регистру для запроса
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
     url = f"https://www.floatrates.com/daily/{from_curr}.json"
@@ -266,8 +272,11 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     except Exception as e:
         logging.error(f"Ошибка при запросе к Floatrates: {e}")
         return None
+
+    # Проверяем, есть ли нужная целевая валюта в ответе
     if to_curr not in data:
         return None
+
     rate = data[to_curr].get("rate")
     if rate is None:
         return None
@@ -730,47 +739,51 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(4)
 
-        # Приводим к базовой форме (доллар, рубль, евро и т.д.)
+        # Приводим к базовой форме (доллар, рубль, евро, сум, тенге и т.д.)
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
 
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
 
-        # --- ВАЖНАЯ ПРАВКА: проверяем, что обе валюты - из известных кодов --- #
-        known_codes = {"USD", "EUR", "RUB", "CNY", "JPY", "KRW"}
-        if from_curr not in known_codes or to_curr not in known_codes:
-            # Значит, это не реальная пара валют; пропускаем
-            exchange_match = None
-
-        if exchange_match:
-            exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-            if not exchange_text:
-                exchange_text = "Не удалось получить курс валюты."
-            if voice_response_requested:
-                await send_voice_message(cid, exchange_text)
-            else:
-                await message.answer(exchange_text, **thread_kwargs(message))
-            return
+        # Пытаемся получить курс
+        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
+        if not exchange_text:
+            exchange_text = "Не удалось получить курс валюты."
+        if voice_response_requested:
+            await send_voice_message(cid, exchange_text)
+        else:
+            await message.answer(exchange_text, **thread_kwargs(message))
+        return
 
     # 3) Обработка погоды (например, "погода в Ташкенте на 3 дня")
-    if "погода" in lower_input:
-        weather_match = re.search(r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+)(?:\s+на\s+(\d+|неделю))?", lower_input, re.IGNORECASE)
-        if weather_match:
-            city_raw = weather_match.group(1).strip()
-            # Приводим "Ташкенте" к "ташкент"
-            city_norm = normalize_city_name(city_raw)
-            days_str = weather_match.group(2)
-            days = 7 if days_str == "неделю" else int(days_str) if days_str else 1
-
-            weather_info = await get_weather_info(city_norm, days)
-            if not weather_info:
-                weather_info = "Не удалось получить данные о погоде."
-            if voice_response_requested:
-                await send_voice_message(cid, weather_info)
+    # Добавили поддержку фраз вида "3 дня", "5 дней" и т.д.
+    weather_match = re.search(
+        r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+)(?:\s+на\s+((\d+)\s*(?:дня|дней)?|неделю))?",
+        lower_input,
+        re.IGNORECASE
+    )
+    if weather_match:
+        city_raw = weather_match.group(1).strip()
+        city_norm = normalize_city_name(city_raw)
+        days_str = weather_match.group(2)
+        days = 1
+        if days_str:
+            if "неделю" in days_str:
+                days = 7
             else:
-                await message.answer(weather_info, **thread_kwargs(message))
-            return
+                digit_match = re.search(r"(\d+)", days_str)
+                if digit_match:
+                    days = int(digit_match.group(1))
+
+        weather_info = await get_weather_info(city_norm, days)
+        if not weather_info:
+            weather_info = "Не удалось получить данные о погоде."
+        if voice_response_requested:
+            await send_voice_message(cid, weather_info)
+        else:
+            await message.answer(weather_info, **thread_kwargs(message))
+        return
 
     # 4) Всё остальное идёт в handle_msg (чат-логика, рефактор, показ изображений и т.д.)
     await handle_msg(message, user_input, voice_response_requested)
