@@ -677,7 +677,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     uid = message.from_user.id
     cid = message.chat.id
     
-    voice_response_requested = False  # Объявили тут заранее!
+    voice_response_requested = False  # исправление UnboundLocalError
 
     # Если админ отвечает на сообщение поддержки
     if message.chat.id == ADMIN_ID and message.reply_to_message:
@@ -744,8 +744,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-
-    # 👇 Обязательно дальше обработка голоса должна быть уже после того, как объявили переменную:
+    # Проверка запроса на ответ голосом
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     if voice_regex.search(user_input):
         voice_response_requested = True
@@ -755,6 +754,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
+    # Запрос курса валют
     exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё$€₽¥]+)\s*(в|to)\s*([a-zа-яё$€₽¥]+)", lower_input)
     if exchange_match:
         amount_str = exchange_match.group(1).replace(',', '.')
@@ -779,7 +779,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 await message.answer(exchange_text, **thread_kwargs(message))
             return
 
-    # ЛЕНИВЫЙ квантификатор для города
+    # Исправленная обработка запроса погоды
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+на\s+(?:(\d+)|неделю))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
@@ -798,15 +798,22 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info, **thread_kwargs(message))
         return
 
-    await handle_msg(message, user_input, voice_response_requested)
-
-        # ⬇️ Проверка на вопрос по файлу (новый блок!)
+    # Проверка на вопрос по файлу (исправленная позиция)
     if uid in user_documents:
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
                             f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
                             f"Ответь чётко и кратко, основываясь на содержимом файла.")
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
+
+        if voice_response_requested:
+            await send_voice_message(cid, gemini_text)
+        else:
+            await message.answer(gemini_text, **thread_kwargs(message))
+        return
+
+    # Все остальные запросы идут сюда:
+    await handle_msg(message, user_input, voice_response_requested)
 
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
