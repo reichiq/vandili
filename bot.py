@@ -422,8 +422,12 @@ async def get_weather_info(city: str, days: int = 1) -> str:
     lat = geo_data["lat"]
     lon = geo_data["lon"]
     timezone = geo_data["timezone"]
-    if days == 1:
+    if days > 1:
+        weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                   f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
+    else:
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(weather_url) as resp:
