@@ -497,13 +497,6 @@ async def send_voice_message(chat_id: int, text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(ogg_path, filename="voice.ogg"))
     os.remove(ogg_path)
 
-# ---------------------- Вспомогательная функция для thread_id ---------------------- #
-def thread_kwargs(message: Message) -> dict:
-    if (message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
-            and message.message_thread_id is not None):
-        return {"message_thread_id": message.message_thread_id}
-    return {}
-
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
 
@@ -511,17 +504,16 @@ from aiogram.filters import CommandObject
 async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
-    text_lower = (message.text or "").lower()
 
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
-•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
+•🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи \"ответь голосом\" или \"ответь войсом\".
 •📄Читаю PDF, DOCX, TXT и .py-файлы — просто отправь мне файл.
 •❓Отвечаю на вопросы по содержимому файла.
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
-•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
+•☀️Погода: спроси \"погода в Москве\" или \"погода в Варшаве на 3 дня\" 
+•💱Курс валют: узнай курс \"100 долларов в рублях\", \"100 USD в KRW\" и т.д. 
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
@@ -531,8 +523,8 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer("Бот включён ✅", **thread_kwargs(message))
-        await message.answer(greet, **thread_kwargs(message))
+        await message.answer("Бот включён ✅", message_thread_id=message.message_thread_id)
+        await message.answer(greet, message_thread_id=message.message_thread_id)
         return
 
     await message.answer(greet)
@@ -544,7 +536,7 @@ async def cmd_stop(message: Message, command: CommandObject):
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫", **thread_kwargs(message))
+        await message.answer("Бот отключён в группе 🚫", message_thread_id=message.message_thread_id)
     else:
         await message.answer("Бот отключён 🚫")
         
