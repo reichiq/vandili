@@ -530,8 +530,8 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer("Бот включён ✅", **thread(message))
-        await message.answer(greet, **thread(message))
+        await message.answer("Бот включён ✅")
+        await message.answer(greet)
         return
 
     await message.answer(greet)
@@ -543,9 +543,9 @@ async def cmd_stop(message: Message, command: CommandObject):
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫", **thread(message))
+        await message.answer("Бот отключён в группе 🚫")
     else:
-        await message.answer("Бот отключён 🚫", **thread(message))
+        await message.answer("Бот отключён 🚫")
         
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
