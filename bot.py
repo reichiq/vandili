@@ -798,21 +798,22 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
 
     # Исправленная обработка запроса погоды
-    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(на\s+(\d+)\s+дн(я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
-        week_flag = weather_match.group(5)
-        mode_flag = weather_match.group(6)
+        week_flag = weather_match.group(3)
+        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)  # отдельным поиском
         
         city_norm = normalize_city_name(city_raw)
+        
         if week_flag:
             days = 7
             mode = ""
         elif mode_flag:
             days = 2
-            mode = mode_flag
+            mode = mode_flag.group(1)
         else:
             days = int(days_part) if days_part else 1
             mode = ""
