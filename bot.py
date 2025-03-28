@@ -252,18 +252,31 @@ def normalize_currency_rus(word: str) -> str:
     return normal_form
 
 def normalize_city_name(raw_city: str) -> str:
+    """
+    Приводит "Москве" -> "москва", "Ташкенте" -> "ташкент" и т.д.
+    Если морфопарсер даёт слишком короткую форму или ту же самую строку, оставляем оригинал.
+    """
     words = raw_city.split()
     norm_words = []
     for w in words:
-        w_clean = w.strip(punctuation)
+        w_clean = w.strip(punctuation).lower()
         parsed = morph.parse(w_clean)
-        if parsed:
-            norm_form = parsed[0].normal_form
-            norm_words.append(norm_form)
-        else:
+        if not parsed:
+            # Если вообще не распарсилось
             norm_words.append(w_clean)
+            continue
+
+        best = parsed[0]
+        # Если нормальная форма совпадает с исходной
+        # или слишком короткая (например, 'm')
+        # тогда оставляем w_clean
+        if best.normal_form == w_clean or len(best.normal_form) < 2:
+            norm_words.append(w_clean)
+        else:
+            norm_words.append(best.normal_form)
     return " ".join(norm_words)
 
+# ---------------------- Словарь базовых форм валют (расширенный) ---------------------- #
 CURRENCY_SYNONYMS = {
     "доллар": "USD", "доллары": "USD", "долларов": "USD",
     "евро": "EUR",
@@ -664,7 +677,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     uid = message.from_user.id
     cid = message.chat.id
 
-    # Если админ отвечает на сообщение поддержки
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
@@ -675,7 +687,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
-    # Если пользователь только что нажал кнопку "Написать в поддержку"
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
@@ -708,12 +719,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
-    # Если бот отключён в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
 
-    # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
         save_stats()
@@ -730,7 +739,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
 
-    # 1) Проверяем, просил ли пользователь "ответь войсом" / "ответь голосом"
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     voice_response_requested = False
     if voice_regex.search(user_input):
@@ -740,7 +748,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # 2) Обработка курса валют
     exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё$€₽¥]+)\s*(в|to)\s*([a-zа-яё$€₽¥]+)", lower_input)
     if exchange_match:
         amount_str = exchange_match.group(1).replace(',', '.')
@@ -765,26 +772,34 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 await message.answer(exchange_text, **thread_kwargs(message))
             return
 
-    # 3) Обработка погоды — ЛЕНИВЫЙ квантификатор для города
-    weather_pattern = r"погода(?:\s+в)?\s+(.+?)(?:\s+на\s+(?:(\d+)\s*(?:дней|дня)?|(неделю)))?$"
+    # ЛЕНИВЫЙ квантификатор для города
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
-    if days_week == "неделю":
-        days = 7
-    elif days_number:
-        days = int(days_number)
-    else:
-        days = 1
+    if weather_match:
+        city_raw = weather_match.group(1).strip()
+        days_part = weather_match.group(2)
+
+        city_norm = normalize_city_name(city_raw)
+        if days_part:
+            digit_match = re.search(r"(\d+)", days_part)
+            if digit_match:
+                days = int(digit_match.group(1))
+            elif "неделю" in days_part:
+                days = 7
+            else:
+                days = 1
+        else:
+            days = 1
 
         weather_info = await get_weather_info(city_norm, days)
         if not weather_info:
-            weather_info = f"Не удалось получить данные о погоде для {city_norm.capitalize()}."
-            if voice_response_requested:
-                await send_voice_message(cid, weather_info)
-            else:
-                await message.answer(weather_info, **thread_kwargs(message))
-           return
+            weather_info = "Не удалось получить данные о погоде."
+        if voice_response_requested:
+            await send_voice_message(cid, weather_info)
+        else:
+            await message.answer(weather_info, **thread_kwargs(message))
+        return
 
-    # 4) Всё остальное идёт в handle_msg
     await handle_msg(message, user_input, voice_response_requested)
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -1037,18 +1052,18 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
                         tmpf.write(photo_bytes)
                         tmp_path = tmpf.name
                     try:
-                        await bot.send_chat_action(chat_id=cid, action="upload_photo", **thread_kwargs(message))
+                        await bot.send_chat_action(chat_id=cid, action="upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text or "...")
-                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread_kwargs(message))
+                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...")
                         for c in rest:
-                            await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
+                            await bot.send_message(chat_id=cid, text=c)
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
-            await bot.send_message(chat_id=cid, text=c, **thread_kwargs(message))
+            await message.answer(c)
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
@@ -1093,6 +1108,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
 
+# ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
