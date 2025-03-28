@@ -194,12 +194,6 @@ SUPPORT_PROMPT_TEXT = ("Отправьте любое сообщение (тек
 # Глобальное множество для хранения chat_id (текущая сессия)
 all_chat_ids = set()
 
-def thread_kwargs(message: Message) -> dict:
-    if (message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
-            and message.message_thread_id is not None):
-        return {"message_thread_id": message.message_thread_id}
-    return {}
-
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
     save_stats()
@@ -530,14 +524,14 @@ async def cmd_start(message: Message):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer(greet, **thread_kwargs(message))
+        await message.answer(greet, message_thread_id=message.message_thread_id)
         return
     await message.answer(greet)
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     _register_message_stats(message)
-    await message.answer("Бот отключён 🚫", **thread_kwargs(message))
+    await message.answer("Бот отключён 🚫", message_thread_id=message.message_thread_id)
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
@@ -645,7 +639,7 @@ async def handle_support_click(callback: CallbackQuery):
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
     _register_message_stats(message)
-    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", **thread_kwargs(message))
+    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", message_thread_id=message.message_thread_id)
     try:
         file = await bot.get_file(message.voice.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -794,7 +788,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             if voice_response_requested:
                 await send_voice_message(cid, exchange_text)
             else:
-                await message.answer(exchange_text, **thread_kwargs(message))
+                await message.answer(exchange_text, message_thread_id=message.message_thread_id)
             return
 
     # Исправленная обработка запроса погоды
@@ -824,7 +818,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         if voice_response_requested:
             await send_voice_message(cid, weather_info)
         else:
-            await message.answer(weather_info, **thread_kwargs(message))
+            await message.answer(weather_info, message_thread_id=message.message_thread_id)
         return
 
         # Проверка на вопрос по файлу (исправленная позиция, после return)
@@ -838,7 +832,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
-            await message.answer(gemini_text, **thread_kwargs(message))
+            await message.answer(gemini_text, message_thread_id=message.message_thread_id)
         return
 
     # Все остальные запросы идут сюда:
@@ -847,7 +841,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        await message.answer(gemini_text, **thread_kwargs(message))
+        await message.answer(gemini_text, message_thread_id=message.message_thread_id)
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -1061,7 +1055,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         if voice_response_requested:
             await send_voice_message(cid, answer)
         else:
-            await message.answer(answer, **thread_kwargs(message))
+            await message.answer(answer, message_thread_id=message.message_thread_id)
         return
 
     if any(ic in lower_inp for ic in INFO_COMMANDS):
@@ -1069,7 +1063,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         if voice_response_requested:
             await send_voice_message(cid, reply_text)
         else:
-            await message.answer(reply_text, **thread_kwargs(message))
+            await message.answer(reply_text, message_thread_id=message.message_thread_id)
         return
 
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
