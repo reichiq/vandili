@@ -76,19 +76,52 @@ morph = MorphAnalyzer()
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
-# ---------------------- Храним историю диалогов и файлы ---------------------- #
-chat_history = {}
-user_documents = {}
+# ---------------------- Загрузка и сохранение статистики ---------------------- #
+STATS_FILE = "stats.json"
 
-# ---------------------- Поддержка и статистика ---------------------- #
-stats = {
-    "messages_total": 0,
-    "unique_users": set(),
-    "files_received": 0,
-    "commands_used": {}
-}
+def load_stats() -> dict:
+    """
+    Загружает основные метрики (messages_total, files_received, commands_used) из stats.json.
+    """
+    if not os.path.exists(STATS_FILE):
+        return {
+            "messages_total": 0,
+            "files_received": 0,
+            "commands_used": {}
+        }
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # На случай, если чего-то нет в файле
+            data.setdefault("messages_total", 0)
+            data.setdefault("files_received", 0)
+            data.setdefault("commands_used", {})
+            return data
+    except Exception as e:
+        logging.warning(f"Не удалось загрузить stats.json: {e}")
+        return {
+            "messages_total": 0,
+            "files_received": 0,
+            "commands_used": {}
+        }
+
+def save_stats():
+    """
+    Сохраняет текущие метрики (messages_total, files_received, commands_used) в stats.json.
+    """
+    try:
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"Не удалось сохранить stats.json: {e}")
+
+# ---------------------- Глобальные структуры ---------------------- #
+stats = load_stats()  # подгружаем основные метрики
+
 support_mode_users = set()
 support_reply_map = {}  # {admin_msg_id: user_id}
+chat_history = {}
+user_documents = {}
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -170,6 +203,9 @@ def thread_kwargs(message: Message) -> dict:
 
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
+    # Сохраняем изменения в файл
+    save_stats()
+
     # Если личка, сохраняем ID пользователя
     if message.chat.type == ChatType.PRIVATE:
         if message.from_user.id not in unique_users:
@@ -180,10 +216,12 @@ def _register_message_stats(message: Message):
         if message.chat.id not in unique_groups:
             unique_groups.add(message.chat.id)
             save_unique_groups(unique_groups)
-    stats["unique_users"].add(message.from_user.id)
+
+    # Если это команда, учитываем её в статистике
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
+        save_stats()
 
 # ---------------------- Функция отправки ответа админа одним сообщением ---------------------- #
 async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
@@ -389,8 +427,8 @@ async def get_weather_info(city: str, days: int = 1) -> str:
     lat = geo_data["lat"]
     lon = geo_data["lon"]
     timezone = geo_data["timezone"]
+    # Если days=1 => текущая погода
     if days == 1:
-        # Текущая погода
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
         try:
             async with aiohttp.ClientSession() as session:
@@ -422,15 +460,22 @@ async def get_weather_info(city: str, days: int = 1) -> str:
         except Exception as e:
             logging.error(f"Ошибка запроса прогноза погоды: {e}")
             return None
+
         daily = weather_data.get("daily", {})
         dates = daily.get("time", [])
         weathercodes = daily.get("weathercode", [])
         temps_max = daily.get("temperature_2m_max", [])
         temps_min = daily.get("temperature_2m_min", [])
+
+        if not dates:
+            return "Не удалось получить данные о погоде."
+
         forecast_lines = [f"Прогноз погоды в {city.capitalize()}:"]
+        # Ограничиваемся нужным количеством дней
         for i in range(min(days, len(dates))):
             desc = weather_code_to_description(weathercodes[i])
             forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
+
         return "\n".join(forecast_lines)
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
@@ -511,7 +556,7 @@ async def cmd_adminstats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     total_msgs = stats["messages_total"]
-    unique_users_count = len(stats["unique_users"])
+    unique_users_count = len(unique_users)  # берём из файла
     files_received = stats["files_received"]
     cmd_usage = stats["commands_used"]
     if not cmd_usage:
@@ -703,6 +748,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
+        save_stats()
         file = await bot.get_file(message.document.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
@@ -757,25 +803,25 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         # Если же не удалось получить курс, пропускаем (не выводим "Не удалось..."),
         # а продолжаем логику дальше, чтобы не ломать другие сценарии
 
-    # 3) Обработка погоды (например, "погода в Ташкенте на 3 дня")
-    # Обновлённое регулярное выражение с lazy-квантификатором
-    weather_match = re.search(
-        r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?",
-        lower_input,
-        re.IGNORECASE
-    )
+    # 3) Обработка погоды
+    # Единое регулярное выражение: city = group(1), days=group(2), 'неделю' = group(3)
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+)(?:\s+на\s+(?:(\d+)\s*(?:дня|дней)?|(неделю)))?"
+    weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
+        days_digit = weather_match.group(2)
+        week_word = weather_match.group(3)
+
+        # Нормализуем город
         city_norm = normalize_city_name(city_raw)
-        days_str = weather_match.group(2)
-        days = 1
-        if days_str:
-            if "неделю" in days_str:
-                days = 7
-            else:
-                digit_match = re.search(r"(\d+)", days_str)
-                if digit_match:
-                    days = int(digit_match.group(1))
+
+        # Определяем кол-во дней
+        if days_digit:
+            days = int(days_digit)
+        elif week_word:  # == 'неделю'
+            days = 7
+        else:
+            days = 1
 
         weather_info = await get_weather_info(city_norm, days)
         if not weather_info:
