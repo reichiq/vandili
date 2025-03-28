@@ -92,7 +92,6 @@ def load_stats() -> dict:
     try:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # На случай, если чего-то нет в файле
             data.setdefault("messages_total", 0)
             data.setdefault("files_received", 0)
             data.setdefault("commands_used", {})
@@ -203,21 +202,17 @@ def thread_kwargs(message: Message) -> dict:
 
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
-    # Сохраняем изменения в файл
     save_stats()
 
-    # Если личка, сохраняем ID пользователя
     if message.chat.type == ChatType.PRIVATE:
         if message.from_user.id not in unique_users:
             unique_users.add(message.from_user.id)
             save_unique_users(unique_users)
-    # Если группа, сохраняем ID чата
     elif message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id not in unique_groups:
             unique_groups.add(message.chat.id)
             save_unique_groups(unique_groups)
 
-    # Если это команда, учитываем её в статистике
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
@@ -249,10 +244,6 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
 
 # ---------------------- Морфологическая нормализация для валют и городов ---------------------- #
 def normalize_currency_rus(word: str) -> str:
-    """
-    Приводит 'долларов', 'доллары', 'долларами' и т.п. к базовой форме 'доллар'.
-    Если не разобралось, возвращает исходное слово.
-    """
     word_clean = word.strip().lower()
     parsed = morph.parse(word_clean)
     if not parsed:
@@ -261,9 +252,6 @@ def normalize_currency_rus(word: str) -> str:
     return normal_form
 
 def normalize_city_name(raw_city: str) -> str:
-    """
-    Приводит 'Ташкенте', 'Москве' и т.д. к именительному падежу: 'ташкент', 'москва'.
-    """
     words = raw_city.split()
     norm_words = []
     for w in words:
@@ -276,9 +264,7 @@ def normalize_city_name(raw_city: str) -> str:
             norm_words.append(w_clean)
     return " ".join(norm_words)
 
-# ---------------------- Словарь базовых форм валют (расширенный) ---------------------- #
 CURRENCY_SYNONYMS = {
-    # основные формы
     "доллар": "USD", "доллары": "USD", "долларов": "USD",
     "евро": "EUR",
     "рубль": "RUB", "рубли": "RUB", "рублей": "RUB",
@@ -287,14 +273,12 @@ CURRENCY_SYNONYMS = {
     "вон": "KRW", "воны": "KRW",
     "сум": "UZS", "сума": "UZS", "сумы": "UZS", "сумов": "UZS",
     "тенге": "KZT",
-    # символы
     "$": "USD",
     "€": "EUR",
     "₽": "RUB",
     "¥": "JPY",
 }
 
-# ---------------------- Функция для получения курса через Floatrates ---------------------- #
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
@@ -319,7 +303,7 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
     rate = await get_floatrates_rate(from_curr, to_curr)
     if rate is None:
-        return None  # Если не удалось получить курс, возвращаем None
+        return None
     result = amount * rate
     today = datetime.now().strftime("%Y-%m-%d")
     return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
@@ -367,7 +351,6 @@ async def geocode_city(city_name: str) -> dict:
     data = await do_geocoding_request(city_name)
     if data:
         return data
-    # Попробуем перевод на английский
     try:
         project_id = "gen-lang-client-0588633435"
         location = "global"
@@ -385,7 +368,6 @@ async def geocode_city(city_name: str) -> dict:
             return data
     except Exception as e:
         logging.warning(f"Не удалось перевести город {city_name}: {e}")
-    # Третий вариант — простая транслитерация
     translit_city = simple_transliterate(city_name)
     data = await do_geocoding_request(translit_city)
     return data
@@ -427,7 +409,6 @@ async def get_weather_info(city: str, days: int = 1) -> str:
     lat = geo_data["lat"]
     lon = geo_data["lon"]
     timezone = geo_data["timezone"]
-    # Если days=1 => текущая погода
     if days == 1:
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
         try:
@@ -447,7 +428,6 @@ async def get_weather_info(city: str, days: int = 1) -> str:
         description = weather_code_to_description(weather_code)
         return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, ветер {wind} км/ч."
     else:
-        # Прогноз на несколько дней
         weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                        f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
         try:
@@ -471,16 +451,14 @@ async def get_weather_info(city: str, days: int = 1) -> str:
             return "Не удалось получить данные о погоде."
 
         forecast_lines = [f"Прогноз погоды в {city.capitalize()}:"]
-        # Ограничиваемся нужным количеством дней
         for i in range(min(days, len(dates))):
             desc = weather_code_to_description(weathercodes[i])
             forecast_lines.append(f"{dates[i]}: {desc}, от {temps_min[i]}°C до {temps_max[i]}°C")
-
         return "\n".join(forecast_lines)
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
 async def send_voice_message(chat_id: int, text: str):
-    clean_text = re.sub(r'<[^>]+>', '', text or "")  # убираем HTML-тэги, если есть
+    clean_text = re.sub(r'<[^>]+>', '', text or "")
     if not clean_text.strip():
         clean_text = "Нет данных для голосового ответа."
     tts = gTTS(clean_text, lang='ru')
@@ -556,7 +534,7 @@ async def cmd_adminstats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     total_msgs = stats["messages_total"]
-    unique_users_count = len(unique_users)  # берём из файла
+    unique_users_count = len(unique_users)
     files_received = stats["files_received"]
     cmd_usage = stats["commands_used"]
     if not cmd_usage:
@@ -580,7 +558,6 @@ async def cmd_adminstats(message: Message):
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     _register_message_stats(message)
-    # Команда доступна только админу
     if message.from_user.id != ADMIN_ID:
         return
     broadcast_prefix = "<b>Admin Message:</b>"
@@ -594,7 +571,6 @@ async def cmd_broadcast(message: Message):
         broadcast_text = text_parts[1]
         broadcast_msg = None
 
-    # Объединяем сохранённые уникальные группы и пользователей
     recipients = unique_users.union(unique_groups)
     for recipient in recipients:
         try:
@@ -675,22 +651,14 @@ async def handle_voice_message(message: Message):
         logging.error(f"Ошибка распознавания голосового сообщения: {e}")
     os.remove(wav_path)
     if recognized_text:
-        # Отправляем на дальнейшую обработку
         await handle_all_messages_impl(message, recognized_text)
 
 @dp.message()
 async def handle_all_messages(message: Message):
-    """
-    Точка входа для всех текстовых сообщений (кроме voice).
-    """
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
-    """
-    Вынесена логика в отдельную функцию, чтобы и текст, и распознанный voice
-    обрабатывались единообразно.
-    """
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
@@ -767,13 +735,12 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     voice_response_requested = False
     if voice_regex.search(user_input):
         voice_response_requested = True
-        # вырезаем фразу, чтобы не мешала парсингу "погода в Ташкенте" и т.п.
         user_input = voice_regex.sub("", user_input).strip()
     lower_input = user_input.lower()
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # 2) Обработка курса валют (например, "100 долларов в рублях")
+    # 2) Обработка курса валют
     exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё$€₽¥]+)\s*(в|to)\s*([a-zа-яё$€₽¥]+)", lower_input)
     if exchange_match:
         amount_str = exchange_match.group(1).replace(',', '.')
@@ -784,42 +751,37 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(4)
 
-        # Приводим к базовой форме
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
 
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
 
-        # Получаем курс
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        # Если курс найден, отвечаем и завершаем
         if exchange_text is not None:
             if voice_response_requested:
                 await send_voice_message(cid, exchange_text)
             else:
                 await message.answer(exchange_text, **thread_kwargs(message))
             return
-        # Если же не удалось получить курс, пропускаем (не выводим "Не удалось..."),
-        # а продолжаем логику дальше, чтобы не ломать другие сценарии
 
-    # 3) Обработка погоды
-    # Единое регулярное выражение: city = group(1), days=group(2), 'неделю' = group(3)
-    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+)(?:\s+на\s+(?:(\d+)\s*(?:дня|дней)?|(неделю)))?"
+    # 3) Обработка погоды — ЛЕНИВЫЙ квантификатор для города
+    weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)\s*(?:на\s+((\d+)\s*(?:дня|дней)?|неделю))?"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
-        days_digit = weather_match.group(2)
-        week_word = weather_match.group(3)
+        days_part = weather_match.group(2)
 
-        # Нормализуем город
         city_norm = normalize_city_name(city_raw)
-
-        # Определяем кол-во дней
-        if days_digit:
-            days = int(days_digit)
-        elif week_word:  # == 'неделю'
-            days = 7
+        if days_part:
+            # может быть либо число, либо слово "неделю"
+            digit_match = re.search(r"(\d+)", days_part)
+            if digit_match:
+                days = int(digit_match.group(1))
+            elif "неделю" in days_part:
+                days = 7
+            else:
+                days = 1
         else:
             days = 1
 
@@ -832,10 +794,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info, **thread_kwargs(message))
         return
 
-    # 4) Всё остальное идёт в handle_msg (чат-логика, рефактор, показ изображений и т.д.)
+    # 4) Всё остальное идёт в handle_msg
     await handle_msg(message, user_input, voice_response_requested)
-
-# ---------------------- Функции для генерации/отправки ответа GPT ---------------------- #
 
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
@@ -883,24 +843,18 @@ def format_gemini_response(text: str) -> str:
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
 
-    # Вырезаем многострочные блоки кода
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
-    # Экранируем HTML
     text = escape(text)
-    # Возвращаем код-блоки
     for placeholder, block_html in code_blocks.items():
         text = text.replace(escape(placeholder), block_html)
-    # Выделение жирным/курсивом
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
-    # Убираем упоминания "изображение"
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
 
-    # Меняем списки Markdown (* ) на маркеры
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -913,7 +867,6 @@ def format_gemini_response(text: str) -> str:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
 
-    # Лёгкая замена упоминаний
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
@@ -923,7 +876,6 @@ def format_gemini_response(text: str) -> str:
 
     return text
 
-# ---------------------- Логика "покажи" (изображения) ---------------------- #
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
 NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
 INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
@@ -1050,7 +1002,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
 
-    # Проверяем "кто ты?" и "как тебя зовут?"
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
@@ -1068,7 +1019,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
             await message.answer(reply_text, **thread_kwargs(message))
         return
 
-    # Если пользователь спросил: "покажи <что-то>"
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -1082,14 +1032,12 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
 
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
-    # Если нужно отвечать голосом
     if voice_response_requested:
         if not gemini_text:
             gemini_text = "Нет ответа для голосового сообщения."
         await send_voice_message(cid, gemini_text)
         return
 
-    # Иначе отвечаем текстом (если есть что)
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -1114,14 +1062,9 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
-    """
-    Хэндлер на случай, если в группе пишут "Вай покажи ...".
-    Фактически, просто переходим к handle_msg
-    """
     user_input = message.text.strip()
     await handle_msg(message, recognized_text=user_input, voice_response_requested=False)
 
-# ---------------------- Генерация ответа от Gemini ---------------------- #
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
     analysis_keywords = [
@@ -1135,7 +1078,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         full_prompt = smart_prompt + full_prompt
 
     if show_image and rus_word and not leftover:
-        # Если пользователь просто сказал "Покажи кошку" — генерируем короткую подпись
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
 
@@ -1161,7 +1103,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
 
-# ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
