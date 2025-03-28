@@ -799,18 +799,18 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
 
     # Проверка на вопрос по файлу (исправленная позиция)
-    if uid in user_documents:
-        file_content = user_documents[uid]
-        prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
+if uid in user_documents:
+    file_content = user_documents[uid]
+    prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
                         f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
                         f"Ответь чётко и кратко, основываясь на содержимом файла.")
-        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-        else:
-            await message.answer(gemini_text, **thread_kwargs(message))
-        return
+    gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
 
+    if voice_response_requested:
+        await send_voice_message(cid, gemini_text)
+    else:
+        await message.answer(gemini_text, **thread_kwargs(message))
+    return
 
     # Все остальные запросы идут сюда:
     await handle_msg(message, user_input, voice_response_requested)
