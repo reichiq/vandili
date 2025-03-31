@@ -75,7 +75,7 @@ morph = MorphAnalyzer()
 
 genai.configure(api_key=GEMINI_API_KEY)
 # Изменение модели на Gemini 2.5 Pro Experimental
-model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-experimental")
+model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
