@@ -856,52 +856,14 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
 
     # Все остальные запросы идут сюда:
-    # Определяем, нужно ли показывать изображение по запросу
-    show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
-    image_url = None
-    if show_image:
-        image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
+    gemini_text = await handle_msg(message, user_input, voice_response_requested)
+    if not gemini_text:
+        return
 
-    # Формируем финальный запрос
-    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else user_input
-
-    # Генерируем ответ Gemini
-    gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
-    
-    # Новое: Извлекаем URL изображения из ответа Gemini (если есть)
-    image_url_from_gemini = None
-    match = re.search(r"(https?://\S+\.(?:png|jpg|jpeg|gif))", gemini_text)
-    if match:
-        image_url_from_gemini = match.group(1)
-        gemini_text = gemini_text.replace(image_url_from_gemini, "").strip()
-    
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        # Приоритет отдается изображению, сгенерированному Gemini, если оно найдено,
-        # иначе используем Unsplash-изображение (если есть)
-        image_url_to_send = image_url_from_gemini if image_url_from_gemini else image_url
-        if image_url_to_send:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(image_url_to_send) as r:
-                    if r.status == 200:
-                        photo_bytes = await r.read()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
-                            tmpf.write(photo_bytes)
-                            tmp_path = tmpf.name
-                        try:
-                            await bot.send_chat_action(chat_id=cid, action="upload_photo")
-                            file = FSInputFile(tmp_path, filename="image.jpg")
-                            caption, rest = split_caption_and_text(gemini_text or "...")
-                            await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
-                            for c in rest:
-                                await bot.send_message(chat_id=cid, text=c, **thread(message))
-                        finally:
-                            os.remove(tmp_path)
-        elif gemini_text:
-            chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-            for c in chunks:
-                await message.answer(c)
+        await message.answer(gemini_text)
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -1127,51 +1089,50 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         return
 
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
+    if show_image and rus_word:
+        leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
+
     leftover = leftover.strip()
-    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else user_input
+    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
 
-    # Генерируем ответ Gemini
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
-    
-    # Новое: Извлекаем URL изображения из ответа Gemini (если есть)
-    image_url_from_gemini = None
-    match = re.search(r"(https?://\S+\.(?:png|jpg|jpeg|gif))", gemini_text)
-    if match:
-        image_url_from_gemini = match.group(1)
-        gemini_text = gemini_text.replace(image_url_from_gemini, "").strip()
-    
+
     if voice_response_requested:
+        if not gemini_text:
+            gemini_text = "Нет ответа для голосового сообщения."
         await send_voice_message(cid, gemini_text)
-    else:
-        # Приоритет отдается изображению, сгенерированному Gemini, если оно найдено,
-        # иначе используем Unsplash-изображение (если есть)
-        image_url_to_send = image_url_from_gemini if image_url_from_gemini else image_url
-        if image_url_to_send:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(image_url_to_send) as r:
-                    if r.status == 200:
-                        photo_bytes = await r.read()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
-                            tmpf.write(photo_bytes)
-                            tmp_path = tmpf.name
-                        try:
-                            await bot.send_chat_action(chat_id=cid, action="upload_photo")
-                            file = FSInputFile(tmp_path, filename="image.jpg")
-                            caption, rest = split_caption_and_text(gemini_text or "...")
-                            await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
-                            for c in rest:
-                                await bot.send_message(chat_id=cid, text=c, **thread(message))
-                        finally:
-                            os.remove(tmp_path)
-        elif gemini_text:
-            chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-            for c in chunks:
-                await message.answer(c)
-    return
+        return
+
+    if image_url:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(image_url) as r:
+                if r.status == 200:
+                    photo_bytes = await r.read()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
+                        tmpf.write(photo_bytes)
+                        tmp_path = tmpf.name
+                    try:
+                        await bot.send_chat_action(chat_id=cid, action="upload_photo")
+                        file = FSInputFile(tmp_path, filename="image.jpg")
+                        caption, rest = split_caption_and_text(gemini_text or "...")
+                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
+                        for c in rest:
+                            await bot.send_message(chat_id=cid, text=c, **thread(message))
+                    finally:
+                        os.remove(tmp_path)
+    elif gemini_text:
+        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+        for c in chunks:
+            await message.answer(c)
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    user_input = message.text.strip()
+    await handle_msg(message, recognized_text=user_input, voice_response_requested=False)
 
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     gemini_text = ""
@@ -1210,11 +1171,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
-
-@dp.message(F.text.lower().startswith("вай покажи"))
-async def group_show_request(message: Message):
-    user_input = message.text.strip()
-    await handle_msg(message, recognized_text=user_input, voice_response_requested=False)
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
