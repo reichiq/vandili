@@ -1164,7 +1164,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         else:
             raw_model_text = resp.text
             gemini_text = format_gemini_response(raw_model_text)
-            conversation.append({"role": "assistant", "parts": [raw_model_text]})
+            conversation.append({"role": "model", "parts": [raw_model_text]})
             if len(conversation) > 8:
                 conversation.pop(0)
     except Exception as e:
