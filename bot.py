@@ -74,7 +74,8 @@ dp = Dispatcher()
 morph = MorphAnalyzer()
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
+# Изменение модели на Gemini 2.5 Pro Experimental
+model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-experimental")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
@@ -698,7 +699,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
     cid = message.chat.id
-    
+
     voice_response_requested = False  # исправление UnboundLocalError
 
     # Если админ отвечает на сообщение поддержки
@@ -748,6 +749,15 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Если бот отключён в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
+            return
+        # Новое условие: бот отвечает в группах только при упоминании его имени или при reply на его сообщение
+        lower_text = user_input.lower()
+        mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
+        reply_to_bot = (message.reply_to_message and 
+                        message.reply_to_message.from_user and 
+                        message.reply_to_message.from_user.username and 
+                        message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower())
+        if not (mentioned or reply_to_bot):
             return
 
     # Если пользователь отправил документ
@@ -831,7 +841,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info)
         return
 
-        # Проверка на вопрос по файлу (исправленная позиция, после return)
+    # Проверка на вопрос по файлу (исправленная позиция, после return)
     if uid in user_documents:
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
