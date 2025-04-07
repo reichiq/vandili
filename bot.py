@@ -935,6 +935,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if uid in user_images_text:
         extracted = user_images_text[uid]
         is_latex_formula = bool(re.search(r'[=+\-\^\\]', extracted)) and extracted.startswith("\\")  # грубая эвристика
+        del user_images_text[uid]
 
         if is_latex_formula:
             question_lower = user_input.lower()
