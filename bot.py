@@ -62,6 +62,16 @@ def latex_to_image(latex_code: str) -> BytesIO:
     img_bytes.seek(0)
     return img_bytes
 
+def is_latex_valid(expr: str) -> bool:
+    try:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, f"${expr}$", fontsize=20, ha='center', va='center')
+        ax.axis('off')
+        plt.close(fig)
+        return True
+    except Exception:
+        return False
+
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 from pathlib import Path
 import tempfile
@@ -687,6 +697,16 @@ async def handle_voice_message(message: Message):
     if recognized_text:
         await handle_all_messages_impl(message, recognized_text)
 
+def is_latex_valid(expr: str) -> bool:
+    try:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, f"${expr}$", fontsize=20, ha='center', va='center')
+        ax.axis('off')
+        plt.close(fig)
+        return True
+    except Exception:
+        return False
+
 @dp.message(F.photo)
 async def handle_photo_message(message: Message):
     _register_message_stats(message)
@@ -699,23 +719,22 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        # 1. Обработка текста
-        image_for_tesseract = Image.open(BytesIO(photo_bytes)).convert("RGB")
-        text_raw = pytesseract.image_to_string(image_for_tesseract, lang="rus+eng").strip()
-        
-        # 2. Обработка формул
+        image_rgb = Image.open(BytesIO(photo_bytes)).convert("RGB")
+
+        # 1. Пробуем распознать текст
+        text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
+
+        # 2. Пробуем распознать формулу
         extracted_latex = ""
         if ocr:
             try:
-                image_for_latex = Image.open(BytesIO(photo_bytes)).convert("RGB")
-                extracted_latex = ocr(image_for_latex).strip()
+                extracted_latex = ocr(image_rgb).strip()
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
-        # Определяем тип контента
-        is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
-        
-        if is_formula:
+        # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
+        is_formula_like = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
+        if is_formula_like and is_latex_valid(extracted_latex):
             user_images_text[message.from_user.id] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
@@ -723,21 +742,21 @@ async def handle_photo_message(message: Message):
                 await bot.send_photo(
                     chat_id=message.chat.id,
                     photo=latex_file,
-                    caption="✅ Формула распознана. Задайте вопрос:"
+                    caption="🧾 Текст с картинки считан. Задайте ваш вопрос по картинке."
                 )
             except Exception as e:
-                await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
-        elif text_raw.strip():  # Убедитесь, что здесь есть двоеточие и правильный отступ
+                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e))}</code>")
+        elif text_raw:
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
             await message.answer(answer)
         else:
-            await message.answer("❌ Не удалось распознать контент")
+            await message.answer("❌ Не удалось распознать текст или формулу на изображении.")
 
     except Exception as e:
         logging.error(f"PHOTO PROCESSING ERROR: {traceback.format_exc()}")
-        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
+        await message.answer("⚠️ Ошибка обработки изображения. Проверь его формат.")
 
 @dp.message()
 async def handle_all_messages(message: Message):
