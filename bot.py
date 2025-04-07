@@ -708,14 +708,18 @@ async def handle_photo_message(message: Message):
         from pix2tex.cli import LatexOCR
         ocr = LatexOCR()
         extracted_text = ocr(image_for_ocr)
+        logging.info(f"[MATH OCR] Распознанная формула: {extracted_text}")
 
         if not extracted_text.strip():
             await message.answer("❌ Не удалось распознать формулу.")
             return
+        
+        latex_code = extracted_text.strip()
+        user_images_text[message.from_user.id] = latex_code
 
-        user_images_text[message.from_user.id] = extracted_text.strip()
-
-        await message.answer("✅ Формула распознана. Можешь задать вопрос по ней.")
+        formatted = f"<b>✅ Формула распознана:</b>\n<pre><code class='language-latex'>{escape(latex_code)}</code></pre>\nТеперь можешь задать вопрос или напиши <code>распиши решение:</code>"
+        await message.answer(formatted)
+        
     except Exception as e:
         logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
         await message.answer("⚠️ Произошла ошибка при обработке изображения.")
@@ -723,6 +727,25 @@ async def handle_photo_message(message: Message):
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
+    if user_input.lower().startswith("реши:"):
+    formula = user_input[5:].strip()
+    if not formula:
+        await message.answer("Пожалуйста, укажи формулу после 'реши:'.")
+        return
+
+    prompt = (
+        f"Реши следующий интеграл или математическое выражение, представленное в LaTeX:\n\n"
+        f"\\[{formula}\\]\n\n"
+        f"Покажи решение пошагово. Объясни каждый шаг, если он неочевиден. "
+        f"Не добавляй преобразований, если они не нужны. Не пиши модуль, если это не вытекает из условия."
+    )
+
+    gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+    if voice_response_requested:
+        await send_voice_message(cid, gemini_text)
+    else:
+        await message.answer(gemini_text)
+    return
     await handle_all_messages_impl(message, user_input)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
@@ -876,11 +899,20 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     # Проверка на вопрос по изображению
     if uid in user_images_text:
-        image_text = user_images_text[uid]
+    latex_formula = user_images_text[uid]
+    question_lower = user_input.lower()
+
+    if question_lower.startswith("распиши") or question_lower.startswith("поясни") or "по шагам" in question_lower:
         prompt_with_image = (
-            f"Пользователь прислал изображение, с которого был распознан следующий текст:\n\n{image_text}\n\n"
+            f"Распиши по шагам решение следующего математического выражения:\n\n"
+            f"{latex_formula}\n\n"
+            f"Форматируй математические выражения в виде LaTeX. Не добавляй модулей или преобразований, если их нет в оригинале."
+        )
+    else:
+        prompt_with_image = (
+            f"На изображении была распознана следующая математическая формула:\n\n{latex_formula}\n\n"
             f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-            f"Ответь кратко и точно, основываясь на содержимом изображения."
+            f"Ответь строго по теме, используй формулу как контекст. Показывай все выражения в LaTeX."
         )
 
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
