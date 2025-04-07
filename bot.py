@@ -697,15 +697,6 @@ async def handle_voice_message(message: Message):
     if recognized_text:
         await handle_all_messages_impl(message, recognized_text)
 
-def is_latex_valid(expr: str) -> bool:
-    try:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, f"${expr}$", fontsize=20, ha='center', va='center')
-        ax.axis('off')
-        plt.close(fig)
-        return True
-    except Exception:
-        return False
 
 @dp.message(F.photo)
 async def handle_photo_message(message: Message):
@@ -734,7 +725,11 @@ async def handle_photo_message(message: Message):
 
         # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
         is_formula_like = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
-        if is_formula_like and is_latex_valid(extracted_latex):
+        if is_formula_like:
+            if not is_latex_valid(extracted_latex):
+                user_images_text[message.from_user.id] = extracted_latex
+                await message.answer("⚠️ Формула распознана, но содержит ошибки и не может быть отображена. Можешь задать вопрос по содержимому.")
+                return
             user_images_text[message.from_user.id] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
