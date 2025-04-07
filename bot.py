@@ -696,14 +696,27 @@ async def handle_voice_message(message: Message):
 async def handle_photo_message(message: Message):
     _register_message_stats(message)
     try:
+        from PIL import Image
+        import pytesseract
+        import cv2
+        import numpy as np
+
+        # Получаем фото
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
+
+        # Обработка изображения для лучшего распознавания математики
         image = Image.open(BytesIO(photo_bytes))
-        extracted_text = pytesseract.image_to_string(image, lang='eng+rus')
+        gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        processed_image = Image.fromarray(cv2.bitwise_not(binary))
+
+        # Распознавание текста (только английский — лучше работает с формулами)
+        extracted_text = pytesseract.image_to_string(processed_image, lang='eng')
 
         if not extracted_text.strip():
             await message.answer("❌ Не удалось распознать текст на изображении.")
