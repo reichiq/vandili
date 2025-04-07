@@ -43,23 +43,23 @@ import easyocr
 easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпляр
 
 # ---------------------- CHANGED: Оптимизированный импорт для LatexOCR ---------------------- #
-from pix2tex.cli import LatexOCR, model, utils  # CHANGED
+from pix2tex.cli import LatexOCR
+from pix2tex.model import get_model
+from pix2tex.utils import get_args, get_tokenizer
 import torch  # CHANGED
 
 # ---------------------- CHANGED: Инициализация LatexOCR ---------------------- #
 def load_latex_ocr_model():
-    """Инициализация модели для распознавания математических формул"""
     try:
-        args = utils.get_args()
-        args.checkpoint = "checkpoints/weights.pth"  # Веса скачаются автоматически
-        args.no_cuda = True  # Форсируем CPU если нет GPU
+        args = get_args()
+        args.checkpoint = "checkpoints/weights.pth"
+        args.no_cuda = True
         args.config = "settings/config.yaml"
-        
-        # Инициализация модели
-        _model = model.get_model(args)
-        _tokenizer = utils.get_tokenizer(args)
+
+        _model = get_model(args)
+        _tokenizer = get_tokenizer(args)
         _model.eval()
-        
+
         return LatexOCR(args, _model, _tokenizer)
     except Exception as e:
         logging.error(f"LatexOCR init error: {e}")
