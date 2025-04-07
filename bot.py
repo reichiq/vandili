@@ -696,30 +696,38 @@ async def handle_voice_message(message: Message):
 async def handle_photo_message(message: Message):
     _register_message_stats(message)
     try:
-        from PIL import Image
-        import pytesseract
         import cv2
         import numpy as np
 
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
         image = Image.open(BytesIO(photo_bytes))
-        gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
 
-        # Попытка адаптивной бинаризации — лучше подходит для сканов
-        binary = cv2.adaptiveThreshold(gray, 255,
-                                       cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                       cv2.THRESH_BINARY, 11, 2)
+        # Улучшение изображения (контраст + четкость)
+        img_cv = np.array(image)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        processed_image = Image.fromarray(binary)
+        # Увеличение изображения для повышения точности OCR
+        scale_percent = 200  # Увеличение размера на 200%
+        width = int(thresh.shape[1] * scale_percent / 100)
+        height = int(thresh.shape[0] * scale_percent / 100)
+        resized = cv2.resize(thresh, (width, height), interpolation=cv2.INTER_CUBIC)
 
-        # Только английский (лучше для формул), можно заменить на 'eng+rus' при необходимости
-        extracted_text = pytesseract.image_to_string(processed_image, lang='eng')
+        processed_image = Image.fromarray(resized)
+
+        # Оптимизированный вызов Tesseract для формул
+        extracted_text = pytesseract.image_to_string(
+            processed_image, 
+            lang='eng', 
+            config='--psm 6'
+        )
 
         if not extracted_text.strip():
             await message.answer("❌ Не удалось распознать текст на изображении.")
