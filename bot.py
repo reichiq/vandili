@@ -44,29 +44,9 @@ easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпля
 
 # ---------------------- CHANGED: Оптимизированный импорт для LatexOCR ---------------------- #
 from pix2tex.cli import LatexOCR
-from pix2tex.model import get_model
-from pix2tex.utils import get_args, get_tokenizer
-import torch  # CHANGED
+ocr = LatexOCR()
+logging.info("LatexOCR status: %s", "Loaded" if ocr else "Failed")
 
-# ---------------------- CHANGED: Инициализация LatexOCR ---------------------- #
-def load_latex_ocr_model():
-    try:
-        args = get_args()
-        args.checkpoint = "checkpoints/weights.pth"
-        args.no_cuda = True
-        args.config = "settings/config.yaml"
-
-        _model = get_model(args)
-        _tokenizer = get_tokenizer(args)
-        _model.eval()
-
-        return LatexOCR(args, _model, _tokenizer)
-    except Exception as e:
-        logging.error(f"LatexOCR init error: {e}")
-        return None
-
-ocr = load_latex_ocr_model()  # CHANGED: Заменена старая инициализация
-logging.info("LatexOCR status: %s", "Loaded" if ocr else "Failed")  # CHANGED
 
 import matplotlib.pyplot as plt
 
