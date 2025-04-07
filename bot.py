@@ -728,7 +728,7 @@ async def handle_photo_message(message: Message):
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     if user_input.lower().startswith("реши:"):
-    formula = user_input[5:].strip()
+        formula = user_input[5:].strip()
     if not formula:
         await message.answer("Пожалуйста, укажи формулу после 'реши:'.")
         return
