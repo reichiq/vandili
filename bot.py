@@ -735,11 +735,16 @@ async def handle_photo_message(message: Message):
             try:
                 extracted_latex = ocr(image_rgb).strip()
                 extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
+                # 🔎 Отбрасываем слишком сложные/мусорные формулы
+    if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+        logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
+        extracted_latex = ""
+
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
         # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
-        is_formula_like = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
+        is_formula_like = bool(re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex))
         if is_formula_like:
             if not is_latex_valid(extracted_latex):
                 user_images_text[message.from_user.id] = extracted_latex
