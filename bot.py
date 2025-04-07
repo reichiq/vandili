@@ -91,7 +91,7 @@ import asyncio
 async def safe_send_photo(*args, retries=3, **kwargs):
     for attempt in range(retries):
         try:
-            return await bot.send_photo(*args, **kwargs)
+            return await safe_send_photo(*args, **kwargs)
         except Exception as e:
             logging.warning(f"[SEND_PHOTO] Попытка {attempt+1} не удалась: {e}")
             await asyncio.sleep(1)
@@ -286,7 +286,7 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
         await bot.send_message(chat_id=user_id, text=reply_text)
     elif admin_message.photo:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption)
+        await safe_send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption)
     elif admin_message.voice:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
         await bot.send_voice(chat_id=user_id, voice=admin_message.voice.file_id, caption=caption)
@@ -649,7 +649,7 @@ async def cmd_broadcast(message: Message):
                 elif broadcast_msg.photo:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_photo(chat_id=recipient, photo=broadcast_msg.photo[-1].file_id, caption=caption)
+                    await safe_send_photo(chat_id=recipient, photo=broadcast_msg.photo[-1].file_id, caption=caption)
                 elif broadcast_msg.video:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
@@ -853,7 +853,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
+                sent_msg = await safe_send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -995,7 +995,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 img_bytes = latex_to_image(extracted)
                 latex_file = FSInputFile(img_bytes, filename="formula.png")
                 caption, rest = split_caption_and_text(response or "...")
-                await bot.send_photo(chat_id=cid, photo=latex_file, caption=caption, **thread(message))
+                await safe_send_photo(chat_id=cid, photo=latex_file, caption=caption, **thread(message))
                 for c in rest:
                     await message.answer(c)
             except Exception as e:
@@ -1279,7 +1279,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
                         await bot.send_chat_action(chat_id=cid, action="upload_photo")
                         file = FSInputFile(tmp_path, filename="image.jpg")
                         caption, rest = split_caption_and_text(gemini_text or "...")
-                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
+                        await safe_send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
                         for c in rest:
                             await message.answer(c, **thread(message))
                     finally:
