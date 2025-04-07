@@ -34,6 +34,10 @@ from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
 
+# Добавляем EasyOCR
+import easyocr
+easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпляр
+
 # ---------------------- Функция предварительной обработки изображения для OCR ---------------------- #
 import cv2
 import numpy as np
@@ -722,9 +726,9 @@ async def handle_photo_message(message: Message):
 
         processed_img = preprocess_image_for_ocr(photo_bytes)
 
-        # OCR Tesseract с оптимизированными параметрами
-        custom_config = r'--oem 3 --psm 6'
-        extracted_text = pytesseract.image_to_string(processed_img, config=custom_config, lang='eng')
+        # Используем EasyOCR вместо pytesseract
+        extracted_results = easyocr_reader.readtext(processed_img, detail=0)
+        extracted_text = "\n".join(extracted_results)
 
         if not extracted_text.strip():
             await message.answer("❌ Не удалось распознать текст на изображении.")
