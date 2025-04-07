@@ -34,7 +34,7 @@ from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
 
-# Добавляем EasyOCR
+# Добавляем EasyOCR (если потребуется в дальнейшем, но для формул теперь используется pix2tex)
 import easyocr
 easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпляр
 
@@ -725,19 +725,21 @@ async def handle_photo_message(message: Message):
                 photo_bytes = await resp.read()
 
         processed_img = preprocess_image_for_ocr(photo_bytes)
+        # Преобразуем numpy-массив обратно в PIL.Image
+        image_for_ocr = Image.fromarray(processed_img)
 
-        # Используем LaTeX-OCR вместо EasyOCR
-        import latexocr
-        latexocr_reader = latexocr.Reader()  # Создаем экземпляр для LaTeX-OCR
-        extracted_text = latexocr_reader.readtext(processed_img)
+        # Используем pix2tex для OCR формул
+        from pix2tex.cli import LatexOCR
+        ocr = LatexOCR()
+        extracted_text = ocr(image_for_ocr)
 
         if not extracted_text.strip():
-            await message.answer("❌ Не удалось распознать текст на изображении.")
+            await message.answer("❌ Не удалось распознать формулу.")
             return
 
         user_images_text[message.from_user.id] = extracted_text.strip()
 
-        await message.answer("✅ Изображение получено и текст распознан. Можешь задать вопрос по нему.")
+        await message.answer("✅ Формула распознана. Можешь задать вопрос по ней.")
     except Exception as e:
         logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
         await message.answer("⚠️ Произошла ошибка при обработке изображения.")
@@ -1183,7 +1185,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
                         caption, rest = split_caption_and_text(gemini_text or "...")
                         await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
                         for c in rest:
-                            await bot.send_message(chat_id=cid, text=c, **thread(message))
+                            await message.answer(c, **thread(message))
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
