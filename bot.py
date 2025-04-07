@@ -34,6 +34,28 @@ from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
 
+# ---------------------- Функция предварительной обработки изображения для OCR ---------------------- #
+import cv2
+import numpy as np
+
+def preprocess_image_for_ocr(photo_bytes):
+    image = Image.open(BytesIO(photo_bytes)).convert("RGB")
+    img_array = np.array(image)
+    # Конвертируем в оттенки серого
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    # Применяем медианный фильтр для уменьшения шума
+    gray = cv2.medianBlur(gray, 3)
+    # Адаптивная бинаризация для выделения текста
+    binary = cv2.adaptiveThreshold(gray, 255,
+                                   cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY, 15, 8)
+    # Инвертируем цвета (чёрный текст на белом фоне)
+    binary = cv2.bitwise_not(binary)
+    # Увеличиваем толщину текста (опционально)
+    kernel = np.ones((1, 1), np.uint8)
+    processed_img = cv2.dilate(binary, kernel, iterations=1)
+    return processed_img
+
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
     if filename.endswith(".txt") or filename.endswith(".py"):
@@ -260,14 +282,9 @@ def normalize_city_name(raw_city: str) -> str:
         w_clean = w.strip(punctuation).lower()
         parsed = morph.parse(w_clean)
         if not parsed:
-            # Если вообще не распарсилось
             norm_words.append(w_clean)
             continue
-
         best = parsed[0]
-        # Если нормальная форма совпадает с исходной
-        # или слишком короткая (например, 'm')
-        # тогда оставляем w_clean
         if best.normal_form == w_clean or len(best.normal_form) < 2:
             norm_words.append(w_clean)
         else:
@@ -502,7 +519,6 @@ async def send_voice_message(chat_id: int, text: str):
     os.remove(ogg_path)
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
-
 def thread(message: Message) -> dict:
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
         return {"message_thread_id": message.message_thread_id}
@@ -694,27 +710,32 @@ async def handle_voice_message(message: Message):
 
 @dp.message(F.photo)
 async def handle_photo_message(message: Message):
-    photo = message.photo[-1]
-    file = await bot.get_file(photo.file_id)
-    url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            photo_bytes = await resp.read()
+    _register_message_stats(message)
+    try:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                photo_bytes = await resp.read()
 
-    processed_img = preprocess_image_for_ocr(photo_bytes)
+        processed_img = preprocess_image_for_ocr(photo_bytes)
 
-    # OCR Tesseract
-    custom_config = r'--oem 3 --psm 6'
-    extracted_text = pytesseract.image_to_string(processed_img, config=custom_config, lang='eng')
+        # OCR Tesseract с оптимизированными параметрами
+        custom_config = r'--oem 3 --psm 6'
+        extracted_text = pytesseract.image_to_string(processed_img, config=custom_config, lang='eng')
 
-    if not extracted_text.strip():
-        await message.answer("❌ Не удалось распознать текст на изображении.")
-        return
+        if not extracted_text.strip():
+            await message.answer("❌ Не удалось распознать текст на изображении.")
+            return
 
-    user_images_text[message.from_user.id] = extracted_text.strip()
+        user_images_text[message.from_user.id] = extracted_text.strip()
 
-    await message.answer(f"✅ Изображение получено и текст распознан:\n\n{extracted_text}\n\nМожешь задать вопрос по нему.")
+        await message.answer(f"✅ Изображение получено и текст распознан:\n\n{extracted_text}\n\nМожешь задать вопрос по нему.")
+    except Exception as e:
+        logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
+        await message.answer("⚠️ Произошла ошибка при обработке изображения.")
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -777,7 +798,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
-        # Новое условие: бот отвечает в группах только при упоминании его имени или при reply на его сообщение
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
         reply_to_bot = (message.reply_to_message and 
@@ -845,7 +865,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
         week_flag = weather_match.group(3)
-        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)  # отдельным поиском
+        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)
         
         city_norm = normalize_city_name(city_raw)
         
@@ -868,10 +888,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info)
         return
 
-    # Проверка на вопрос по файлу (исправленная позиция, после return)
     if uid in user_documents:
             return
-
 
     # Проверка на вопрос по изображению
     if uid in user_images_text:
