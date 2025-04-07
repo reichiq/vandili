@@ -68,32 +68,6 @@ def load_latex_ocr_model():
 ocr = load_latex_ocr_model()  # CHANGED: Заменена старая инициализация
 logging.info("LatexOCR status: %s", "Loaded" if ocr else "Failed")  # CHANGED
 
-# ВАЖНО: Импортируем и инициализируем Pix2Tex один раз
-from pix2tex.cli import LatexOCR
-
-try:
-    # Если у вас нет GPU или вы хотите гарантированно использовать CPU:
-    ocr = LatexOCR()
-    logging.info("pix2tex инициализирован успешно (CPU).")
-except Exception as e:
-    logging.error(f"Ошибка инициализации pix2tex: {e}")
-    ocr = None  # Чтобы не упасть совсем, если что-то пошло не так.
-
-# ---------------------- Функция предварительной обработки изображения для OCR ---------------------- #
-def preprocess_image_for_ocr(photo_bytes):
-    image = Image.open(BytesIO(photo_bytes)).convert("RGB")
-    img_array = np.array(image)
-    import cv2
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    gray = cv2.medianBlur(gray, 3)
-    binary = cv2.adaptiveThreshold(gray, 255,
-                                   cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY, 15, 8)
-    binary = cv2.bitwise_not(binary)
-    kernel = np.ones((1, 1), np.uint8)
-    processed_img = cv2.dilate(binary, kernel, iterations=1)
-    return processed_img
-
 import matplotlib.pyplot as plt
 
 def latex_to_image(latex_code: str) -> BytesIO:
@@ -745,29 +719,25 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        # CHANGED: Раздельная обработка текста и формул
         # 1. Обработка обычного текста
         image_for_tesseract = Image.open(BytesIO(photo_bytes)).convert("RGB")
         text_raw = pytesseract.image_to_string(image_for_tesseract, lang="rus+eng").strip()
         
         # 2. Обработка формул
         extracted_latex = ""
-        if ocr is not None:
+        if ocr:
             try:
-                # CHANGED: Используем оригинальное изображение без обработки
                 image_for_latex = Image.open(BytesIO(photo_bytes)).convert("RGB")
-                with torch.no_grad():  # Отключаем вычисление градиентов
-                    extracted_latex = ocr(image_for_latex).strip()
+                extracted_latex = ocr(image_for_latex).strip()
             except Exception as e:
-                logging.error(f"LatexOCR processing error: {traceback.format_exc()}")
+                logging.error(f"LatexOCR error: {traceback.format_exc()}")
         else:
-            logging.warning("LatexOCR model not initialized")
+            logging.warning("LatexOCR не инициализирован")
 
         # Определение типа контента
         is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
         
         if is_formula:
-            # CHANGED: Улучшенная обработка LaTeX
             user_images_text[message.from_user.id] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
@@ -778,7 +748,20 @@ async def handle_photo_message(message: Message):
                     caption="✅ Формула распознана. Задайте вопрос:"
                 )
             except Exception as e:
-                await message.answer(f"⚠️ Ошибка визуализации формулы:\n{escape(str(e))}")
+                await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
+        
+        elif text_raw:
+            user_images_text[message.from_user.id] = text_raw
+            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
+            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
+            await message.answer(answer)
+        
+        else:
+            await message.answer("❌ Не удалось распознать контент")
+
+    except Exception as e:
+        logging.error(f"PHOTO ERROR: {traceback.format_exc()}")
+        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
         
         elif text_raw:
             user_images_text[message.from_user.id] = text_raw
