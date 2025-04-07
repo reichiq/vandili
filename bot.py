@@ -917,12 +917,11 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if uid in user_documents:
         return
         
-# Проверка на вопрос по изображению
         # Проверка на вопрос по изображению
-    if uid in user_images_text:
+        if uid in user_images_text:
         latex_formula = user_images_text[uid]
         question_lower = user_input.lower()
-
+        
         if question_lower.startswith("распиши") or question_lower.startswith("поясни") or "по шагам" in question_lower:
             prompt_with_image = (
                 f"Распиши по шагам решение следующего математического выражения:\n\n"
@@ -935,11 +934,23 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
                 f"Ответь строго по теме, используй формулу как контекст. Показывай все выражения в LaTeX."
             )
-
+        
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
+        
+        # Попробуем визуализировать формулу в виде картинки и отправить её
+        try:
+            img_bytes = latex_to_image(latex_formula)
+            img_file = FSInputFile(BytesIO(img_bytes), filename="formula.png")
+            caption, rest = split_caption_and_text(gemini_text)
+            await bot.send_photo(chat_id=cid, photo=img_file, caption=caption if caption else "...", **thread(message))
+            for c in rest:
+                await message.answer(c)
+        except Exception as e:
+            logging.error(f"[BOT] Ошибка при отрисовке формулы: {e}")
+            await message.answer(gemini_text)
 
-        if not gemini_text:
-            return
+        del user_images_text[uid]
+        return
 
         # Отправляем картинку с формулой
         latex_img = latex_to_image(latex_formula)
