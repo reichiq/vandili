@@ -66,10 +66,14 @@ def latex_to_image(latex_code: str) -> BytesIO:
     except Exception as e:
         logging.error(f"[LaTeX Render] Ошибка визуализации формулы: {e}")
         raise
+        
 
 def is_latex_valid(expr: str) -> bool:
-    # Фильтруем явные ошибки
-    if "\\out" in expr or "prime..{" in expr:
+    if not expr:
+        return False
+    if expr.count('{') != expr.count('}'):
+        return False
+    if "\\frac{}" in expr or "\\frac{}{}" in expr or re.search(r"\\frac\s*\{?\}", expr):
         return False
     try:
         latex_code = expr.strip().rstrip('.')
@@ -730,6 +734,7 @@ async def handle_photo_message(message: Message):
         if ocr:
             try:
                 extracted_latex = ocr(image_rgb).strip()
+                extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
