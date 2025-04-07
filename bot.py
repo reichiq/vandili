@@ -5,6 +5,8 @@ import re
 import random
 import aiohttp
 import requests
+import pytesseract
+from PIL import Image
 from io import BytesIO
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
@@ -122,6 +124,7 @@ support_mode_users = set()
 support_reply_map = {}  # {admin_msg_id: user_id}
 chat_history = {}
 user_documents = {}
+user_images_text = {}
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -689,6 +692,31 @@ async def handle_voice_message(message: Message):
     if recognized_text:
         await handle_all_messages_impl(message, recognized_text)
 
+@dp.message(F.photo)
+async def handle_photo_message(message: Message):
+    _register_message_stats(message)
+    try:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                photo_bytes = await resp.read()
+        image = Image.open(BytesIO(photo_bytes))
+        extracted_text = pytesseract.image_to_string(image, lang='eng+rus')
+
+        if not extracted_text.strip():
+            await message.answer("❌ Не удалось распознать текст на изображении.")
+            return
+
+        uid = message.from_user.id
+        user_images_text[uid] = extracted_text.strip()
+
+        await message.answer("✅ Изображение получено и текст распознан! Можешь задать вопрос по нему.")
+    except Exception as e:
+        logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
+        await message.answer("⚠️ Произошла ошибка при обработке изображения.")
+
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
@@ -843,6 +871,24 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     # Проверка на вопрос по файлу (исправленная позиция, после return)
     if uid in user_documents:
+            return
+
+# Проверка на вопрос по изображению
+if uid in user_images_text:
+    image_text = user_images_text[uid]
+    prompt_with_image = (f"Пользователь прислал изображение, с которого был распознан следующий текст:\n\n{image_text}\n\n"
+                         f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+                         f"Ответь кратко и точно, основываясь на содержимом изображения.")
+    gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
+
+        if voice_response_requested:
+        await send_voice_message(cid, gemini_text)
+    else:
+        await message.answer(gemini_text)
+
+    del user_images_text[uid]  # 👈 если хочешь очищать текст после ответа
+    return
+        
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
                             f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
