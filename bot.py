@@ -42,9 +42,31 @@ from datetime import datetime
 import easyocr
 easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпляр
 
-# ---------------------- Добавили инициализацию Pix2Tex (LatexOCR) здесь ---------------------- #
-import cv2
-import numpy as np
+# ---------------------- CHANGED: Оптимизированный импорт для LatexOCR ---------------------- #
+from pix2tex.cli import LatexOCR, model, utils  # CHANGED
+import torch  # CHANGED
+
+# ---------------------- CHANGED: Инициализация LatexOCR ---------------------- #
+def load_latex_ocr_model():
+    """Инициализация модели для распознавания математических формул"""
+    try:
+        args = utils.get_args()
+        args.checkpoint = "checkpoints/weights.pth"  # Веса скачаются автоматически
+        args.no_cuda = True  # Форсируем CPU если нет GPU
+        args.config = "settings/config.yaml"
+        
+        # Инициализация модели
+        _model = model.get_model(args)
+        _tokenizer = utils.get_tokenizer(args)
+        _model.eval()
+        
+        return LatexOCR(args, _model, _tokenizer)
+    except Exception as e:
+        logging.error(f"LatexOCR init error: {e}")
+        return None
+
+ocr = load_latex_ocr_model()  # CHANGED: Заменена старая инициализация
+logging.info("LatexOCR status: %s", "Loaded" if ocr else "Failed")  # CHANGED
 
 # ВАЖНО: Импортируем и инициализируем Pix2Tex один раз
 from pix2tex.cli import LatexOCR
