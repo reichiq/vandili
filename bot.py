@@ -1277,19 +1277,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-        # Отправляем картинку с формулой
-        latex_img = latex_to_image(latex_formula)
-        latex_file = FSInputFile(latex_img, filename="formula.png")
-        caption, rest = split_caption_and_text(gemini_text or "...")
-
-        await bot.send_photo(chat_id=cid, photo=latex_file, caption=caption if caption else "...", **thread(message))
-
-        for c in rest:
-            await message.answer(c, **thread(message))
-
-        del user_images_text[uid]
-        return
     
     # Все остальные запросы идут сюда:
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
