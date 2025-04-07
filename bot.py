@@ -405,35 +405,21 @@ async def geocode_city(city_name: str) -> dict:
     data = await do_geocoding_request(translit_city)
     return data
 
-def weather_code_to_description(code: int) -> str:
-    if code == 0:
-        return "Ясно ☀️"
-    elif code in [1, 2, 3]:
-        return "Облачно ☁️"
-    elif code in [45, 48]:
-        return "Туман 🌫️"
-    elif code in [51, 53, 55]:
-        return "Небольшой дождь 🌦️"
-    elif code in [56, 57]:
-        return "Холодный дождь ❄️"
-    elif code in [61, 63, 65]:
-        return "Дождь 🌧️"
-    elif code in [66, 67]:
-        return "Ледяной дождь 🌨️"
-    elif code in [71, 73, 75]:
-        return "Снег 🌨️"
-    elif code == 77:
-        return "Снежные зерна ❄️"
-    elif code in [80, 81, 82]:
-        return "Ливень 🌦️"
-    elif code in [85, 86]:
-        return "Снежные ливни ❄️"
-    elif code == 95:
-        return "Гроза ⛈️"
-    elif code in [96, 99]:
-        return "Сильная гроза ⛈️"
-    else:
-        return "Неизвестная погода"
+def emoji_for_condition(text: str) -> str:
+    text = text.lower()
+    if "ясно" in text:
+        return "☀️"
+    elif "облачно" in text or "пасмурно" in text:
+        return "☁️"
+    elif "туман" in text:
+        return "🌫️"
+    elif "гроза" in text:
+        return "⛈️"
+    elif "дождь" in text:
+        return "🌧️"
+    elif "снег" in text:
+        return "🌨️"
+    return ""
 
 async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     if not WEATHERAPI_KEY:
@@ -473,7 +459,9 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
         text = day["day"]["condition"]["text"]
         tmin = day["day"]["mintemp_c"]
         tmax = day["day"]["maxtemp_c"]
-        return f"<b>Погода в {location_name} на {mode}:</b>\n{date}: {text}, от {tmin}°C до {tmax}°C"
+        emoji = emoji_for_condition(text)
+        return f"<b>Погода в {location_name} на {mode}:</b>\n{date}: {text} {emoji}, от {tmin}°C до {tmax}°C"
+
 
     # Прогноз на несколько дней
     if days > 1:
@@ -481,16 +469,18 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
         for day in forecast[:days]:
             date = day["date"]
             text = day["day"]["condition"]["text"]
+            emoji = emoji_for_condition(text)
             tmin = day["day"]["mintemp_c"]
             tmax = day["day"]["maxtemp_c"]
-            lines.append(f"• {date} — {text}, {tmin}..{tmax}°C")
+            lines.append(f"• {date} — {text} {emoji}, {tmin}..{tmax}°C")
         return "\n".join(lines)
 
     # Текущая погода
     condition = current.get("condition", {}).get("text", "")
+    emoji = emoji_for_condition(condition)
     temp = current.get("temp_c")
     wind = current.get("wind_kph")
-    return f"Погода в {location_name} сейчас: {condition}, температура {temp}°C, ветер {wind} км/ч."
+    return f"Погода в {location_name} сейчас: {condition} {emoji}, температура {temp}°C, ветер {wind} км/ч."
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
 async def send_voice_message(chat_id: int, text: str):
