@@ -63,13 +63,17 @@ def latex_to_image(latex_code: str) -> BytesIO:
     return img_bytes
 
 def is_latex_valid(expr: str) -> bool:
+    # Фильтруем явные ошибки
+    if "\\out" in expr or "prime..{" in expr:
+        return False
     try:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, f"${expr}$", fontsize=20, ha='center', va='center')
         ax.axis('off')
         plt.close(fig)
         return True
-    except Exception:
+    except Exception as e:
+        logging.warning(f"[Latex Validate] Ошибка при отрисовке: {e}")
         return False
 
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
