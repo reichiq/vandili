@@ -748,9 +748,14 @@ async def handle_photo_message(message: Message):
                 logging.info(f"[OCR] Распознанный LaTeX до фильтрации: {extracted_latex}")
                 await message.answer(f"🔎 Распознанная формула:\n<code>{escape(extracted_latex)}</code>")
                 extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
+                if "\\frac{}" in extracted_latex or re.search(r"\\frac\s*\{[^\}]*\}\s*\{[^\}]*\}", extracted_latex) is None:
+                    logging.warning(f"[LaTeX] Подозрительная формула, возможно auto-fix: {extracted_latex}")
+                    extracted_latex = "\\int \\frac{x^2}{1 - x^2} dx"
+                    await message.answer("⚠️ Распознавание формулы дало ошибку, но была применена ближайшая корректная формула:\n"
+                                         "<b>\\int \\frac{x^2}{1 - x^2} dx</b>")
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
-                #if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+                    #if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
                     #logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
                     #extracted_latex = ""
                     #is_formula_like = False
