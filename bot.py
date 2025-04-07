@@ -719,7 +719,7 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        # 1. Обработка обычного текста
+        # 1. Обработка текста
         image_for_tesseract = Image.open(BytesIO(photo_bytes)).convert("RGB")
         text_raw = pytesseract.image_to_string(image_for_tesseract, lang="rus+eng").strip()
         
@@ -732,9 +732,10 @@ async def handle_photo_message(message: Message):
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
-        # Определение типа контента
-        is_formula = extracted_latex and re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex)
+        # Определяем тип контента
+        is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
         
+        # Обрабатываем результаты
         if is_formula:
             user_images_text[message.from_user.id] = extracted_latex
             try:
@@ -747,7 +748,7 @@ async def handle_photo_message(message: Message):
                 )
             except Exception as e:
                 await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
-        elif text_raw.strip():
+        elif text_raw.strip():  # Исправленный блок без дублирования
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
