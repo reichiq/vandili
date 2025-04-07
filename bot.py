@@ -1,6 +1,7 @@
 # ---------------------- Импорты ---------------------- #
 import logging
 import os
+import traceback
 import re
 import random
 import aiohttp
@@ -749,7 +750,7 @@ async def handle_photo_message(message: Message):
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
             await message.answer(answer)
 
-    import traceback
+    
     except Exception as e:
         logging.error("[PHOTO OCR] Полная ошибка:\n" + traceback.format_exc())
         await message.answer("⚠️ Произошла ошибка при обработке изображения.")
