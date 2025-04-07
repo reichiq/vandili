@@ -898,32 +898,31 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
 
     # Проверка на вопрос по изображению
-    if uid in user_images_text:
-    latex_formula = user_images_text[uid]
-    question_lower = user_input.lower()
-
-    if question_lower.startswith("распиши") or question_lower.startswith("поясни") or "по шагам" in question_lower:
-        prompt_with_image = (
-            f"Распиши по шагам решение следующего математического выражения:\n\n"
-            f"{latex_formula}\n\n"
-            f"Форматируй математические выражения в виде LaTeX. Не добавляй модулей или преобразований, если их нет в оригинале."
-        )
-    else:
-        prompt_with_image = (
-            f"На изображении была распознана следующая математическая формула:\n\n{latex_formula}\n\n"
-            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-            f"Ответь строго по теме, используй формулу как контекст. Показывай все выражения в LaTeX."
-        )
-
-        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
-
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-        else:
-            await message.answer(gemini_text)
-
-        del user_images_text[uid]
-        return
+        if uid in user_images_text:
+            latex_formula = user_images_text[uid]
+            question_lower = user_input.lower()
+            
+            if question_lower.startswith("распиши") or question_lower.startswith("поясни") or "по шагам" in question_lower:
+                prompt_with_image = (
+                    f"Распиши по шагам решение следующего математического выражения:\n\n"
+                    f"{latex_formula}\n\n"
+                    f"Форматируй математические выражения в виде LaTeX. Не добавляй модулей или преобразований, если их нет в оригинале."
+                )
+            else:
+                prompt_with_image = (
+                    f"На изображении была распознана следующая математическая формула:\n\n{latex_formula}\n\n"
+                    f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+                    f"Ответь строго по теме, используй формулу как контекст. Показывай все выражения в LaTeX."
+                )
+                
+            gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
+            if voice_response_requested:
+                await send_voice_message(cid, gemini_text)
+            else:
+                await message.answer(gemini_text)
+                
+            del user_images_text[uid]
+            return
 
     # Все остальные запросы идут сюда:
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
