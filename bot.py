@@ -747,7 +747,7 @@ async def handle_photo_message(message: Message):
                 )
             except Exception as e:
                 await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
-        elif text_raw.strip():
+        elif text_raw.strip():  # Убедитесь, что здесь есть двоеточие и правильный отступ
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
