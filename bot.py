@@ -701,7 +701,6 @@ async def handle_photo_message(message: Message):
         import cv2
         import numpy as np
 
-        # Получаем фото
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -709,13 +708,17 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        # Обработка изображения для лучшего распознавания математики
         image = Image.open(BytesIO(photo_bytes))
         gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        processed_image = Image.fromarray(cv2.bitwise_not(binary))
 
-        # Распознавание текста (только английский — лучше работает с формулами)
+        # Попытка адаптивной бинаризации — лучше подходит для сканов
+        binary = cv2.adaptiveThreshold(gray, 255,
+                                       cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY, 11, 2)
+
+        processed_image = Image.fromarray(binary)
+
+        # Только английский (лучше для формул), можно заменить на 'eng+rus' при необходимости
         extracted_text = pytesseract.image_to_string(processed_image, lang='eng')
 
         if not extracted_text.strip():
