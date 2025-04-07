@@ -737,12 +737,12 @@ async def handle_photo_message(message: Message):
                 extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
-            if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
-                logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
-                extracted_latex = ""
-                is_formula_like = False
-    except Exception as e:
-        logging.error(f"LatexOCR error: {traceback.format_exc()}")
+                if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+                    logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
+                    extracted_latex = ""
+                    is_formula_like = False
+            except Exception as e:
+                logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
 
         # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
