@@ -86,6 +86,17 @@ def is_latex_valid(expr: str) -> bool:
         logging.warning(f"[Latex Validate] Ошибка при отрисовке: {e}")
         return False
 
+import asyncio
+
+async def safe_send_photo(*args, retries=3, **kwargs):
+    for attempt in range(retries):
+        try:
+            return await bot.send_photo(*args, **kwargs)
+        except Exception as e:
+            logging.warning(f"[SEND_PHOTO] Попытка {attempt+1} не удалась: {e}")
+            await asyncio.sleep(1)
+    raise Exception("Не удалось отправить фото после нескольких попыток")
+
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 from pathlib import Path
 import tempfile
@@ -762,7 +773,7 @@ async def handle_photo_message(message: Message):
             try:
                 img_bytes = latex_to_image(extracted_latex)
                 latex_file = FSInputFile(img_bytes, filename="formula.png")
-                await bot.send_photo(
+                await safe_send_photo(
                     chat_id=message.chat.id,
                     photo=latex_file,
                     caption="🧾 Текст с картинки считан. Задайте ваш вопрос по картинке."
