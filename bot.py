@@ -727,25 +727,28 @@ async def handle_photo_message(message: Message):
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
+    formula = ""
+    voice_response_requested = False
+    cid = message.chat.id
+
     if user_input.lower().startswith("реши:"):
         formula = user_input[5:].strip()
-    if not formula:
-        await message.answer("Пожалуйста, укажи формулу после 'реши:'.")
+
+    if formula:
+        prompt = (
+            f"Реши следующий интеграл или математическое выражение, представленное в LaTeX:\n\n"
+            f"\\[{formula}\\]\n\n"
+            f"Покажи решение пошагово. Объясни каждый шаг, если он неочевиден. "
+            f"Не добавляй преобразований, если они не нужны. Не пиши модуль, если это не вытекает из условия."
+        )
+
+        gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+        if voice_response_requested:
+            await send_voice_message(cid, gemini_text)
+        else:
+            await message.answer(gemini_text)
         return
 
-    prompt = (
-        f"Реши следующий интеграл или математическое выражение, представленное в LaTeX:\n\n"
-        f"\\[{formula}\\]\n\n"
-        f"Покажи решение пошагово. Объясни каждый шаг, если он неочевиден. "
-        f"Не добавляй преобразований, если они не нужны. Не пиши модуль, если это не вытекает из условия."
-    )
-
-    gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-    if voice_response_requested:
-        await send_voice_message(cid, gemini_text)
-    else:
-        await message.answer(gemini_text)
-    return
     await handle_all_messages_impl(message, user_input)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
