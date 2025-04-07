@@ -1278,18 +1278,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
     
-    # Все остальные запросы идут сюда:
-    gemini_text = await handle_msg(message, user_input, voice_response_requested)
-    if not gemini_text:
-        return
-
-    if voice_response_requested:
-        await send_voice_message(cid, gemini_text)
-    else:
-        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-        for c in chunks:
-            await message.answer(c)
-    return
 
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
