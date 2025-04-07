@@ -746,13 +746,14 @@ async def handle_photo_message(message: Message):
             try:
                 extracted_latex = ocr(image_rgb).strip()
                 logging.info(f"[OCR] Распознанный LaTeX до фильтрации: {extracted_latex}")
+                await message.answer(f"🔎 Распознанная формула:\n<code>{escape(extracted_latex)}</code>")
                 extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
-                if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
-                    logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
-                    extracted_latex = ""
-                    is_formula_like = False
+                #if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+                    #logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
+                    #extracted_latex = ""
+                    #is_formula_like = False
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
