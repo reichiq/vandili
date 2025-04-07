@@ -726,9 +726,10 @@ async def handle_photo_message(message: Message):
 
         processed_img = preprocess_image_for_ocr(photo_bytes)
 
-        # Используем EasyOCR вместо pytesseract
-        extracted_results = easyocr_reader.readtext(processed_img, detail=0)
-        extracted_text = "\n".join(extracted_results)
+        # Используем LaTeX-OCR вместо EasyOCR
+        import latexocr
+        latexocr_reader = latexocr.Reader()  # Создаем экземпляр для LaTeX-OCR
+        extracted_text = latexocr_reader.readtext(processed_img)
 
         if not extracted_text.strip():
             await message.answer("❌ Не удалось распознать текст на изображении.")
@@ -736,7 +737,7 @@ async def handle_photo_message(message: Message):
 
         user_images_text[message.from_user.id] = extracted_text.strip()
 
-        await message.answer(f"✅ Изображение получено и текст распознан:\n\n{extracted_text}\n\nМожешь задать вопрос по нему.")
+        await message.answer("✅ Изображение получено и текст распознан. Можешь задать вопрос по нему.")
     except Exception as e:
         logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
         await message.answer("⚠️ Произошла ошибка при обработке изображения.")
@@ -922,7 +923,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        await message.answer(gemini_text)
+        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+        for c in chunks:
+            await message.answer(c)
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
