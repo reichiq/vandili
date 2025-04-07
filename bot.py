@@ -745,37 +745,53 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        processed_img = preprocess_image_for_ocr(photo_bytes)
-        image_for_ocr = Image.fromarray(processed_img)
-
-        # Проверяем, инициализировался ли pix2tex
-        if ocr is None:
-            await message.answer("⚠️ Ошибка: pix2tex не инициализирован. Не могу распознать формулу.")
-            return
-
-        extracted_text = ocr(image_for_ocr).strip()
-        if extracted_text and re.search(r'[=+\-\^\\]', extracted_text):
-            latex_code = extracted_text
-            user_images_text[message.from_user.id] = latex_code
-            img_bytes = latex_to_image(latex_code)
-            latex_file = FSInputFile(img_bytes, filename="formula.png")
-
-            await bot.send_photo(chat_id=message.chat.id, photo=latex_file,
-                                 caption="✅ Формула распознана. Текст с картинки считан. Задайте ваш вопрос по картинке.")
+        # CHANGED: Раздельная обработка текста и формул
+        # 1. Обработка обычного текста
+        image_for_tesseract = Image.open(BytesIO(photo_bytes)).convert("RGB")
+        text_raw = pytesseract.image_to_string(image_for_tesseract, lang="rus+eng").strip()
+        
+        # 2. Обработка формул
+        extracted_latex = ""
+        if ocr is not None:
+            try:
+                # CHANGED: Используем оригинальное изображение без обработки
+                image_for_latex = Image.open(BytesIO(photo_bytes)).convert("RGB")
+                with torch.no_grad():  # Отключаем вычисление градиентов
+                    extracted_latex = ocr(image_for_latex).strip()
+            except Exception as e:
+                logging.error(f"LatexOCR processing error: {traceback.format_exc()}")
         else:
-            # Если не формула — обычный OCR и ответ по содержимому
-            image = Image.open(BytesIO(photo_bytes)).convert("RGB")
-            text_raw = pytesseract.image_to_string(image, lang="rus+eng").strip()
+            logging.warning("LatexOCR model not initialized")
+
+        # Определение типа контента
+        is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
+        
+        if is_formula:
+            # CHANGED: Улучшенная обработка LaTeX
+            user_images_text[message.from_user.id] = extracted_latex
+            try:
+                img_bytes = latex_to_image(extracted_latex)
+                latex_file = FSInputFile(img_bytes, filename="formula.png")
+                await bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=latex_file,
+                    caption="✅ Формула распознана. Задайте вопрос:"
+                )
+            except Exception as e:
+                await message.answer(f"⚠️ Ошибка визуализации формулы:\n{escape(str(e))}")
+        
+        elif text_raw:
             user_images_text[message.from_user.id] = text_raw
-            # Допустим, у вас где-то есть функция generate_and_send_gemini_response
-            prompt = f"На изображении был распознан следующий текст:\n\n{text_raw}\n\nОтветь по его содержимому."
+            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
             await message.answer(answer)
+        
+        else:
+            await message.answer("❌ Не удалось распознать контент")
 
-    
     except Exception as e:
-        logging.error("[PHOTO OCR] Полная ошибка:\n" + traceback.format_exc())
-        await message.answer("⚠️ Произошла ошибка при обработке изображения.")
+        logging.error(f"PHOTO PROCESSING ERROR: {traceback.format_exc()}")
+        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
 
 @dp.message()
 async def handle_all_messages(message: Message):
