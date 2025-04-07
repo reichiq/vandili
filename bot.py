@@ -41,24 +41,32 @@ from datetime import datetime
 import easyocr
 easyocr_reader = easyocr.Reader(['en'])  # Глобальный экземпляр
 
-# ---------------------- Функция предварительной обработки изображения для OCR ---------------------- #
+# ---------------------- Добавили инициализацию Pix2Tex (LatexOCR) здесь ---------------------- #
 import cv2
 import numpy as np
 
+# ВАЖНО: Импортируем и инициализируем Pix2Tex один раз
+from pix2tex.cli import LatexOCR
+
+try:
+    # Если у вас нет GPU или вы хотите гарантированно использовать CPU:
+    ocr = LatexOCR(device="cpu")
+    logging.info("pix2tex инициализирован успешно (CPU).")
+except Exception as e:
+    logging.error(f"Ошибка инициализации pix2tex: {e}")
+    ocr = None  # Чтобы не упасть совсем, если что-то пошло не так.
+
+# ---------------------- Функция предварительной обработки изображения для OCR ---------------------- #
 def preprocess_image_for_ocr(photo_bytes):
     image = Image.open(BytesIO(photo_bytes)).convert("RGB")
     img_array = np.array(image)
-    # Конвертируем в оттенки серого
+    import cv2
     gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    # Применяем медианный фильтр для уменьшения шума
     gray = cv2.medianBlur(gray, 3)
-    # Адаптивная бинаризация для выделения текста
     binary = cv2.adaptiveThreshold(gray, 255,
                                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                    cv2.THRESH_BINARY, 15, 8)
-    # Инвертируем цвета (чёрный текст на белом фоне)
     binary = cv2.bitwise_not(binary)
-    # Увеличиваем толщину текста (опционально)
     kernel = np.ones((1, 1), np.uint8)
     processed_img = cv2.dilate(binary, kernel, iterations=1)
     return processed_img
@@ -78,6 +86,11 @@ def latex_to_image(latex_code: str) -> BytesIO:
     return img_bytes
 
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
+from pathlib import Path
+import tempfile
+from docx import Document
+from PyPDF2 import PdfReader
+
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
     if filename.endswith(".txt") or filename.endswith(".py"):
         return file_bytes.decode("utf-8", errors="ignore")
@@ -102,7 +115,9 @@ def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
 
 # ---------------------- Инициализация ---------------------- #
 key_path = '/root/vandili/gcloud-key.json'
+from google.oauth2 import service_account
 credentials = service_account.Credentials.from_service_account_file(key_path)
+from google.cloud import translate
 translate_client = translate.TranslationServiceClient(credentials=credentials)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -119,17 +134,14 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
+import google.generativeai as genai
 genai.configure(api_key=GEMINI_API_KEY)
-# Изменение модели на Gemini 2.5 Pro Experimental
 model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
-# ---------------------- Загрузка и сохранение статистики ---------------------- #
+# ---------------------- Загрузка/сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
 
 def load_stats() -> dict:
-    """
-    Загружает основные метрики (messages_total, files_received, commands_used) из stats.json.
-    """
     if not os.path.exists(STATS_FILE):
         return {
             "messages_total": 0,
@@ -152,25 +164,20 @@ def load_stats() -> dict:
         }
 
 def save_stats():
-    """
-    Сохраняет текущие метрики (messages_total, files_received, commands_used) в stats.json.
-    """
     try:
         with open(STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.warning(f"Не удалось сохранить stats.json: {e}")
 
-# ---------------------- Глобальные структуры ---------------------- #
-stats = load_stats()  # подгружаем основные метрики
+stats = load_stats()
 
 support_mode_users = set()
-support_reply_map = {}  # {admin_msg_id: user_id}
+support_reply_map = {}
 chat_history = {}
 user_documents = {}
 user_images_text = {}
 
-# ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
 
 def load_disabled_chats() -> set:
@@ -193,7 +200,6 @@ def save_disabled_chats(chats: set):
 
 disabled_chats = load_disabled_chats()
 
-# ---------------------- Persistent Unique Users и Groups ---------------------- #
 UNIQUE_USERS_FILE = "unique_users.json"
 UNIQUE_GROUPS_FILE = "unique_groups.json"
 
@@ -238,9 +244,10 @@ unique_groups = load_unique_groups()
 
 ADMIN_ID = 1936733487
 SUPPORT_PROMPT_TEXT = ("Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки.")
-
-# Глобальное множество для хранения chat_id (текущая сессия)
 all_chat_ids = set()
+
+from aiogram.enums import ChatType
+from aiogram.types import Message
 
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
@@ -260,7 +267,6 @@ def _register_message_stats(message: Message):
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
         save_stats()
 
-# ---------------------- Функция отправки ответа админа одним сообщением ---------------------- #
 async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
     prefix = "<b>Ответ от поддержки:</b>"
     if admin_message.text:
@@ -716,14 +722,15 @@ async def handle_photo_message(message: Message):
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
 
-        # Обработка для формулы через pix2tex
         processed_img = preprocess_image_for_ocr(photo_bytes)
         image_for_ocr = Image.fromarray(processed_img)
 
-        from pix2tex.cli import LatexOCR
-        ocr = LatexOCR()
-        extracted_text = ocr(image_for_ocr).strip()
+        # Проверяем, инициализировался ли pix2tex
+        if ocr is None:
+            await message.answer("⚠️ Ошибка: pix2tex не инициализирован. Не могу распознать формулу.")
+            return
 
+        extracted_text = ocr(image_for_ocr).strip()
         if extracted_text and re.search(r'[=+\-\^\\]', extracted_text):
             latex_code = extracted_text
             user_images_text[message.from_user.id] = latex_code
@@ -731,13 +738,13 @@ async def handle_photo_message(message: Message):
             latex_file = FSInputFile(img_bytes, filename="formula.png")
 
             await bot.send_photo(chat_id=message.chat.id, photo=latex_file,
-                                 caption="✅ Формула распознана. Текст с картинки считан. Задайте ваш вопрос по картинке.",
-                                 **thread(message))
+                                 caption="✅ Формула распознана. Текст с картинки считан. Задайте ваш вопрос по картинке.")
         else:
             # Если не формула — обычный OCR и ответ по содержимому
             image = Image.open(BytesIO(photo_bytes)).convert("RGB")
             text_raw = pytesseract.image_to_string(image, lang="rus+eng").strip()
             user_images_text[message.from_user.id] = text_raw
+            # Допустим, у вас где-то есть функция generate_and_send_gemini_response
             prompt = f"На изображении был распознан следующий текст:\n\n{text_raw}\n\nОтветь по его содержимому."
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
             await message.answer(answer)
