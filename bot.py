@@ -6,8 +6,11 @@ import random
 import aiohttp
 import requests
 import pytesseract
+from matplotlib import pyplot as plt
+from matplotlib import rc
 from PIL import Image
 from io import BytesIO
+from aiogram.types import FSInputFile
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import (
@@ -59,6 +62,20 @@ def preprocess_image_for_ocr(photo_bytes):
     kernel = np.ones((1, 1), np.uint8)
     processed_img = cv2.dilate(binary, kernel, iterations=1)
     return processed_img
+
+import matplotlib.pyplot as plt
+
+def latex_to_image(latex_code: str) -> BytesIO:
+    fig, ax = plt.subplots()
+    ax.text(0.5, 0.5, f"${latex_code}$", fontsize=24, ha='center', va='center')
+    ax.axis('off')
+    fig.tight_layout(pad=1)
+
+    img_bytes = BytesIO()
+    plt.savefig(img_bytes, format='png', bbox_inches='tight', dpi=200, transparent=True)
+    plt.close(fig)
+    img_bytes.seek(0)
+    return img_bytes
 
 # ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
 def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
@@ -901,10 +918,11 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
         
 # Проверка на вопрос по изображению
+        # Проверка на вопрос по изображению
     if uid in user_images_text:
         latex_formula = user_images_text[uid]
         question_lower = user_input.lower()
-        
+
         if question_lower.startswith("распиши") or question_lower.startswith("поясни") or "по шагам" in question_lower:
             prompt_with_image = (
                 f"Распиши по шагам решение следующего математического выражения:\n\n"
@@ -917,14 +935,22 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
                 f"Ответь строго по теме, используй формулу как контекст. Показывай все выражения в LaTeX."
             )
-            
-            
+
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-        else:
-            await message.answer(gemini_text)
-        
+
+        if not gemini_text:
+            return
+
+        # Отправляем картинку с формулой
+        latex_img = latex_to_image(latex_formula)
+        latex_file = FSInputFile(latex_img, filename="formula.png")
+        caption, rest = split_caption_and_text(gemini_text or "...")
+
+        await bot.send_photo(chat_id=cid, photo=latex_file, caption=caption if caption else "...", **thread(message))
+
+        for c in rest:
+            await message.answer(c, **thread(message))
+
         del user_images_text[uid]
         return
     
