@@ -47,28 +47,34 @@ from pix2tex.cli import LatexOCR
 ocr = LatexOCR()
 logging.info("LatexOCR status: %s", "Loaded" if ocr else "Failed")
 
-
 import matplotlib.pyplot as plt
+from io import BytesIO
 
 def latex_to_image(latex_code: str) -> BytesIO:
-    fig, ax = plt.subplots()
-    ax.text(0.5, 0.5, f"${latex_code}$", fontsize=24, ha='center', va='center')
-    ax.axis('off')
-    fig.tight_layout(pad=1)
+    try:
+        latex_code = latex_code.strip().rstrip('.')
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, f"${latex_code}$", fontsize=24, ha='center', va='center')
+        ax.axis('off')
+        fig.tight_layout(pad=1)
 
-    img_bytes = BytesIO()
-    plt.savefig(img_bytes, format='png', bbox_inches='tight', dpi=200, transparent=True)
-    plt.close(fig)
-    img_bytes.seek(0)
-    return img_bytes
+        img_bytes = BytesIO()
+        plt.savefig(img_bytes, format='png', bbox_inches='tight', dpi=200, transparent=True)
+        plt.close(fig)
+        img_bytes.seek(0)
+        return img_bytes
+    except Exception as e:
+        logging.error(f"[LaTeX Render] Ошибка визуализации формулы: {e}")
+        raise
 
 def is_latex_valid(expr: str) -> bool:
     # Фильтруем явные ошибки
     if "\\out" in expr or "prime..{" in expr:
         return False
     try:
+        latex_code = expr.strip().rstrip('.')
         fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, f"${expr}$", fontsize=20, ha='center', va='center')
+        ax.text(0.5, 0.5, f"${latex_code}$", fontsize=20, ha='center', va='center')
         ax.axis('off')
         plt.close(fig)
         return True
@@ -732,7 +738,12 @@ async def handle_photo_message(message: Message):
         if is_formula_like:
             if not is_latex_valid(extracted_latex):
                 user_images_text[message.from_user.id] = extracted_latex
-                await message.answer("⚠️ Формула распознана, но содержит ошибки и не может быть отображена. Можешь задать вопрос по содержимому.")
+                await message.answer(
+                    "⚠️ Формула распознана, но содержит ошибки и не может быть отображена.\n\n"
+                    f"<b>Распознанная формула:</b>\n<code>{escape(extracted_latex)}</code>\n\n"
+                    "Попробуй вручную подправить формулу и напиши, например:\n<code>реши: исправленная_формула</code>"
+                )
+                    
                 return
             user_images_text[message.from_user.id] = extracted_latex
             try:
