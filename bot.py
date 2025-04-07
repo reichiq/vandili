@@ -735,7 +735,6 @@ async def handle_photo_message(message: Message):
         # Определяем тип контента
         is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
         
-        # Обрабатываем результаты
         if is_formula:
             user_images_text[message.from_user.id] = extracted_latex
             try:
@@ -748,51 +747,11 @@ async def handle_photo_message(message: Message):
                 )
             except Exception as e:
                 await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
-        elif text_raw.strip():  # Исправленный блок без дублирования
+        elif text_raw.strip():
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
             answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
             await message.answer(answer)
-        else:
-            await message.answer("❌ Не удалось распознать контент")
-
-    except Exception as e:
-        logging.error(f"PHOTO PROCESSING ERROR: {traceback.format_exc()}")
-        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
-        
-        elif text_raw.strip():  # CHANGED: Добавлен .strip() для проверки пустой строки
-            # Обработка обычного текста
-            user_images_text[message.from_user.id] = text_raw
-            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
-            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
-            await message.answer(answer)
-        
-        else:
-            await message.answer("❌ Не удалось распознать контент")
-
-    except Exception as e:
-        logging.error(f"PHOTO ERROR: {traceback.format_exc()}")
-        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
-        
-        elif text_raw:
-            user_images_text[message.from_user.id] = text_raw
-            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
-            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
-            await message.answer(answer)
-        
-        else:
-            await message.answer("❌ Не удалось распознать контент")
-
-    except Exception as e:
-        logging.error(f"PHOTO ERROR: {traceback.format_exc()}")
-        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
-        
-        elif text_raw:
-            user_images_text[message.from_user.id] = text_raw
-            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
-            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
-            await message.answer(answer)
-        
         else:
             await message.answer("❌ Не удалось распознать контент")
 
