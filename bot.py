@@ -873,32 +873,24 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if uid in user_documents:
             return
 
-# Проверка на вопрос по изображению
-if uid in user_images_text:
-    image_text = user_images_text[uid]
-    prompt_with_image = (f"Пользователь прислал изображение, с которого был распознан следующий текст:\n\n{image_text}\n\n"
-                         f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-                         f"Ответь кратко и точно, основываясь на содержимом изображения.")
-    gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
 
-        if voice_response_requested:
-        await send_voice_message(cid, gemini_text)
-    else:
-        await message.answer(gemini_text)
+    # Проверка на вопрос по изображению
+    if uid in user_images_text:
+        image_text = user_images_text[uid]
+        prompt_with_image = (
+            f"Пользователь прислал изображение, с которого был распознан следующий текст:\n\n{image_text}\n\n"
+            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+            f"Ответь кратко и точно, основываясь на содержимом изображения."
+        )
 
-    del user_images_text[uid]  # 👈 если хочешь очищать текст после ответа
-    return
-        
-        file_content = user_documents[uid]
-        prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
-                            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-                            f"Ответь чётко и кратко, основываясь на содержимом файла.")
-        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
+        gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
 
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
             await message.answer(gemini_text)
+
+        del user_images_text[uid]
         return
 
     # Все остальные запросы идут сюда:
