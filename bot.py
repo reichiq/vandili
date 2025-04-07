@@ -50,7 +50,7 @@ from pix2tex.cli import LatexOCR
 
 try:
     # Если у вас нет GPU или вы хотите гарантированно использовать CPU:
-    ocr = LatexOCR(device="cpu")
+    ocr = LatexOCR()
     logging.info("pix2tex инициализирован успешно (CPU).")
 except Exception as e:
     logging.error(f"Ошибка инициализации pix2tex: {e}")
