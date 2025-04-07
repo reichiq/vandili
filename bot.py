@@ -479,7 +479,6 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
         emoji = emoji_for_condition(text)
         return f"<b>Погода в {location_name} на {mode}:</b>\n{date}: {text} {emoji}, от {tmin}°C до {tmax}°C"
 
-
     # Прогноз на несколько дней
     if days > 1:
         lines = [f"<b>Прогноз погоды в {location_name}:</b>"]
@@ -563,7 +562,7 @@ async def cmd_stop(message: Message, command: CommandObject):
         await message.answer("Бот отключён в группе 🚫")
     else:
         await message.answer("Бот отключён 🚫")
-        
+
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     _register_message_stats(message)
@@ -576,7 +575,7 @@ async def cmd_help(message: Message):
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]] 
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
         await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
 
@@ -916,9 +915,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     if uid in user_documents:
         return
-        
-        # Проверка на вопрос по изображению
-        if uid in user_images_text:
+
+    # ======= Исправленный блок для обработки вопросов по изображению =======
+    if uid in user_images_text:
         latex_formula = user_images_text[uid]
         question_lower = user_input.lower()
 
@@ -937,6 +936,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_image, False, "", "")
 
+        # Попробуем визуализировать формулу в виде картинки и отправить её
         try:
             img_bytes = latex_to_image(latex_formula)
             latex_file = FSInputFile(img_bytes, filename="formula.png")
@@ -950,8 +950,333 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
         del user_images_text[uid]
         return
+    # =====================================================================
 
+    # Все остальные запросы идут сюда:
+    gemini_text = await handle_msg(message, user_input, voice_response_requested)
+    if not gemini_text:
+        return
 
+    if voice_response_requested:
+        await send_voice_message(cid, gemini_text)
+    else:
+        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+        for c in chunks:
+            await message.answer(c)
+    return
+
+def split_smart(text: str, limit: int) -> list[str]:
+    results = []
+    start = 0
+    length = len(text)
+    while start < length:
+        remain = length - start
+        if remain <= limit:
+            results.append(text[start:].strip())
+            break
+        candidate = text[start : start+limit]
+        cut_pos = candidate.rfind('. ')
+        if cut_pos == -1:
+            cut_pos = candidate.rfind(' ')
+            if cut_pos == -1:
+                cut_pos = len(candidate)
+        else:
+            cut_pos += 1
+        chunk = text[start : start+cut_pos].strip()
+        if chunk:
+            results.append(chunk)
+        start += cut_pos
+    return [x for x in results if x]
+
+CAPTION_LIMIT = 950
+TELEGRAM_MSG_LIMIT = 4096
+
+def split_caption_and_text(text: str) -> tuple[str, list[str]]:
+    if len(text) <= CAPTION_LIMIT:
+        return text, []
+    chunks_950 = split_smart(text, CAPTION_LIMIT)
+    caption = chunks_950[0]
+    leftover = " ".join(chunks_950[1:]).strip()
+    if not leftover:
+        return caption, []
+    rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
+    return caption, rest
+
+def format_gemini_response(text: str) -> str:
+    code_blocks = {}
+    def extract_code(match):
+        lang = match.group(1) or "text"
+        code = escape(match.group(2))
+        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
+        code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
+        return placeholder
+
+    text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
+    text = escape(text)
+    for placeholder, block_html in code_blocks.items():
+        text = text.replace(escape(placeholder), block_html)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
+    text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
+
+    lines = text.split('\n')
+    new_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        prefix_len = len(line) - len(stripped)
+        if stripped.startswith('* ') and not stripped.startswith('**'):
+            replaced_line = (' ' * prefix_len) + '• ' + stripped[2:]
+            new_lines.append(replaced_line)
+        else:
+            new_lines.append(line)
+    text = '\n'.join(new_lines).strip()
+
+    text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
+    text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
+    text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
+    text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+    text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+    text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+
+    return text
+
+IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
+NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
+INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
+                 "кто твой создатель", "чей ты бот", "кем ты был создан",
+                 "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"]
+OWNER_REPLIES = [
+    "Я — <b>VAI</b>, создан командой <i>Vandili</i> 😎",
+    "Мой создатель — <b>Vandili</b>. Я работаю для них 😉",
+    "Я принадлежу <i>Vandili</i>, они моя команда ✨",
+    "Создан <b>Vandili</b> — именно они дали мне жизнь 🤝",
+    "Я бот <b>Vandili</b>. Всё просто 🤗",
+    "Я продукт <i>Vandili</i>. Они мои создатели 😇"
+]
+
+RU_EN_DICT = {
+    "обезьяна": "monkey",
+    "тигр": "tiger",
+    "кошка": "cat",
+    "собака": "dog",
+    "пейзаж": "landscape",
+    "чайка": "seagull",
+    "париж": "paris",
+    "утконос": "platypus",
+    "пудель": "poodle",
+    "медоед": "honey badger"
+}
+
+async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
+    if not prompt:
+        return None
+    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
+                    return None
+                data = await response.json()
+                if "urls" not in data or "regular" not in data["urls"]:
+                    logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
+                    return None
+                return data["urls"]["regular"]
+    except Exception as e:
+        logging.warning(f"Ошибка при получении изображения: {e}")
+    return None
+
+def fallback_translate_to_english(rus_word: str) -> str:
+    try:
+        project_id = "gen-lang-client-0588633435"
+        location = "global"
+        parent = f"projects/{project_id}/locations/{location}"
+        response = translate_client.translate_text(
+            parent=parent,
+            contents=[rus_word],
+            mime_type="text/plain",
+            source_language_code="ru",
+            target_language_code="en",
+        )
+        return response.translations[0].translated_text
+    except Exception as e:
+        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
+        return rus_word
+
+def generate_short_caption(rus_word: str) -> str:
+    short_prompt = (
+        "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
+        "на русском языке. Не упоминай, что ты ИИ или Google. Старайся не превышать 15 слов.\n\n"
+        f"ЗАДАЧА: Придумай одну короткую, дружелюбную подпись для картинки с «{rus_word}». "
+        "Можно с лёгкой эмоцией или юмором, не более 15 слов."
+    )
+    try:
+        response = model.generate_content([
+            {"role": "user", "parts": [short_prompt]}
+        ])
+        caption = format_gemini_response(response.text.strip())
+        return caption
+    except Exception as e:
+        logging.error(f"[BOT] Error generating short caption: {e}")
+        return rus_word.capitalize()
+
+def parse_russian_show_request(user_text: str):
+    lower_text = user_text.lower()
+    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
+    if not triggered:
+        return (False, "", "", user_text)
+    match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
+    if match:
+        raw_rus_word = match.group(3)
+        raw_rus_word_clean = raw_rus_word.strip(punctuation)
+        parsed = morph.parse(raw_rus_word_clean)
+        if parsed:
+            rus_normal = parsed[0].normal_form
+        else:
+            rus_normal = raw_rus_word_clean
+        rus_word = rus_normal
+    else:
+        rus_word = ""
+        raw_rus_word = ""
+    if raw_rus_word:
+        pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
+        leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
+    else:
+        leftover = user_text
+    RU_EN_DICT_CUSTOM = {
+        "обезьяна": "monkey",
+        "тигр": "tiger",
+        "кошка": "cat",
+        "собака": "dog",
+        "пейзаж": "landscape",
+        "чайка": "seagull",
+        "париж": "paris",
+        "утконос": "platypus",
+        "пудель": "poodle",
+        "медоед": "honey badger"
+    }
+    if rus_word in RU_EN_DICT_CUSTOM:
+        en_word = RU_EN_DICT_CUSTOM[rus_word]
+    else:
+        en_word = fallback_translate_to_english(rus_word)
+    return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
+
+# ---------------------- Основная функция handle_msg ---------------------- #
+async def handle_msg(message: Message, recognized_text: str = None, voice_response_requested: bool = False):
+    cid = message.chat.id
+    user_input = recognized_text or (message.text or "").strip()
+
+    lower_inp = user_input.lower()
+    if any(nc in lower_inp for nc in NAME_COMMANDS):
+        answer = "Меня зовут <b>VAI</b>! 🤖"
+        if voice_response_requested:
+            await send_voice_message(cid, answer)
+        else:
+            await message.answer(answer)
+        return
+
+    if any(ic in lower_inp for ic in INFO_COMMANDS):
+        reply_text = random.choice(OWNER_REPLIES)
+        if voice_response_requested:
+            await send_voice_message(cid, reply_text)
+        else:
+            await message.answer(reply_text)
+        return
+
+    show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
+    if show_image and rus_word:
+        leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
+
+    leftover = leftover.strip()
+    full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
+
+    image_url = None
+    if show_image:
+        image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
+
+    gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
+
+    if voice_response_requested:
+        if not gemini_text:
+            gemini_text = "Нет ответа для голосового сообщения."
+        await send_voice_message(cid, gemini_text)
+        return
+
+    if image_url:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(image_url) as r:
+                if r.status == 200:
+                    photo_bytes = await r.read()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
+                        tmpf.write(photo_bytes)
+                        tmp_path = tmpf.name
+                    try:
+                        await bot.send_chat_action(chat_id=cid, action="upload_photo")
+                        file = FSInputFile(tmp_path, filename="image.jpg")
+                        caption, rest = split_caption_and_text(gemini_text or "...")
+                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
+                        for c in rest:
+                            await message.answer(c, **thread(message))
+                    finally:
+                        os.remove(tmp_path)
+    elif gemini_text:
+        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
+        for c in chunks:
+            await message.answer(c)
+
+@dp.message(F.text.lower().startswith("вай покажи"))
+async def group_show_request(message: Message):
+    user_input = message.text.strip()
+    await handle_msg(message, recognized_text=user_input, voice_response_requested=False)
+
+async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
+    gemini_text = ""
+    analysis_keywords = [
+        "почему", "зачем", "на кого", "кто", "что такое", "влияние",
+        "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
+    ]
+    needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
+    if needs_expansion:
+        smart_prompt = ("Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
+                        "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n")
+        full_prompt = smart_prompt + full_prompt
+
+    if show_image and rus_word and not leftover:
+        gemini_text = generate_short_caption(rus_word)
+        return gemini_text
+
+    conversation = chat_history.setdefault(cid, [])
+    conversation.append({"role": "user", "parts": [full_prompt]})
+    if len(conversation) > 8:
+        conversation.pop(0)
+    try:
+        await bot.send_chat_action(chat_id=cid, action="typing")
+        resp = model.generate_content(conversation)
+        if not resp.candidates:
+            reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+            logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
+            gemini_text = ("⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент.")
+        else:
+            raw_model_text = resp.text
+            gemini_text = format_gemini_response(raw_model_text)
+            conversation.append({"role": "model", "parts": [raw_model_text]})
+            if len(conversation) > 8:
+                conversation.pop(0)
+    except Exception as e:
+        logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
+        gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
+    return gemini_text
+
+# ---------------------- Запуск бота ---------------------- #
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
         # Отправляем картинку с формулой
         latex_img = latex_to_image(latex_formula)
