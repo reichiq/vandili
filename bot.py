@@ -694,52 +694,27 @@ async def handle_voice_message(message: Message):
 
 @dp.message(F.photo)
 async def handle_photo_message(message: Message):
-    _register_message_stats(message)
-    try:
-        import cv2
-        import numpy as np
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            photo_bytes = await resp.read()
 
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+    processed_img = preprocess_image_for_ocr(photo_bytes)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                photo_bytes = await resp.read()
+    # OCR Tesseract
+    custom_config = r'--oem 3 --psm 6'
+    extracted_text = pytesseract.image_to_string(processed_img, config=custom_config, lang='eng')
 
-        image = Image.open(BytesIO(photo_bytes))
+    if not extracted_text.strip():
+        await message.answer("❌ Не удалось распознать текст на изображении.")
+        return
 
-        # Улучшение изображения (контраст + четкость)
-        img_cv = np.array(image)
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    user_images_text[message.from_user.id] = extracted_text.strip()
 
-        # Увеличение изображения для повышения точности OCR
-        scale_percent = 200  # Увеличение размера на 200%
-        width = int(thresh.shape[1] * scale_percent / 100)
-        height = int(thresh.shape[0] * scale_percent / 100)
-        resized = cv2.resize(thresh, (width, height), interpolation=cv2.INTER_CUBIC)
-
-        processed_image = Image.fromarray(resized)
-
-        # Оптимизированный вызов Tesseract для формул
-        extracted_text = pytesseract.image_to_string(
-            processed_image, 
-            lang='eng', 
-            config='--psm 6'
-        )
-
-        if not extracted_text.strip():
-            await message.answer("❌ Не удалось распознать текст на изображении.")
-            return
-
-        uid = message.from_user.id
-        user_images_text[uid] = extracted_text.strip()
-
-        await message.answer("✅ Изображение получено и текст распознан! Можешь задать вопрос по нему.")
-    except Exception as e:
-        logging.error(f"[PHOTO OCR] Ошибка при обработке изображения: {e}")
-        await message.answer("⚠️ Произошла ошибка при обработке изображения.")
+    await message.answer(f"✅ Изображение получено и текст распознан:\n\n{extracted_text}\n\nМожешь задать вопрос по нему.")
 
 @dp.message()
 async def handle_all_messages(message: Message):
