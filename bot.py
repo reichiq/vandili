@@ -711,13 +711,7 @@ async def handle_voice_message(message: Message):
 async def handle_photo_message(message: Message):
     _register_message_stats(message)
     try:
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                photo_bytes = await resp.read()
+        # ... (код загрузки фото)
 
         # 1. Обработка обычного текста
         image_for_tesseract = Image.open(BytesIO(photo_bytes)).convert("RGB")
@@ -734,10 +728,9 @@ async def handle_photo_message(message: Message):
         else:
             logging.warning("LatexOCR не инициализирован")
 
-        # Определение типа контента
-        is_formula = bool(re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex))
-        
-        if is_formula:
+        # CHANGED: Исправленная структура условий
+        if extracted_latex and re.search(r'\$|\\\(|\\\[|\^|_', extracted_latex):
+            # Обработка формулы
             user_images_text[message.from_user.id] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
@@ -749,6 +742,20 @@ async def handle_photo_message(message: Message):
                 )
             except Exception as e:
                 await message.answer(f"⚠️ Ошибка визуализации формулы: {escape(str(e))}")
+        
+        elif text_raw.strip():  # CHANGED: Добавлен .strip() для проверки пустой строки
+            # Обработка обычного текста
+            user_images_text[message.from_user.id] = text_raw
+            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
+            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
+            await message.answer(answer)
+        
+        else:
+            await message.answer("❌ Не удалось распознать контент")
+
+    except Exception as e:
+        logging.error(f"PHOTO ERROR: {traceback.format_exc()}")
+        await message.answer("⚠️ Ошибка обработки. Проверьте формат изображения.")
         
         elif text_raw:
             user_images_text[message.from_user.id] = text_raw
