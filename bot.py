@@ -719,7 +719,7 @@ async def handle_photo_message(message: Message):
         extracted_latex = ""
         try:
             extracted_latex = ocr(image_rgb).strip()
-            logging.info(f"[OCR] Распознанная формула до фильтрации: {extracted_latex}")
+            logging.info(f"[DEBUG] Распознанный LaTeX: {extracted_latex}")
             extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
         except Exception as e:
             logging.warning(f"[OCR] Ошибка при распознавании формулы: {traceback.format_exc()}")
@@ -727,11 +727,14 @@ async def handle_photo_message(message: Message):
         # --- Попытка распознать обычный текст ---
         text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
         # --- Определяем, похоже ли на формулу ---
+        # Убираем проверку is_latex_valid() из условия для большей гибкости
         is_formula_like = bool(
             extracted_latex and 
-            (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\")) and 
-            is_latex_valid(extracted_latex)
+            (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\"))
         )
+        # Если формула не проходит полную валидацию, выводим предупреждение, но продолжаем
+        if extracted_latex and not is_latex_valid(extracted_latex):
+            await message.answer("⚠️ Обнаружена формула, которая может быть некорректной. Попробую отобразить её.")
         uid = message.from_user.id
         if is_formula_like:
             user_images_text[uid] = extracted_latex
@@ -777,7 +780,6 @@ async def handle_all_messages(message: Message):
             m = re.search(r"(?:реши|найди|интеграл|помоги|распиши)[\s:]+(.+)", user_input, re.IGNORECASE)
             if m:
                 formula = m.group(1).strip()
-    
     if formula:
         prompt = (
             f"Пожалуйста, оборачивай все математические выражения в конструкции \\[ ... \\].\n"
@@ -806,7 +808,6 @@ async def handle_all_messages(message: Message):
             logging.warning(f"[BOT] Ошибка отрисовки начальной формулы: {e}")
             await message.answer(response or "⚠️ Не удалось визуализировать формулу, но вот ответ:")
         return
-    
     await handle_all_messages_impl(message, user_input)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
@@ -980,6 +981,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         del user_images_text[uid]
         return
     if uid in user_documents:
+        # Логика работы с документом (если требуется)
         return
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
     if not gemini_text:
@@ -1302,7 +1304,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         notice_task = asyncio.create_task(show_processing_notice())
         await bot.send_chat_action(chat_id=cid, action="typing")
         resp = model.generate_content(conversation)
-        await notice_task  # ждём завершения задачи
+        await notice_task
         if processing_message:
             try:
                 await processing_message.delete()
