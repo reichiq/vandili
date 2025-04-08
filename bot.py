@@ -1019,6 +1019,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             except Exception as e:
                 logging.warning(f"[BOT] Ошибка отрисовки формулы: {e}")
                 await message.answer(response)
+            if not response:
+                await message.answer("⚠️ Не удалось получить ответ. Попробуйте снова.")
         else:
             prompt = (
                 f"На изображении был распознан следующий текст:\n\n{extracted}\n\n"
