@@ -55,6 +55,7 @@ def latex_to_image(latex_code: str) -> BytesIO:
         ax.text(0.5, 0.5, f"${latex_code}$", fontsize=24, ha='center', va='center')
         ax.axis('off')
         fig.tight_layout(pad=1)
+
         img_bytes = BytesIO()
         plt.savefig(img_bytes, format='png', bbox_inches='tight', dpi=120, transparent=True)
         plt.close(fig)
@@ -260,7 +261,6 @@ from aiogram.types import Message
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
     save_stats()
-
     if message.chat.type == ChatType.PRIVATE:
         if message.from_user.id not in unique_users:
             unique_users.add(message.from_user.id)
@@ -269,7 +269,6 @@ def _register_message_stats(message: Message):
         if message.chat.id not in unique_groups:
             unique_groups.add(message.chat.id)
             save_unique_groups(unique_groups)
-
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
@@ -398,7 +397,7 @@ async def do_geocoding_request(name: str) -> dict:
 def simple_transliterate(s: str) -> str:
     translit_map = {
         'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
-        'е': 'e', 'ё': 'yo','ж': 'zh','з': 'z', 'и': 'i',
+        'е': 'e', 'ё': 'yo', 'ж': 'zh','з': 'z', 'и': 'i',
         'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
         'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
         'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts','ч': 'ch',
@@ -768,7 +767,7 @@ async def handle_photo_message(message: Message):
                 for c in rest:
                     await message.answer(c, **thread(message))
             except Exception as e:
-                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e)))}</code>")
+                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e))}</code>")
         elif text_raw:
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
@@ -792,7 +791,7 @@ async def handle_all_messages(message: Message):
     if formula:
         prompt = (
             f"Реши следующий интеграл или математическое выражение, представленное в LaTeX. "
-            "Оборачивай все формулы в конструкции \\[ ... \\].\n\n"
+            "Оборачивай все формулы в конструкции \\[ ... \\]:\n\n"
             f"\\[{formula}\\]\n\n"
             f"Покажи решение пошагово. Объясни каждый шаг."
         )
@@ -952,11 +951,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # ======= Распознан текст с изображения ======= #
     if uid in user_images_text:
         extracted = user_images_text[uid]
-        # Проверяем, выглядит ли это как LaTeX-формула
         is_latex_formula = bool(extracted and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted) or extracted.strip().startswith("\\")))
         if is_latex_formula:
             question_lower = user_input.lower()
-            # Добавляем инструкцию для LLM, чтобы она выводила формулы в конструкции \[ ... \]
             if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower or "интеграл" in question_lower:
                 prompt = (
                     f"Реши следующее математическое выражение в LaTeX. "
