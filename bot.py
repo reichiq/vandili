@@ -997,6 +997,17 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 )
 
             response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+
+            formulas = extract_latex_blocks(response)
+            if formulas:
+                for i, formula in enumerate(formulas):
+                    try:
+                        img_bytes = latex_to_image(formula)
+                        latex_file = FSInputFile(img_bytes, filename=f"formula_{i+1}.png")
+                        await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
+                    except Exception as e:
+                        logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
+            
             try:
                 img_bytes = latex_to_image(extracted)
                 latex_file = FSInputFile(img_bytes, filename="formula.png")
@@ -1068,6 +1079,12 @@ def split_caption_and_text(text: str) -> tuple[str, list[str]]:
         return caption, []
     rest = split_smart(leftover, TELEGRAM_MSG_LIMIT)
     return caption, rest
+
+def extract_latex_blocks(text: str) -> list[str]:
+    # Вырезает блоки вида \[...\] и \(...\)
+    blocks = re.findall(r"\\\[(.+?)\\\]|\\\((.+?)\\\)", text, re.DOTALL)
+    formulas = [f[0] if f[0] else f[1] for f in blocks]
+    return formulas
 
 def format_gemini_response(text: str) -> str:
     code_blocks = {}
