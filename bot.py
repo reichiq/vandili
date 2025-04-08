@@ -831,13 +831,30 @@ async def handle_all_messages(message: Message):
             f"Покажи решение пошагово. Объясни каждый шаг, если он неочевиден. "
             f"Не добавляй преобразований, если они не нужны. Не пиши модуль, если это не вытекает из условия."
         )
-
-        gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-        else:
-            await message.answer(gemini_text)
+        
+        response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+        formulas = extract_latex_blocks(response)
+        if formulas:
+            for i, formula_img in enumerate(formulas):
+                try:
+                    img_bytes = latex_to_image(formula_img)
+                    latex_file = FSInputFile(img_bytes, filename=f"formula_{i+1}.png")
+                    await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
+                except Exception as e:
+                    logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
+                    
+        try:
+            img_bytes = latex_to_image(formula)
+            latex_file = FSInputFile(img_bytes, filename="formula.png")
+            caption, rest = split_caption_and_text(response or "...")
+            await safe_send_photo(chat_id=cid, photo=latex_file, caption=caption, **thread(message))
+            for c in rest:
+                await message.answer(c)
+        except Exception as e:
+            logging.warning(f"[BOT] Ошибка отрисовки начальной формулы: {e}")
+            await message.answer(response or "⚠️ Не удалось отрисовать формулу, но вот ответ:")
         return
+
 
     await handle_all_messages_impl(message, user_input)
 
