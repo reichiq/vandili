@@ -91,7 +91,7 @@ import asyncio
 async def safe_send_photo(*args, retries=3, **kwargs):
     for attempt in range(retries):
         try:
-            return await safe_send_photo(*args, **kwargs)
+            return await bot.send_photo(*args, **kwargs)
         except Exception as e:
             logging.warning(f"[SEND_PHOTO] Попытка {attempt+1} не удалась: {e}")
             await asyncio.sleep(1)
