@@ -753,6 +753,7 @@ async def handle_photo_message(message: Message):
                     extracted_latex = "\\int \\frac{x^2}{1 - x^2} dx"
                     await message.answer("⚠️ Распознавание формулы дало ошибку, но была применена ближайшая корректная формула:\n"
                                          "<b>\\int \\frac{x^2}{1 - x^2} dx</b>")
+                    user_images_text[message.from_user.id] = extracted_latex
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
                     #if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
