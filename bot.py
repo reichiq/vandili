@@ -12,7 +12,7 @@ from aiogram.types import (
     FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
     CallbackQuery, BufferedInputFile
 )
-# Удалён импорт DefaultBotProperties
+from aiogram.client.default import DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
@@ -22,8 +22,7 @@ import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
-# Используем новый клиент Google Translate v3
-from google.cloud import translate_v3 as translate
+from google.cloud import translate
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
@@ -33,59 +32,6 @@ from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
 
-# Дополнительные импорты для обработки изображений и OCR
-import pytesseract
-from PIL import Image
-
-# --- Новый: Импорт и инициализация Pix2Tex для распознавания математических формул ---
-# Для работы необходимо установить пакет: pip install pix2tex
-from pix2tex.cli import LatexOCR
-pix2tex_model = None
-def init_pix2tex_model():
-    """
-    Инициализирует глобальную модель Pix2Tex для распознавания LaTeX.
-    Загружается один раз для экономии ресурсов.
-    """
-    global pix2tex_model
-    if pix2tex_model is None:
-        logging.info("[Pix2Tex] Инициализация модели...")
-        pix2tex_model = LatexOCR()
-
-def render_latex_to_image(latex_code: str) -> str:
-    """
-    Принимает LaTeX-формулу и возвращает путь к сгенерированному PNG-изображению.
-    Требует установленного pdflatex и convert (ImageMagick).
-    """
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        tex_file = os.path.join(tmpdirname, "formula.tex")
-        pdf_file = os.path.join(tmpdirname, "formula.pdf")
-        png_file = os.path.join(tmpdirname, "formula.png")
-        with open(tex_file, "w", encoding="utf-8") as f:
-            f.write(r"""\documentclass[preview]{standalone}
-\usepackage{amsmath, amssymb}
-\begin{document}
-$$
-""")
-            f.write(latex_code)
-            f.write(r"""$$
-\end{document}
-""")
-        try:
-            import subprocess
-            subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_file],
-                           cwd=tmpdirname, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run(["convert", "-density", "300", pdf_file, "-quality", "90", png_file],
-                           cwd=tmpdirname, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            final_path = os.path.join(tempfile.gettempdir(), "final_formula.png")
-            with open(png_file, "rb") as f:
-                image_data = f.read()
-            with open(final_path, "wb") as f:
-                f.write(image_data)
-            return final_path
-        except Exception as e:
-            logging.error(f"Error rendering LaTeX: {e}")
-            return None
-
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
@@ -93,15 +39,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
+# Приводим к строке для гарантии, что тип правильный (если вдруг значение None)
 WEATHER_API_KEY = str(os.getenv("WEATHER_API_KEY"))
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализируем клиента Google Translate v3
-translate_client = translate.TranslationServiceClient()
-
-# Инициализируем бота (без DefaultBotProperties, так как он больше не используется)
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
@@ -111,9 +54,17 @@ model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
+
 def load_stats() -> dict:
+    """
+    Загружает основные метрики (messages_total, files_received, commands_used) из stats.json.
+    """
     if not os.path.exists(STATS_FILE):
-        return {"messages_total": 0, "files_received": 0, "commands_used": {}}
+        return {
+            "messages_total": 0,
+            "files_received": 0,
+            "commands_used": {}
+        }
     try:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -123,14 +74,25 @@ def load_stats() -> dict:
             return data
     except Exception as e:
         logging.warning(f"Не удалось загрузить stats.json: {e}")
-        return {"messages_total": 0, "files_received": 0, "commands_used": {}}
+        return {
+            "messages_total": 0,
+            "files_received": 0,
+            "commands_used": {}
+        }
+
 def save_stats():
+    """
+    Сохраняет текущие метрики (messages_total, files_received, commands_used) в stats.json.
+    """
     try:
         with open(STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.warning(f"Не удалось сохранить stats.json: {e}")
-stats = load_stats()
+
+# ---------------------- Глобальные структуры ---------------------- #
+stats = load_stats()  # подгружаем основные метрики
+
 support_mode_users = set()
 support_reply_map = {}  # {admin_msg_id: user_id}
 chat_history = {}
@@ -138,6 +100,7 @@ user_documents = {}
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
+
 def load_disabled_chats() -> set:
     if not os.path.exists(DISABLED_CHATS_FILE):
         return set()
@@ -148,17 +111,20 @@ def load_disabled_chats() -> set:
     except Exception as e:
         logging.warning(f"[BOT] Не удалось загрузить disabled_chats: {e}")
         return set()
+
 def save_disabled_chats(chats: set):
     try:
         with open(DISABLED_CHATS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(chats), f)
     except Exception as e:
         logging.warning(f"[BOT] Не удалось сохранить disabled_chats: {e}")
+
 disabled_chats = load_disabled_chats()
 
 # ---------------------- Persistent Unique Users и Groups ---------------------- #
 UNIQUE_USERS_FILE = "unique_users.json"
 UNIQUE_GROUPS_FILE = "unique_groups.json"
+
 def load_unique_users() -> set:
     if not os.path.exists(UNIQUE_USERS_FILE):
         return set()
@@ -169,12 +135,14 @@ def load_unique_users() -> set:
     except Exception as e:
         logging.warning(f"Не удалось загрузить уникальных пользователей: {e}")
         return set()
+
 def save_unique_users(users: set):
     try:
         with open(UNIQUE_USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(users), f)
     except Exception as e:
         logging.warning(f"Не удалось сохранить уникальных пользователей: {e}")
+
 def load_unique_groups() -> set:
     if not os.path.exists(UNIQUE_GROUPS_FILE):
         return set()
@@ -185,22 +153,27 @@ def load_unique_groups() -> set:
     except Exception as e:
         logging.warning(f"Не удалось загрузить уникальные группы: {e}")
         return set()
+
 def save_unique_groups(groups: set):
     try:
         with open(UNIQUE_GROUPS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(groups), f)
     except Exception as e:
         logging.warning(f"Не удалось сохранить уникальные группы: {e}")
+
 unique_users = load_unique_users()
 unique_groups = load_unique_groups()
 
 ADMIN_ID = 1936733487
 SUPPORT_PROMPT_TEXT = ("Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки.")
+
+# Глобальное множество для хранения chat_id (текущая сессия)
 all_chat_ids = set()
 
 def _register_message_stats(message: Message):
     stats["messages_total"] += 1
     save_stats()
+
     if message.chat.type == ChatType.PRIVATE:
         if message.from_user.id not in unique_users:
             unique_users.add(message.from_user.id)
@@ -209,6 +182,7 @@ def _register_message_stats(message: Message):
         if message.chat.id not in unique_groups:
             unique_groups.add(message.chat.id)
             save_unique_groups(unique_groups)
+
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0]
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
@@ -244,9 +218,14 @@ def normalize_currency_rus(word: str) -> str:
     parsed = morph.parse(word_clean)
     if not parsed:
         return word_clean
-    return parsed[0].normal_form
+    normal_form = parsed[0].normal_form
+    return normal_form
 
 def normalize_city_name(raw_city: str) -> str:
+    """
+    Приводит "Москве" -> "москва", "Ташкенте" -> "ташкент" и т.д.
+    Если морфопарсер даёт слишком короткую форму или ту же самую строку, оставляем оригинал.
+    """
     words = raw_city.split()
     norm_words = []
     for w in words:
@@ -254,15 +233,16 @@ def normalize_city_name(raw_city: str) -> str:
         parsed = morph.parse(w_clean)
         if not parsed:
             norm_words.append(w_clean)
+            continue
+        best = parsed[0]
+        if best.normal_form == w_clean or len(best.normal_form) < 2:
+            norm_words.append(w_clean)
         else:
-            best = parsed[0]
-            if best.normal_form == w_clean or len(best.normal_form) < 2:
-                norm_words.append(w_clean)
-            else:
-                norm_words.append(best.normal_form)
+            norm_words.append(best.normal_form)
     return " ".join(norm_words)
 
 # ---------------------- Словарь базовых форм валют (расширенный) ---------------------- #
+# Добавлено правило для "долар" с одной "л" для обработки опечаток
 CURRENCY_SYNONYMS = {
     "доллар": "USD", "доллары": "USD", "долларов": "USD",
     "долар": "USD",
@@ -309,7 +289,8 @@ async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
     return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
             "Курс в банках и на биржах может отличаться.")
 
-# Универсальное регулярное выражение для запроса курса валют
+# Новый универсальный шаблон для запроса курса валют
+# Он обрабатывает запросы вида: "1 доллар сум" и "1 доллар в сум", а также с английскими обозначениями.
 EXCHANGE_PATTERN = re.compile(
     r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
 )
@@ -330,7 +311,11 @@ async def do_geocoding_request(name: str) -> dict:
     if "results" not in geo_data or not geo_data["results"]:
         return None
     best = geo_data["results"][0]
-    return {"lat": best["latitude"], "lon": best["longitude"], "timezone": best.get("timezone", "Europe/Moscow")}
+    return {
+        "lat": best["latitude"],
+        "lon": best["longitude"],
+        "timezone": best.get("timezone", "Europe/Moscow")
+    }
 
 def simple_transliterate(s: str) -> str:
     translit_map = {
@@ -373,11 +358,12 @@ async def geocode_city(city_name: str) -> dict:
     data = await do_geocoding_request(translit_city)
     return data
 
+# Новый вспомогательный метод для форматирования погодного описания с добавлением смайлика
 def format_condition(condition_text: str) -> str:
     weather_emojis = {
         "ясно": "☀️",
         "солнечно": "☀️",
-        "солнечная": "☀️",
+        "солнечная": "☀️",  # Добавлено для вариантов "солнечная"
         "облачно": "☁️",
         "пасмурно": "☁️",
         "туман": "🌫️",
@@ -392,9 +378,17 @@ def format_condition(condition_text: str) -> str:
             return f"{condition_text.capitalize()} {emoji}"
     return f"{condition_text.capitalize()} 🙂"
 
+# Новая функция получения погоды через WeatherAPI.com
 async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     base_url = "http://api.weatherapi.com/v1/forecast.json"
-    params = {"key": WEATHER_API_KEY, "q": city, "days": max(days, 1), "lang": "ru", "aqi": "no", "alerts": "no"}
+    params = {
+        "key": WEATHER_API_KEY,
+        "q": city,
+        "days": max(days, 1),
+        "lang": "ru",
+        "aqi": "no",
+        "alerts": "no"
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(base_url, params=params) as resp:
@@ -405,6 +399,7 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     except Exception as e:
         logging.error(f"Ошибка запроса погоды: {e}")
         return "Ошибка при получении данных о погоде."
+
     if days == 1 and not mode:
         current = data.get("current", {})
         if not current:
@@ -465,51 +460,14 @@ def thread(message: Message) -> dict:
         return {"message_thread_id": message.message_thread_id}
     return {}
 
-# ---------------------- Обработчик фотографий ---------------------- #
-@dp.message(lambda message: message.photo is not None and not message.document)
-async def handle_photo(message: Message):
-    _register_message_stats(message)
-    # Отправляем служебное сообщение без упоминания Pix2Tex, с эмодзи ожидания
-    status_message = await message.answer("Обрабатываю изображение... ⏳")
-    try:
-        init_pix2tex_model()
-        file = await bot.get_file(message.photo[-1].file_id)
-        url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                image_bytes = await resp.read()
-        tmp_path = os.path.join(tempfile.gettempdir(), "incoming_image.png")
-        with open(tmp_path, "wb") as f:
-            f.write(image_bytes)
-        # Открываем изображение и конвертируем в RGB
-        image = Image.open(tmp_path).convert("RGB")
-        # Используем Pix2Tex для получения LaTeX-кода формулы
-        latex_code = pix2tex_model.predict(image)
-        os.remove(tmp_path)
-        if latex_code and latex_code.strip():
-            latex_img_path = render_latex_to_image(latex_code)
-            if latex_img_path:
-                caption_msg = f"Распознана формула:\n<code>{latex_code}</code>\n\nЗадайте ваш вопрос по этой формуле."
-                await bot.send_photo(chat_id=message.chat.id,
-                                     photo=FSInputFile(latex_img_path, filename="formula.png"),
-                                     caption=caption_msg)
-                os.remove(latex_img_path)
-            else:
-                await message.answer("Код LaTeX получен, но не удалось отрисовать формулу. Попробуйте повторить.")
-        else:
-            await message.answer("Формула не обнаружена или не распознана. Задайте ваш вопрос.")
-    except Exception as e:
-        logging.error(f"Ошибка при обработке фото: {e}")
-        await message.answer("Произошла ошибка при обработке изображения.")
-    finally:
-        await status_message.delete()
-
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
+
 @dp.message(Command("start", prefix="/!"))
 async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
+
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
 •🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
@@ -522,6 +480,7 @@ async def cmd_start(message: Message, command: CommandObject):
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
+
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id in disabled_chats:
             disabled_chats.remove(message.chat.id)
@@ -530,6 +489,7 @@ async def cmd_start(message: Message, command: CommandObject):
         await message.answer("Бот включён ✅")
         await message.answer(greet)
         return
+
     await message.answer(greet)
 
 @dp.message(Command("stop", prefix="/!"))
@@ -551,17 +511,13 @@ async def cmd_help(message: Message):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
         )
-        await bot.send_message(chat_id=message.chat.id,
-                               text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:",
-                               reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
-        await bot.send_message(chat_id=message.chat.id,
-                               text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:",
-                               reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
@@ -576,10 +532,12 @@ async def cmd_adminstats(message: Message):
         top_commands = []
     else:
         top_commands = sorted(cmd_usage.items(), key=lambda x: x[1], reverse=True)[:3]
-    text = (f"📊 <b>Статистика бота</b>\n\n"
-            f"Всего сообщений: {total_msgs}\n"
-            f"Уникальных пользователей: {unique_users_count}\n"
-            f"Получено файлов: {files_received}\n\n")
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"Всего сообщений: {total_msgs}\n"
+        f"Уникальных пользователей: {unique_users_count}\n"
+        f"Получено файлов: {files_received}\n\n"
+    )
     if top_commands:
         text += "Топ команд:\n"
         for cmd, cnt in top_commands:
@@ -603,6 +561,7 @@ async def cmd_broadcast(message: Message):
             return
         broadcast_text = text_parts[1]
         broadcast_msg = None
+
     recipients = unique_users.union(unique_groups)
     for recipient in recipients:
         try:
@@ -695,6 +654,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
     cid = message.chat.id
+
     voice_response_requested = False  # исправление UnboundLocalError
 
     # Если админ отвечает на сообщение поддержки
@@ -745,6 +705,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
+        # Новое условие: бот отвечает в группах только при упоминании его имени или при reply на его сообщение
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
         reply_to_bot = (message.reply_to_message and 
@@ -762,7 +723,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 file_bytes = await resp.read()
-        text = await extract_text_from_file(message.document.file_name, file_bytes)
+        text = extract_text_from_file(message.document.file_name, file_bytes)
         if text:
             user_documents[uid] = text
             await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
@@ -777,9 +738,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         user_input = voice_regex.sub("", user_input).strip()
     
     lower_input = user_input.lower()
+
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # Обработка запроса курса валют
+    # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
         amount_str = exchange_match.group(1).replace(',', '.')
@@ -789,10 +751,13 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             amount = 0
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(3)
+    
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
+    
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
+    
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
         if exchange_text is not None:
             if voice_response_requested:
@@ -801,15 +766,17 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 await message.answer(exchange_text)
             return
 
-    # Обработка запроса погоды
+    # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
         week_flag = weather_match.group(3)
-        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)
+        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)  # отдельным поиском
+        
         city_norm = normalize_city_name(city_raw)
+        
         if week_flag:
             days = 7
             mode = ""
@@ -819,6 +786,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         else:
             days = int(days_part) if days_part else 1
             mode = ""
+        
         weather_info = await get_weather_info(city_norm, days, mode)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
@@ -828,37 +796,29 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info)
         return
 
-    # Если вопрос связан с ранее отправленным файлом
+    # Проверка на вопрос по файлу (исправленная позиция, после return)
     if uid in user_documents:
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
                             f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
                             f"Ответь чётко и кратко, основываясь на содержимом файла.")
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
+
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
             await message.answer(gemini_text)
         return
 
-    # Все остальные запросы – обрабатываем через Gemini
+    # Все остальные запросы идут сюда:
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
     if not gemini_text:
         return
-    # Если в ответе присутствуют признаки формулы, отрисовываем её в изображение
-    if any(x in gemini_text for x in ["$", "\\(", "\\[", "\\begin{equation}"]):
-        image_path = render_latex_to_image(gemini_text)
-        if image_path:
-            await bot.send_photo(chat_id=cid, photo=FSInputFile(image_path, filename="formula.png"),
-                                 caption="Вот ваша формула/уравнение. Задайте ваш вопрос.")
-            os.remove(image_path)
-            return
+
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-        for c in chunks:
-            await message.answer(c)
+        await message.answer(gemini_text)
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -870,7 +830,7 @@ def split_smart(text: str, limit: int) -> list[str]:
         if remain <= limit:
             results.append(text[start:].strip())
             break
-        candidate = text[start: start+limit]
+        candidate = text[start : start+limit]
         cut_pos = candidate.rfind('. ')
         if cut_pos == -1:
             cut_pos = candidate.rfind(' ')
@@ -878,7 +838,7 @@ def split_smart(text: str, limit: int) -> list[str]:
                 cut_pos = len(candidate)
         else:
             cut_pos += 1
-        chunk = text[start: start+cut_pos].strip()
+        chunk = text[start : start+cut_pos].strip()
         if chunk:
             results.append(chunk)
         start += cut_pos
@@ -906,6 +866,7 @@ def format_gemini_response(text: str) -> str:
         placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
+
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     text = escape(text)
     for placeholder, block_html in code_blocks.items():
@@ -917,6 +878,7 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
+
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -928,55 +890,143 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
+
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
     text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
+
     return text
 
-async def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
-    if filename.endswith(".txt") or filename.endswith(".py"):
-        return file_bytes.decode("utf-8", errors="ignore")
-    elif filename.endswith(".pdf"):
-        try:
-            from io import BytesIO
-            pdf_stream = BytesIO(file_bytes)
-            reader = PdfReader(pdf_stream)
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception:
-            return ""
-    elif filename.endswith(".docx"):
-        try:
-            import tempfile
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
-                tmpf.write(file_bytes)
-                tmp_path = tmpf.name
-            doc = Document(tmp_path)
-            os.remove(tmp_path)
-            return "\n".join(p.text for p in doc.paragraphs)
-        except Exception:
-            return ""
-    return ""
+IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
+NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
+INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
+                 "кто твой создатель", "чей ты бот", "кем ты был создан",
+                 "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"]
+OWNER_REPLIES = [
+    "Я — <b>VAI</b>, создан командой <i>Vandili</i> 😎",
+    "Мой создатель — <b>Vandili</b>. Я работаю для них 😉",
+    "Я принадлежу <i>Vandili</i>, они моя команда ✨",
+    "Создан <b>Vandili</b> — именно они дали мне жизнь 🤝",
+    "Я бот <b>Vandili</b>. Всё просто 🤗",
+    "Я продукт <i>Vandili</i>. Они мои создатели 😇"
+]
+
+RU_EN_DICT = {
+    "обезьяна": "monkey",
+    "тигр": "tiger",
+    "кошка": "cat",
+    "собака": "dog",
+    "пейзаж": "landscape",
+    "чайка": "seagull",
+    "париж": "paris",
+    "утконос": "platypus",
+    "пудель": "poodle",
+    "медоед": "honey badger"
+}
+
+async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
+    if not prompt:
+        return None
+    url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
+                    return None
+                data = await response.json()
+                if "urls" not in data or "regular" not in data["urls"]:
+                    logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
+                    return None
+                return data["urls"]["regular"]
+    except Exception as e:
+        logging.warning(f"Ошибка при получении изображения: {e}")
+    return None
+
+def fallback_translate_to_english(rus_word: str) -> str:
+    try:
+        project_id = "gen-lang-client-0588633435"
+        location = "global"
+        parent = f"projects/{project_id}/locations/{location}"
+        response = translate_client.translate_text(
+            parent=parent,
+            contents=[rus_word],
+            mime_type="text/plain",
+            source_language_code="ru",
+            target_language_code="en",
+        )
+        return response.translations[0].translated_text
+    except Exception as e:
+        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
+        return rus_word
+
+def generate_short_caption(rus_word: str) -> str:
+    short_prompt = (
+        "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
+        "на русском языке. Не упоминай, что ты ИИ или Google. Старайся не превышать 15 слов.\n\n"
+        f"ЗАДАЧА: Придумай одну короткую, дружелюбную подпись для картинки с «{rus_word}». "
+        "Можно с лёгкой эмоцией или юмором, не более 15 слов."
+    )
+    try:
+        response = model.generate_content([
+            {"role": "user", "parts": [short_prompt]}
+        ])
+        caption = format_gemini_response(response.text.strip())
+        return caption
+    except Exception as e:
+        logging.error(f"[BOT] Error generating short caption: {e}")
+        return rus_word.capitalize()
+
+def parse_russian_show_request(user_text: str):
+    lower_text = user_text.lower()
+    triggered = any(trig in lower_text for trig in IMAGE_TRIGGERS_RU)
+    if not triggered:
+        return (False, "", "", user_text)
+    match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", lower_text)
+    if match:
+        raw_rus_word = match.group(3)
+        raw_rus_word_clean = raw_rus_word.strip(punctuation)
+        parsed = morph.parse(raw_rus_word_clean)
+        if parsed:
+            rus_normal = parsed[0].normal_form
+        else:
+            rus_normal = raw_rus_word_clean
+        rus_word = rus_normal
+    else:
+        rus_word = ""
+        raw_rus_word = ""
+    if raw_rus_word:
+        pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw_rus_word)}"
+        leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
+    else:
+        leftover = user_text
+    RU_EN_DICT_CUSTOM = {
+        "обезьяна": "monkey",
+        "тигр": "tiger",
+        "кошка": "cat",
+        "собака": "dog",
+        "пейзаж": "landscape",
+        "чайка": "seagull",
+        "париж": "paris",
+        "утконос": "platypus",
+        "пудель": "poodle",
+        "медоед": "honey badger"
+    }
+    if rus_word in RU_EN_DICT_CUSTOM:
+        en_word = RU_EN_DICT_CUSTOM[rus_word]
+    else:
+        en_word = fallback_translate_to_english(rus_word)
+    return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
 # ---------------------- Основная функция handle_msg ---------------------- #
 async def handle_msg(message: Message, recognized_text: str = None, voice_response_requested: bool = False):
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
+
     lower_inp = user_input.lower()
-    NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
-    INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
-                     "кто твой создатель", "чей ты бот", "кем ты был создан",
-                     "кто хозяин", "кто твой владелец", "в смысле кто твой создатель"]
-    OWNER_REPLIES = [
-        "Я — <b>VAI</b>, создан командой <i>Vandili</i> 😎",
-        "Мой создатель — <b>Vandili</b>. Я работаю для них 😉",
-        "Я принадлежу <i>Vandili</i>, они моя команда ✨",
-        "Создан <b>Vandili</b> — именно они дали мне жизнь 🤝",
-        "Я бот <b>Vandili</b>. Всё просто 🤗",
-        "Я продукт <i>Vandili</i>. Они мои создатели 😇"
-    ]
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
         if voice_response_requested:
@@ -984,6 +1034,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         else:
             await message.answer(answer)
         return
+
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
         if voice_response_requested:
@@ -992,85 +1043,24 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
             await message.answer(reply_text)
         return
 
-    # Обработка запроса на показ изображения (например, "вай покажи ...")
-    def parse_russian_show_request(user_text: str):
-        IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
-        triggered = any(trig in user_text.lower() for trig in IMAGE_TRIGGERS_RU)
-        if not triggered:
-            return (False, "", "", user_text)
-        match = re.search(r"(покажи( мне)?|хочу увидеть|пришли фото)\s+([\w\d]+)", user_text.lower())
-        if match:
-            raw = match.group(3)
-            raw_clean = raw.strip(punctuation)
-            parsed = morph.parse(raw_clean)
-            rus_word = parsed[0].normal_form if parsed else raw_clean
-        else:
-            rus_word = ""
-        if rus_word:
-            pattern_remove = rf"(покажи( мне)?|хочу увидеть|пришли фото)\s+{re.escape(raw)}"
-            leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
-        else:
-            leftover = user_text
-        RU_EN_DICT_CUSTOM = {
-            "обезьяна": "monkey",
-            "тигр": "tiger",
-            "кошка": "cat",
-            "собака": "dog",
-            "пейзаж": "landscape",
-            "чайка": "seagull",
-            "париж": "paris",
-            "утконос": "platypus",
-            "пудель": "poodle",
-            "медоед": "honey badger"
-        }
-        if rus_word in RU_EN_DICT_CUSTOM:
-            en_word = RU_EN_DICT_CUSTOM[rus_word]
-        else:
-            en_word = rus_word  # Можно заменить на реальный перевод
-        return (True, rus_word, en_word, leftover)
-
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
+
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
     image_url = None
     if show_image:
-        async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
-            if not prompt:
-                return None
-            url = f"https://api.unsplash.com/photos/random?query={prompt}&client_id={access_key}"
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
-                        if response.status != 200:
-                            logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
-                            return None
-                        data = await response.json()
-                        if "urls" not in data or "regular" not in data["urls"]:
-                            logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
-                            return None
-                        return data["urls"]["regular"]
-            except Exception as e:
-                logging.warning(f"Ошибка при получении изображения: {e}")
-            return None
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
 
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
+
     if voice_response_requested:
         if not gemini_text:
             gemini_text = "Нет ответа для голосового сообщения."
         await send_voice_message(cid, gemini_text)
         return
-    # Если ответ от Gemini содержит признаки формул, отрисовываем его в изображение
-    if gemini_text and any(x in gemini_text for x in ["$", "\\(", "\\[", "\\begin{equation}"]):
-        image_path = render_latex_to_image(gemini_text)
-        if image_path:
-            await bot.send_photo(chat_id=cid, photo=FSInputFile(image_path, filename="formula.png"),
-                                 caption="Вот ваша формула/уравнение. Задайте ваш вопрос.")
-            os.remove(image_path)
-            return
 
     if image_url:
         async with aiohttp.ClientSession() as sess:
@@ -1093,7 +1083,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
-    return
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
@@ -1111,11 +1100,11 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         smart_prompt = ("Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
                         "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n")
         full_prompt = smart_prompt + full_prompt
+
     if show_image and rus_word and not leftover:
-        def generate_short_caption(rus_word: str) -> str:
-            return f"Это изображение {rus_word.capitalize()}."
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
+
     conversation = chat_history.setdefault(cid, [])
     conversation.append({"role": "user", "parts": [full_prompt]})
     if len(conversation) > 8:
@@ -1139,11 +1128,14 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     return gemini_text
 
 # ---------------------- Новый блок для обработки запроса курса валют ---------------------- #
-# EXCHANGE_PATTERN определён выше
+# Используем универсальное регулярное выражение, чтобы поддержать варианты типа "1 доллар сум" или "1 долар в сум".
+EXCHANGE_PATTERN = re.compile(
+    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+)
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main()
