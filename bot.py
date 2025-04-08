@@ -779,11 +779,15 @@ async def handle_photo_message(message: Message):
             try:
                 img_bytes = latex_to_image(extracted_latex)
                 latex_file = FSInputFile(img_bytes, filename="formula.png")
+                caption, rest = split_caption_and_text("🧾 Текст с картинки считан. Задайте ваш вопрос по картинке.")
                 await safe_send_photo(
                     chat_id=message.chat.id,
                     photo=latex_file,
-                    caption="🧾 Текст с картинки считан. Задайте ваш вопрос по картинке."
+                    caption=caption,
+                    **thread(message)
                 )
+                for c in rest:
+                    await message.answer(c, **thread(message))
             except Exception as e:
                 await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e))}</code>")
         elif text_raw:
