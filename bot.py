@@ -55,7 +55,6 @@ def latex_to_image(latex_code: str) -> BytesIO:
         ax.text(0.5, 0.5, f"${latex_code}$", fontsize=24, ha='center', va='center')
         ax.axis('off')
         fig.tight_layout(pad=1)
-
         img_bytes = BytesIO()
         plt.savefig(img_bytes, format='png', bbox_inches='tight', dpi=120, transparent=True)
         plt.close(fig)
@@ -456,7 +455,6 @@ def emoji_for_condition(text: str) -> str:
 async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     if not WEATHERAPI_KEY:
         return "⛅️ API ключ для погоды не найден."
-
     try:
         async with aiohttp.ClientSession() as session:
             params = {
@@ -474,14 +472,10 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
     except Exception as e:
         logging.error(f"[WEATHER] Ошибка получения погоды: {e}")
         return "Ошибка при получении прогноза погоды."
-
     location = data.get("location", {})
     forecast = data.get("forecast", {}).get("forecastday", [])
     current = data.get("current", {})
-
     location_name = location.get("name", city).capitalize()
-
-    # Режим "завтра" или "послезавтра"
     if mode in ["завтра", "послезавтра"]:
         index = 1 if mode == "завтра" else 2
         if index >= len(forecast):
@@ -493,8 +487,6 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
         tmax = day["day"]["maxtemp_c"]
         emoji = emoji_for_condition(text)
         return f"<b>Погода в {location_name} на {mode}:</b>\n{date}: {text} {emoji}, от {tmin}°C до {tmax}°C"
-
-    # Прогноз на несколько дней
     if days > 1:
         lines = [f"<b>Прогноз погоды в {location_name}:</b>"]
         for day in forecast[:days]:
@@ -505,8 +497,6 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
             tmax = day["day"]["maxtemp_c"]
             lines.append(f"• {date} — {text} {emoji}, {tmin}..{tmax}°C")
         return "\n".join(lines)
-
-    # Текущая погода
     condition = current.get("condition", {}).get("text", "")
     emoji = emoji_for_condition(condition)
     temp = current.get("temp_c")
@@ -542,7 +532,6 @@ from aiogram.filters import CommandObject
 async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
-
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
 •🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
@@ -550,12 +539,11 @@ async def cmd_start(message: Message, command: CommandObject):
 •❓Отвечаю на вопросы по содержимому файла.
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
-•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
+•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня".
+•💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д.
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
-
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id in disabled_chats:
             disabled_chats.remove(message.chat.id)
@@ -564,7 +552,6 @@ async def cmd_start(message: Message, command: CommandObject):
         await message.answer("Бот включён ✅")
         await message.answer(greet)
         return
-
     await message.answer(greet)
 
 @dp.message(Command("stop", prefix="/!"))
@@ -636,7 +623,6 @@ async def cmd_broadcast(message: Message):
             return
         broadcast_text = text_parts[1]
         broadcast_msg = None
-
     recipients = unique_users.union(unique_groups)
     for recipient in recipients:
         try:
@@ -726,16 +712,12 @@ async def handle_photo_message(message: Message):
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
-
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
-
         image_rgb = Image.open(BytesIO(photo_bytes)).convert("RGB")
-
         # 1. Пробуем распознать текст
         text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
-
         # 2. Пробуем распознать формулу
         extracted_latex = ""
         if ocr:
@@ -749,17 +731,12 @@ async def handle_photo_message(message: Message):
                     extracted_latex = "\\int \\frac{x^2}{1 - x^2} dx"
                     await message.answer("⚠️ Распознавание формулы дало ошибку, но была применена ближайшая корректная формула:\n"
                                          "<b>\\int \\frac{x^2}{1 - x^2} dx</b>")
-
                 user_images_text[message.from_user.id] = extracted_latex
-
-                # Проверка на длину и фиг. Если слишком длинно — убираем
                 if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
                     logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
                     extracted_latex = ""
-                    # intentionally ignoring is_formula_like
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
-
         # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
         is_formula_like = bool(extracted_latex and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\")))
         if is_formula_like:
@@ -777,7 +754,6 @@ async def handle_photo_message(message: Message):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpf:
                     tmpf.write(img_bytes.getbuffer())
                     tmp_path = tmpf.name
-
                 latex_file = FSInputFile(tmp_path, filename="formula.png")
                 caption, rest = split_caption_and_text("🧾 Текст с картинки считан. Задайте ваш вопрос по картинке.")
                 await bot.send_photo(
@@ -788,13 +764,11 @@ async def handle_photo_message(message: Message):
                 )
                 for c in rest:
                     await message.answer(c, **thread(message))
-
                 os.remove(tmp_path)
-
                 for c in rest:
                     await message.answer(c, **thread(message))
             except Exception as e:
-                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e))}</code>")
+                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e)))}</code>")
         elif text_raw:
             user_images_text[message.from_user.id] = text_raw
             prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
@@ -802,7 +776,6 @@ async def handle_photo_message(message: Message):
             await message.answer(answer)
         else:
             await message.answer("❌ Не удалось распознать текст или формулу на изображении.")
-
     except Exception as e:
         logging.error(f"PHOTO PROCESSING ERROR: {traceback.format_exc()}")
         await message.answer("⚠️ Ошибка обработки изображения. Проверь его формат.")
@@ -813,21 +786,18 @@ async def handle_all_messages(message: Message):
     formula = ""
     voice_response_requested = False
     cid = message.chat.id
-
     if user_input.lower().startswith("реши:"):
         formula = user_input[5:].strip()
-
     # Если это "реши: ..."
     if formula:
         prompt = (
-            f"Реши следующий интеграл или математическое выражение, представленное в LaTeX:\n\n"
+            f"Реши следующий интеграл или математическое выражение, представленное в LaTeX. "
+            "Оборачивай все формулы в конструкции \\[ ... \\].\n\n"
             f"\\[{formula}\\]\n\n"
-            f"Покажи решение пошагово. Объясни каждый шаг, если он неочевиден. "
-            f"Не добавляй преобразований, если они не нужны. Не пиши модуль, если это не вытекает из условия."
+            f"Покажи решение пошагово. Объясни каждый шаг."
         )
         response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-
-        # Если в ответе есть формулы — высылаем их картинками
+        # Если в ответе есть формулы – отрисовываем их картинками
         formulas = extract_latex_blocks(response)
         if formulas:
             for i, formula_img in enumerate(formulas):
@@ -837,8 +807,6 @@ async def handle_all_messages(message: Message):
                     await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
                 except Exception as e:
                     logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
-
-        # Отправляем исходную формулу тоже
         try:
             img_bytes = latex_to_image(formula)
             latex_file = FSInputFile(img_bytes, filename="formula.png")
@@ -850,7 +818,6 @@ async def handle_all_messages(message: Message):
             logging.warning(f"[BOT] Ошибка отрисовки начальной формулы: {e}")
             await message.answer(response or "⚠️ Не удалось отрисовать формулу, но вот ответ:")
         return
-
     await handle_all_messages_impl(message, user_input)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
@@ -858,9 +825,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
     cid = message.chat.id
-
     voice_response_requested = False  # Чтоб избежать ошибок
-
     # Если админ отвечает на сообщение поддержки
     if message.chat.id == ADMIN_ID and message.reply_to_message:
         original_id = message.reply_to_message.message_id
@@ -871,7 +836,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             except Exception as e:
                 logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
-
     # Если пользователь только что нажал кнопку "Написать в поддержку"
     if uid in support_mode_users:
         support_mode_users.discard(uid)
@@ -904,7 +868,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
-
     # Если бот отключён в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
@@ -917,7 +880,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                         message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower())
         if not (mentioned or reply_to_bot):
             return
-
     # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
@@ -933,16 +895,13 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         else:
             await message.answer("⚠️ Не удалось извлечь текст из файла.")
         return
-
     # Проверка запроса на ответ голосом
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     if voice_regex.search(user_input):
         voice_response_requested = True
         user_input = voice_regex.sub("", user_input).strip()
-
     lower_input = user_input.lower()
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
-
     # Запрос курса валют
     exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё$€₽¥]+)\s*(в|to)\s*([a-zа-яё$€₽¥]+)", lower_input)
     if exchange_match:
@@ -953,13 +912,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             amount = 0
         from_curr_raw = exchange_match.group(2)
         to_curr_raw = exchange_match.group(4)
-
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
-
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
-
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
         if exchange_text is not None:
             if voice_response_requested:
@@ -967,7 +923,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             else:
                 await message.answer(exchange_text)
             return
-
     # Исправленная обработка запроса погоды
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
@@ -976,9 +931,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         days_part = weather_match.group(2)
         week_flag = weather_match.group(3)
         mode_flag = re.search(r"(завтра|послезавтра)", lower_input)
-
         city_norm = normalize_city_name(city_raw)
-
         if week_flag:
             days = 7
             mode = ""
@@ -988,7 +941,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         else:
             days = int(days_part) if days_part else 1
             mode = ""
-
         weather_info = await get_weather_info(city_norm, days, mode)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
@@ -997,27 +949,27 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         else:
             await message.answer(weather_info)
         return
-
-    # Если в user_images_text есть что-то, то пользователь продолжил разговор о картинке
+    # ======= Распознан текст с изображения ======= #
     if uid in user_images_text:
         extracted = user_images_text[uid]
-        is_latex_formula = bool(extracted and (re.search(r'[=+\-\^\\]', extracted) or extracted.startswith("\\")))
-
+        # Проверяем, выглядит ли это как LaTeX-формула
+        is_latex_formula = bool(extracted and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted) or extracted.strip().startswith("\\")))
         if is_latex_formula:
             question_lower = user_input.lower()
+            # Добавляем инструкцию для LLM, чтобы она выводила формулы в конструкции \[ ... \]
             if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower or "интеграл" in question_lower:
                 prompt = (
-                    f"Реши следующее математическое выражение в LaTeX:\n\n"
+                    f"Реши следующее математическое выражение в LaTeX. "
+                    "Оборачивай все формулы в конструкции \\[ ... \\]:\n\n"
                     f"\\[{extracted}\\]\n\n"
-                    f"Покажи решение пошагово, с объяснениями. Не добавляй преобразований, если они не нужны. "
+                    f"Покажи решение пошагово с подробными объяснениями."
                 )
             else:
                 prompt = (
                     f"Формула, распознанная с изображения:\n\n\\[{extracted}\\]\n\n"
                     f"Пользователь спрашивает: {user_input}\n\n"
-                    f"Ответь строго по теме, используй формулу как контекст."
+                    f"Ответь строго по теме и обязательно оборачивай все формулы в конструкции \\[ ... \\]."
                 )
-
             response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
             formulas = extract_latex_blocks(response)
             if formulas:
@@ -1028,7 +980,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                         await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
                     except Exception as e:
                         logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
-
             try:
                 img_bytes = latex_to_image(extracted)
                 latex_file = FSInputFile(img_bytes, filename="formula.png")
@@ -1039,35 +990,29 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             except Exception as e:
                 logging.warning(f"[BOT] Ошибка отрисовки формулы: {e}")
                 await message.answer(response or "⚠️ Не удалось отрисовать формулу, но вот ответ:")
-
         else:
             prompt = (
-                f"На изображении был распознан следующий текст:\n\n{extracted}\n\n"
+                f"На изображении распознан следующий текст:\n\n{extracted}\n\n"
                 f"Пользователь спрашивает: {user_input}\n\n"
                 f"Ответь по его содержимому."
             )
             response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
             await message.answer(response)
-
         del user_images_text[uid]
         return
-
-    # Если пользователь ранее отправлял документ:
     if uid in user_documents:
-        # Ваш код логики работы с документом, если нужно.
         return
-
-    # Все остальные запросы идут сюда:
+    # Все остальные запросы:
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
     if not gemini_text:
         return
-
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+    return
 
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
@@ -1119,7 +1064,6 @@ def format_gemini_response(text: str) -> str:
         placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
         code_blocks[placeholder] = f'<pre><code class="language-{lang}">{code}</code></pre>'
         return placeholder
-
     text = re.sub(r"```(\w+)?\n([\s\S]+?)```", extract_code, text)
     text = escape(text)
     for placeholder, block_html in code_blocks.items():
@@ -1131,7 +1075,6 @@ def format_gemini_response(text: str) -> str:
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I am a text-based model.*cannot directly show images\.)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(I can’t show images directly\.)", "", text, flags=re.IGNORECASE)
-
     lines = text.split('\n')
     new_lines = []
     for line in lines:
@@ -1143,14 +1086,12 @@ def format_gemini_response(text: str) -> str:
         else:
             new_lines.append(line)
     text = '\n'.join(new_lines).strip()
-
     text = re.sub(r"(?i)\bi am a large language model\b", "I am VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bi'm a large language model\b", "I'm VAI, created by Vandili", text)
     text = re.sub(r"(?i)\bgoogle\b", "Vandili", text)
     text = re.sub(r"я большая языковая модель(?:.*?)(?=\.)", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я большая языковая модель", "Я VAI, создан командой Vandili", text, flags=re.IGNORECASE)
     text = re.sub(r"я\s*—\s*большая языковая модель", "Я — VAI, создан командой Vandili", text, flags=re.IGNORECASE)
-
     return text
 
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
@@ -1278,7 +1219,6 @@ def parse_russian_show_request(user_text: str):
 async def handle_msg(message: Message, recognized_text: str = None, voice_response_requested: bool = False):
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
-
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
@@ -1287,7 +1227,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         else:
             await message.answer(answer)
         return
-
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
         if voice_response_requested:
@@ -1295,26 +1234,20 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         else:
             await message.answer(reply_text)
         return
-
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
-
     leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
-
     image_url = None
     if show_image:
         image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
-
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
-
     if voice_response_requested:
         if not gemini_text:
             gemini_text = "Нет ответа для голосового сообщения."
         await send_voice_message(cid, gemini_text)
         return
-
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -1353,11 +1286,9 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         smart_prompt = ("Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
                         "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n")
         full_prompt = smart_prompt + full_prompt
-
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
-
     conversation = chat_history.setdefault(cid, [])
     conversation.append({"role": "user", "parts": [full_prompt]})
     if len(conversation) > 8:
