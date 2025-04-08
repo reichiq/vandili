@@ -751,13 +751,14 @@ async def handle_photo_message(message: Message):
                     extracted_latex = "\\int \\frac{x^2}{1 - x^2} dx"
                     await message.answer("⚠️ Распознавание формулы дало ошибку, но была применена ближайшая корректная формула:\n"
                                          "<b>\\int \\frac{x^2}{1 - x^2} dx</b>")
-                    user_images_text[message.from_user.id] = extracted_latex
+                
+                user_images_text[message.from_user.id] = extracted_latex
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
-                    if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
-                        logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
-                        extracted_latex = ""
-                        is_formula_like = False
+                if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+                    logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
+                    extracted_latex = ""
+                    is_formula_like = False
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
@@ -982,7 +983,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         if is_latex_formula:
             question_lower = user_input.lower()
 
-            if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower:
+            if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower or "интеграл" in question_lower:
                 prompt = (
                     f"Реши следующее математическое выражение в LaTeX:\n\n"
                     f"\\[{extracted}\\]\n\n"
