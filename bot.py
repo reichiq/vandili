@@ -400,7 +400,7 @@ def simple_transliterate(s: str) -> str:
         'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
         'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
         'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts','ч': 'ch',
-        'ш': 'sh','щ': 'sch','ъ': '',  'ы': 'y', 'ь': '',
+        'ш': 'sh','щ': 'sch','ъ': '', 'ы': 'y', 'ь': '',
         'э': 'e', 'ю': 'yu','я': 'ya'
     }
     result = []
@@ -727,16 +727,16 @@ async def handle_photo_message(message: Message):
         # --- Попытка распознать обычный текст ---
         text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
         # --- Определяем, похоже ли на формулу ---
-        # Убираем проверку is_latex_valid() из условия для большей гибкости
+        # Для большей гибкости проверки убрана функция is_latex_valid() из условия
         is_formula_like = bool(
             extracted_latex and 
             (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\"))
         )
-        # Если формула не проходит полную валидацию, выводим предупреждение, но продолжаем
-        if extracted_latex and not is_latex_valid(extracted_latex):
-            await message.answer("⚠️ Обнаружена формула, которая может быть некорректной. Попробую отобразить её.")
         uid = message.from_user.id
         if is_formula_like:
+            # Если найденная формула не проходит полную валидацию, предупреждаем пользователя, но продолжаем
+            if extracted_latex and not is_latex_valid(extracted_latex):
+                await message.answer("⚠️ Обнаружена формула, которая может быть некорректной. Попробую отобразить её.")
             user_images_text[uid] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
@@ -861,8 +861,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
-        reply_to_bot = (message.reply_to_message and 
-                        message.reply_to_message.from_user and 
+        reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and 
                         message.reply_to_message.from_user.username and 
                         message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower())
         if not (mentioned or reply_to_bot):
@@ -1304,7 +1303,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         notice_task = asyncio.create_task(show_processing_notice())
         await bot.send_chat_action(chat_id=cid, action="typing")
         resp = model.generate_content(conversation)
-        await notice_task
+        await notice_task  # ждём завершения задачи
         if processing_message:
             try:
                 await processing_message.delete()
