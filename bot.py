@@ -400,7 +400,7 @@ def simple_transliterate(s: str) -> str:
         'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
         'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
         'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts','ч': 'ch',
-        'ш': 'sh','щ': 'sch','ъ': '', 'ы': 'y', 'ь': '',
+        'ш': 'sh','щ': 'sch','ъ': '',  'ы': 'y', 'ь': '',
         'э': 'e', 'ю': 'yu','я': 'ya'
     }
     result = []
@@ -727,16 +727,11 @@ async def handle_photo_message(message: Message):
         # --- Попытка распознать обычный текст ---
         text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
         # --- Определяем, похоже ли на формулу ---
-        # Для большей гибкости проверки убрана функция is_latex_valid() из условия
-        is_formula_like = bool(
-            extracted_latex and 
-            (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\"))
-        )
+        # Если формула не проходит полную валидацию, выводим предупреждение, но продолжаем
+        if extracted_latex and not is_latex_valid(extracted_latex):
+            await message.answer("⚠️ Обнаружена формула, которая может быть некорректной. Попробую отобразить её.")
         uid = message.from_user.id
-        if is_formula_like:
-            # Если найденная формула не проходит полную валидацию, предупреждаем пользователя, но продолжаем
-            if extracted_latex and not is_latex_valid(extracted_latex):
-                await message.answer("⚠️ Обнаружена формула, которая может быть некорректной. Попробую отобразить её.")
+        if extracted_latex and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\")):
             user_images_text[uid] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
@@ -771,7 +766,7 @@ async def handle_all_messages(message: Message):
     formula = ""
     voice_response_requested = False
     cid = message.chat.id
-    # Расширенная проверка для ключевых слов, связанных с решением интегралов и формул
+    # Проверка на наличие ключевых слов для решения уравнения/интеграла
     triggers = ["реши", "найди", "интеграл", "помоги", "распиши"]
     if any(t in user_input.lower() for t in triggers):
         if user_input.lower().startswith("реши:"):
@@ -788,6 +783,7 @@ async def handle_all_messages(message: Message):
             "Покажи решение пошагово с подробными объяснениями."
         )
         response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+        # Отправляем найденные формулы как картинки
         formulas = extract_latex_blocks(response)
         if formulas:
             for i, formula_img in enumerate(formulas):
@@ -861,7 +857,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
-        reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and 
+        reply_to_bot = (message.reply_to_message and 
+                        message.reply_to_message.from_user and 
                         message.reply_to_message.from_user.username and 
                         message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower())
         if not (mentioned or reply_to_bot):
@@ -980,7 +977,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         del user_images_text[uid]
         return
     if uid in user_documents:
-        # Логика работы с документом (если требуется)
         return
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
     if not gemini_text:
@@ -1275,6 +1271,13 @@ async def group_show_request(message: Message):
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     """
     Вызывает модель Gemini для генерации ответа и визуализирует все формулы как картинки.
+    
+    Логика:
+      - Если запрос связан с интегралом/формулой, требуем оборачивание всех формул в конструкции \[ ... \].
+      - Если пользователь отправил фото с формулой, бот спросит: "Задайте ваш вопрос".
+      - После получения вопроса бот генерирует ответ через модель Gemini.
+      - Если в ответе модели есть формулы, бот извлекает их, отрисовывает и отправляет как картинки.
+      - Если ответ от модели занимает >8 секунд, бот выводит сообщение "⏳ Обрабатываю...", которое удаляется после получения ответа.
     """
     gemini_text = ""
     analysis_keywords = ["почему", "зачем", "на кого", "кто", "что такое", "влияние", "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"]
@@ -1284,6 +1287,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
             "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
             "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n" + full_prompt
         )
+    # Если пользователь отправил фото с чистой формулой (нет текста), генерируем короткую подпись
     if show_image and rus_word and not leftover:
         return generate_short_caption(rus_word)
     conversation = chat_history.setdefault(cid, [])
@@ -1291,7 +1295,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     if len(conversation) > 8:
         conversation.pop(0)
     try:
-        # Если ответ занимает более 8 секунд, выводим сообщение "Обрабатываю..."
+        # Если ответ занимает более 8 секунд, выводим сообщение "⏳ Обрабатываю..."
         processing_message = None
         async def show_processing_notice():
             nonlocal processing_message
@@ -1303,7 +1307,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         notice_task = asyncio.create_task(show_processing_notice())
         await bot.send_chat_action(chat_id=cid, action="typing")
         resp = model.generate_content(conversation)
-        await notice_task  # ждём завершения задачи
+        await notice_task  # Ждем завершения задачи
         if processing_message:
             try:
                 await processing_message.delete()
