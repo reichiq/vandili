@@ -96,6 +96,9 @@ WEATHER_API_KEY = str(os.getenv("WEATHER_API_KEY"))
 
 logging.basicConfig(level=logging.INFO)
 
+# Инициализация Google Translate client (убедитесь, что переменная окружения GOOGLE_APPLICATION_CREDENTIALS установлена)
+translate_client = translate.Client()
+
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 morph = MorphAnalyzer()
@@ -106,7 +109,6 @@ model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
-
 def load_stats() -> dict:
     if not os.path.exists(STATS_FILE):
         return {"messages_total": 0, "files_received": 0, "commands_used": {}}
@@ -120,16 +122,13 @@ def load_stats() -> dict:
     except Exception as e:
         logging.warning(f"Не удалось загрузить stats.json: {e}")
         return {"messages_total": 0, "files_received": 0, "commands_used": {}}
-
 def save_stats():
     try:
         with open(STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.warning(f"Не удалось сохранить stats.json: {e}")
-
 stats = load_stats()
-
 support_mode_users = set()
 support_reply_map = {}  # {admin_msg_id: user_id}
 chat_history = {}
@@ -137,7 +136,6 @@ user_documents = {}
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
-
 def load_disabled_chats() -> set:
     if not os.path.exists(DISABLED_CHATS_FILE):
         return set()
@@ -148,20 +146,17 @@ def load_disabled_chats() -> set:
     except Exception as e:
         logging.warning(f"[BOT] Не удалось загрузить disabled_chats: {e}")
         return set()
-
 def save_disabled_chats(chats: set):
     try:
         with open(DISABLED_CHATS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(chats), f)
     except Exception as e:
         logging.warning(f"[BOT] Не удалось сохранить disabled_chats: {e}")
-
 disabled_chats = load_disabled_chats()
 
 # ---------------------- Persistent Unique Users и Groups ---------------------- #
 UNIQUE_USERS_FILE = "unique_users.json"
 UNIQUE_GROUPS_FILE = "unique_groups.json"
-
 def load_unique_users() -> set:
     if not os.path.exists(UNIQUE_USERS_FILE):
         return set()
@@ -172,14 +167,12 @@ def load_unique_users() -> set:
     except Exception as e:
         logging.warning(f"Не удалось загрузить уникальных пользователей: {e}")
         return set()
-
 def save_unique_users(users: set):
     try:
         with open(UNIQUE_USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(users), f)
     except Exception as e:
         logging.warning(f"Не удалось сохранить уникальных пользователей: {e}")
-
 def load_unique_groups() -> set:
     if not os.path.exists(UNIQUE_GROUPS_FILE):
         return set()
@@ -190,14 +183,12 @@ def load_unique_groups() -> set:
     except Exception as e:
         logging.warning(f"Не удалось загрузить уникальные группы: {e}")
         return set()
-
 def save_unique_groups(groups: set):
     try:
         with open(UNIQUE_GROUPS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(groups), f)
     except Exception as e:
         logging.warning(f"Не удалось сохранить уникальные группы: {e}")
-
 unique_users = load_unique_users()
 unique_groups = load_unique_groups()
 
@@ -864,7 +855,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        # Если текст длинный, разбиваем его
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
@@ -1020,7 +1010,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
             leftover = re.sub(pattern_remove, "", user_text, flags=re.IGNORECASE).strip()
         else:
             leftover = user_text
-        # Пример перевода или словарь
         RU_EN_DICT_CUSTOM = {
             "обезьяна": "monkey",
             "тигр": "tiger",
@@ -1036,7 +1025,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         if rus_word in RU_EN_DICT_CUSTOM:
             en_word = RU_EN_DICT_CUSTOM[rus_word]
         else:
-            en_word = rus_word  # можно заменить на реальный перевод
+            en_word = rus_word  # Можно заменить на реальный перевод
         return (True, rus_word, en_word, leftover)
 
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
@@ -1047,7 +1036,6 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
 
     image_url = None
     if show_image:
-        # Получаем случайное изображение с Unsplash
         async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
             if not prompt:
                 return None
@@ -1123,9 +1111,8 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
                         "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n")
         full_prompt = smart_prompt + full_prompt
     if show_image and rus_word and not leftover:
-        # Генерация короткой подписи для запроса на показ изображения
         def generate_short_caption(rus_word: str) -> str:
-            return f"Это изображение {rus_word.capitalize()}."  # можно заменить на более креативный вариант
+            return f"Это изображение {rus_word.capitalize()}."
         gemini_text = generate_short_caption(rus_word)
         return gemini_text
     conversation = chat_history.setdefault(cid, [])
