@@ -987,9 +987,6 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(weather_info)
         return
 
-    if uid in user_documents:
-        return
-
         # ======= Распознан текст с изображения =======
     if uid in user_images_text:
         extracted = user_images_text[uid]
@@ -1046,6 +1043,9 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             await message.answer(response)
 
         del user_images_text[uid]
+        return
+
+    if uid in user_documents:
         return
 
     # Все остальные запросы идут сюда:
