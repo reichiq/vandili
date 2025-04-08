@@ -242,8 +242,10 @@ def normalize_city_name(raw_city: str) -> str:
     return " ".join(norm_words)
 
 # ---------------------- Словарь базовых форм валют (расширенный) ---------------------- #
+# Добавлено правило для "долар" с одной "л" для обработки опечаток
 CURRENCY_SYNONYMS = {
     "доллар": "USD", "доллары": "USD", "долларов": "USD",
+    "долар": "USD",
     "евро": "EUR",
     "рубль": "RUB", "рубли": "RUB", "рублей": "RUB",
     "юань": "CNY", "юани": "CNY",
@@ -286,6 +288,12 @@ async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
             "Курс в банках и на биржах может отличаться.")
+
+# Новый универсальный шаблон для запроса курса валют
+# Он обрабатывает запросы вида: "1 доллар сум" и "1 доллар в сум", а также с английскими обозначениями.
+EXCHANGE_PATTERN = re.compile(
+    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+)
 
 # ---------------------- Функции для погоды ---------------------- #
 async def do_geocoding_request(name: str) -> dict:
@@ -733,8 +741,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # Запрос курса валют
-    exchange_match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё$€₽¥]+)\s*(в|to)\s*([a-zа-яё$€₽¥]+)", lower_input)
+    # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
+    exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
         amount_str = exchange_match.group(1).replace(',', '.')
         try:
@@ -742,14 +750,14 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         except:
             amount = 0
         from_curr_raw = exchange_match.group(2)
-        to_curr_raw = exchange_match.group(4)
-
+        to_curr_raw = exchange_match.group(3)
+    
         from_curr_lemma = normalize_currency_rus(from_curr_raw)
         to_curr_lemma = normalize_currency_rus(to_curr_raw)
-
+    
         from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
         to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
-
+    
         exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
         if exchange_text is not None:
             if voice_response_requested:
@@ -1118,6 +1126,12 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
+
+# ---------------------- Новый блок для обработки запроса курса валют ---------------------- #
+# Используем универсальное регулярное выражение, чтобы поддержать варианты типа "1 доллар сум" или "1 долар в сум".
+EXCHANGE_PATTERN = re.compile(
+    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+)
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
