@@ -12,7 +12,7 @@ from aiogram.types import (
     FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
     CallbackQuery, BufferedInputFile
 )
-from aiogram.client.default import DefaultBotProperties
+# Удалён импорт DefaultBotProperties
 from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
@@ -22,7 +22,8 @@ import tempfile
 from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
-from google.cloud import translate
+# Используем новый клиент Google Translate v3
+from google.cloud import translate_v3 as translate
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
@@ -52,7 +53,7 @@ def init_pix2tex_model():
 
 def render_latex_to_image(latex_code: str) -> str:
     """
-    Принимает LaTeX-формулу (или документ) и возвращает путь к сгенерированному PNG-изображению.
+    Принимает LaTeX-формулу и возвращает путь к сгенерированному PNG-изображению.
     Требует установленного pdflatex и convert (ImageMagick).
     """
     with tempfile.TemporaryDirectory() as tmpdirname:
@@ -96,10 +97,11 @@ WEATHER_API_KEY = str(os.getenv("WEATHER_API_KEY"))
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация Google Translate client (убедитесь, что переменная окружения GOOGLE_APPLICATION_CREDENTIALS установлена)
-translate_client = translate.Client()
+# Инициализируем клиента Google Translate v3
+translate_client = translate.TranslationServiceClient()
 
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+# Инициализируем бота (без DefaultBotProperties, так как он больше не используется)
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 morph = MorphAnalyzer()
 
@@ -504,7 +506,6 @@ async def handle_photo(message: Message):
 
 # ---------------------- Обработчики команд ---------------------- #
 from aiogram.filters import CommandObject
-
 @dp.message(Command("start", prefix="/!"))
 async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
