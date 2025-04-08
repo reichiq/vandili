@@ -705,71 +705,63 @@ async def handle_voice_message(message: Message):
 @dp.message(F.photo)
 async def handle_photo_message(message: Message):
     _register_message_stats(message)
+
+    # ⏳ Сообщение, если обработка может занять время
+    processing = await message.answer("⏳ Обрабатываю изображение, подождите...")
+
     try:
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 photo_bytes = await resp.read()
+
         image_rgb = Image.open(BytesIO(photo_bytes)).convert("RGB")
-        # 1. Пробуем распознать текст
-        text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
-        # 2. Пробуем распознать формулу
+
+        # --- Попытка распознать формулу ---
         extracted_latex = ""
-        if ocr:
-            try:
-                extracted_latex = ocr(image_rgb).strip()
-                logging.info(f"[OCR] Распознанный LaTeX до фильтрации: {extracted_latex}")
-                await message.answer(f"🔎 Распознанная формула:\n<code>{escape(extracted_latex)}</code>")
-                extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
-                if "\\frac{}" in extracted_latex or re.search(r"\\frac\s*\{[^\}]*\}\s*\{[^\}]*\}", extracted_latex) is None:
-                    logging.warning(f"[LaTeX] Подозрительная формула, возможно auto-fix: {extracted_latex}")
-                    extracted_latex = "\\int \\frac{x^2}{1 - x^2} dx"
-                    await message.answer("⚠️ Распознавание формулы дало ошибку, но была применена ближайшая корректная формула:\n<b>\\int \\frac{x^2}{1 - x^2} dx</b>")
-                user_images_text[message.from_user.id] = extracted_latex
-                if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
-                    logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
-                    extracted_latex = ""
-            except Exception as e:
-                logging.error(f"LatexOCR error: {traceback.format_exc()}")
-        # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
-        is_formula_like = bool(extracted_latex and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\")))
+        try:
+            extracted_latex = ocr(image_rgb).strip()
+            extracted_latex = re.sub(r"\\frac\s*\{\s*\}\s*\{\s*\}", "", extracted_latex)
+        except Exception as e:
+            logging.warning(f"[OCR] Ошибка при распознавании формулы: {e}")
+            extracted_latex = ""
+
+        # --- Попытка распознать обычный текст ---
+        text_raw = pytesseract.image_to_string(image_rgb, lang="rus+eng").strip()
+
+        # --- Определяем, похоже ли на формулу ---
+        is_formula_like = bool(
+            extracted_latex
+            and (re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex) or extracted_latex.strip().startswith("\\"))
+            and is_latex_valid(extracted_latex)
+        )
+
+        uid = message.from_user.id
         if is_formula_like:
-            if not is_latex_valid(extracted_latex):
-                user_images_text[message.from_user.id] = extracted_latex
-                await message.answer(
-                    "⚠️ Формула распознана, но содержит ошибки и не может быть отображена.\n\n"
-                    f"<b>Распознанная формула:</b>\n<code>{escape(extracted_latex)}</code>\n\n"
-                    "Попробуй вручную подправить формулу и напиши, например:\n<code>реши: исправленная_формула</code>"
-                )
-                return
-            user_images_text[message.from_user.id] = extracted_latex
-            try:
-                img_bytes = latex_to_image(extracted_latex)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpf:
-                    tmpf.write(img_bytes.getbuffer())
-                    tmp_path = tmpf.name
-                latex_file = FSInputFile(tmp_path, filename="formula.png")
-                caption, rest = split_caption_and_text("🧾 Текст с картинки считан. Задайте ваш вопрос по картинке.")
-                await bot.send_photo(chat_id=message.chat.id, photo=latex_file, caption=caption, **thread(message))
-                for c in rest:
-                    await message.answer(c, **thread(message))
-                os.remove(tmp_path)
-                for c in rest:
-                    await message.answer(c, **thread(message))
-            except Exception as e:
-                await message.answer(f"⚠️ Ошибка визуализации формулы: <code>{escape(str(e))}</code>")
+            user_images_text[uid] = extracted_latex
+            img_bytes = latex_to_image(extracted_latex)
+            latex_file = FSInputFile(img_bytes, filename="formula.png")
+            caption, rest = split_caption_and_text("🧾 Формула с изображения считана. Задайте ваш вопрос.")
+            await safe_send_photo(chat_id=message.chat.id, photo=latex_file, caption=caption, **thread(message))
+            for c in rest:
+                await message.answer(c, **thread(message))
         elif text_raw:
-            user_images_text[message.from_user.id] = text_raw
-            prompt = f"Распознанный текст:\n{text_raw}\nОтветь по содержанию:"
-            answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
-            await message.answer(answer)
+            user_images_text[uid] = text_raw
+            caption, rest = split_caption_and_text("📝 Текст с изображения считан. Задайте ваш вопрос.")
+            await message.answer(caption, **thread(message))
+            for c in rest:
+                await message.answer(c, **thread(message))
         else:
             await message.answer("❌ Не удалось распознать текст или формулу на изображении.")
+
     except Exception as e:
-        logging.error(f"PHOTO PROCESSING ERROR: {traceback.format_exc()}")
-        await message.answer("⚠️ Ошибка обработки изображения. Проверь его формат.")
+        logging.error(f"[PHOTO] Ошибка обработки: {traceback.format_exc()}")
+        await message.answer("⚠️ Ошибка при обработке изображения.")
+    finally:
+        await processing.delete()
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -1299,18 +1291,64 @@ async def group_show_request(message: Message):
 
 async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover):
     """
-    Вызывает модель Gemini для генерации ответа.
-    Добавлено требование: все формулы должны быть обернуты в конструкции \[ ... \].
+    Вызывает модель Gemini для генерации ответа и визуализирует все формулы как картинки.
     """
     gemini_text = ""
     analysis_keywords = ["почему", "зачем", "на кого", "кто", "что такое", "влияние", "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"]
     needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
     if needs_expansion:
-        smart_prompt = (
+        full_prompt = (
             "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
-            "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
+            "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n" + full_prompt
         )
-        full_prompt = smart_prompt + full_prompt
+
+    if show_image and rus_word and not leftover:
+        return generate_short_caption(rus_word)
+
+    conversation = chat_history.setdefault(cid, [])
+    conversation.append({"role": "user", "parts": [full_prompt]})
+    if len(conversation) > 8:
+        conversation.pop(0)
+
+    try:
+        await bot.send_chat_action(chat_id=cid, action="typing")
+        resp = model.generate_content(conversation)
+
+        if not resp.candidates:
+            reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
+            logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
+            return "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
+
+        raw_model_text = resp.text
+        conversation.append({"role": "model", "parts": [raw_model_text]})
+        if len(conversation) > 8:
+            conversation.pop(0)
+
+        gemini_text = format_gemini_response(raw_model_text)
+
+        # --- Отправка формул как картинок ---
+        formulas = extract_latex_blocks(gemini_text)
+        for i, formula_img in enumerate(formulas):
+            try:
+                img_bytes = latex_to_image(formula_img)
+                latex_file = FSInputFile(img_bytes, filename=f"formula_{i+1}.png")
+                await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1}")
+            except Exception as e:
+                logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
+
+        # --- Удаление формул из текста и отправка остального текста ---
+        gemini_text_cleaned = re.sub(r"\\\[.+?\\\]|\\\(.+?\\\)", "", gemini_text, flags=re.DOTALL).strip()
+        if gemini_text_cleaned:
+            chunks = split_smart(gemini_text_cleaned, TELEGRAM_MSG_LIMIT)
+            for c in chunks:
+                await bot.send_message(chat_id=cid, text=c)
+
+        return gemini_text
+
+    except Exception as e:
+        logging.error(f"[BOT] Ошибка при генерации Gemini: {e}")
+        return "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+
     # Если просто запрос "покажи X"
     if show_image and rus_word and not leftover:
         gemini_text = generate_short_caption(rus_word)
