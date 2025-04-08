@@ -32,40 +32,14 @@ from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
 
-# ---------------------- Вспомогательная функция для чтения файлов ---------------------- #
-def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
-    if filename.endswith(".txt") or filename.endswith(".py"):
-        return file_bytes.decode("utf-8", errors="ignore")
-    elif filename.endswith(".pdf"):
-        try:
-            with BytesIO(file_bytes) as pdf_stream:
-                reader = PdfReader(pdf_stream)
-                return "\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception:
-            return ""
-    elif filename.endswith(".docx"):
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmpf:
-                tmpf.write(file_bytes)
-                tmp_path = tmpf.name
-            doc = Document(tmp_path)
-            os.remove(tmp_path)
-            return "\n".join(p.text for p in doc.paragraphs)
-        except Exception:
-            return ""
-    return ""
-
-# ---------------------- Инициализация ---------------------- #
-key_path = '/root/vandili/gcloud-key.json'
-credentials = service_account.Credentials.from_service_account_file(key_path)
-translate_client = translate.TranslationServiceClient(credentials=credentials)
-
+# ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # Новый ключ для WeatherAPI.com
 
 logging.basicConfig(level=logging.INFO)
 
@@ -380,107 +354,84 @@ async def geocode_city(city_name: str) -> dict:
     data = await do_geocoding_request(translit_city)
     return data
 
-def weather_code_to_description(code: int) -> str:
-    if code == 0:
-        return "Ясно ☀️"
-    elif code in [1, 2, 3]:
-        return "Облачно ☁️"
-    elif code in [45, 48]:
-        return "Туман 🌫️"
-    elif code in [51, 53, 55]:
-        return "Небольшой дождь 🌦️"
-    elif code in [56, 57]:
-        return "Холодный дождь ❄️"
-    elif code in [61, 63, 65]:
-        return "Дождь 🌧️"
-    elif code in [66, 67]:
-        return "Ледяной дождь 🌨️"
-    elif code in [71, 73, 75]:
-        return "Снег 🌨️"
-    elif code == 77:
-        return "Снежные зерна ❄️"
-    elif code in [80, 81, 82]:
-        return "Ливень 🌦️"
-    elif code in [85, 86]:
-        return "Снежные ливни ❄️"
-    elif code == 95:
-        return "Гроза ⛈️"
-    elif code in [96, 99]:
-        return "Сильная гроза ⛈️"
-    else:
-        return "Неизвестная погода"
+# Новый вспомогательный метод для форматирования погодного описания с добавлением смайлика
+def format_condition(condition_text: str) -> str:
+    weather_emojis = {
+        "ясно": "☀️",
+        "солнечно": "☀️",
+        "облачно": "☁️",
+        "пасмурно": "☁️",
+        "туман": "🌫️",
+        "дождь": "🌧️",
+        "ливень": "🌦️",
+        "снег": "🌨️",
+        "гроза": "⛈️"
+    }
+    lower = condition_text.lower()
+    for key, emoji in weather_emojis.items():
+        if key in lower:
+            return f"{condition_text.capitalize()} {emoji}"
+    return f"{condition_text.capitalize()} 🙂"
 
+# Новая функция получения погоды через WeatherAPI.com
 async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
-    geo_data = await geocode_city(city)
-    if not geo_data:
-        return f"Город {city} не найден."
-    lat = geo_data["lat"]
-    lon = geo_data["lon"]
-    timezone = geo_data["timezone"]
-
-    if mode in ["завтра", "послезавтра"]:
-        days = 2 if mode == "послезавтра" else 1
-
-    if days > 1:
-        # Прогноз на несколько дней
-        weather_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-                       f"&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone={timezone}")
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(weather_url) as resp:
-                    if resp.status != 200:
-                        logging.warning(f"Ошибка получения прогноза погоды: статус {resp.status}")
-                        return "Не удалось получить прогноз погоды."
-                    weather_data = await resp.json()
-        except Exception as e:
-            logging.error(f"Ошибка прогноза погоды: {e}")
-            return "Ошибка при получении прогноза."
-
-        daily = weather_data.get("daily", {})
-        dates = daily.get("time", [])
-        weathercodes = daily.get("weathercode", [])
-        temps_max = daily.get("temperature_2m_max", [])
-        temps_min = daily.get("temperature_2m_min", [])
-
-        if not dates:
-            return "Не удалось получить данные о погоде."
-
-        forecast_lines = [f"<b>Прогноз погоды в {city.capitalize()}:</b>"]
-
-        if mode == "завтра" or mode == "послезавтра":
-            index = 1 if mode == "завтра" else 2
-            desc = weather_code_to_description(weathercodes[index])
-            forecast_lines.append(
-                f"{dates[index]}: {desc}, от {temps_min[index]}°C до {temps_max[index]}°C"
-            )
-            return "\n".join(forecast_lines)
-
-        # обычный прогноз на days дней
-        for i in range(min(days, len(dates))):
-            desc = weather_code_to_description(weathercodes[i])
-            forecast_lines.append(f"• {dates[i]} — {desc}, {temps_min[i]}..{temps_max[i]}°C")
-
-        return "\n".join(forecast_lines)
-
-    # Текущая погода
-    weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone={timezone}"
+    base_url = "http://api.weatherapi.com/v1/forecast.json"
+    params = {
+        "key": WEATHER_API_KEY,
+        "q": city,
+        "days": max(days, 1),
+        "lang": "ru",
+        "aqi": "no",
+        "alerts": "no"
+    }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(weather_url) as resp:
+            async with session.get(base_url, params=params) as resp:
                 if resp.status != 200:
-                    logging.warning(f"Ошибка получения текущей погоды: статус {resp.status}")
-                    return "Не удалось получить текущую погоду."
-                weather_data = await resp.json()
+                    logging.warning(f"Ошибка получения погоды: статус {resp.status}")
+                    return "Не удалось получить данные о погоде."
+                data = await resp.json()
     except Exception as e:
-        logging.error(f"Ошибка текущей погоды: {e}")
-        return "Ошибка при получении текущей погоды."
+        logging.error(f"Ошибка запроса погоды: {e}")
+        return "Ошибка при получении данных о погоде."
 
-    current = weather_data.get("current_weather", {})
-    temp = current.get("temperature")
-    wind = current.get("windspeed")
-    weather_code = current.get("weathercode")
-    description = weather_code_to_description(weather_code)
-    return f"Погода в {city.capitalize()} сейчас: {description}, температура {temp}°C, ветер {wind} км/ч."
+    if days == 1 and not mode:
+        current = data.get("current", {})
+        if not current:
+            return "Не удалось получить текущую погоду."
+        condition_text = current.get("condition", {}).get("text", "Неизвестно")
+        formatted_condition = format_condition(condition_text)
+        temp = current.get("temp_c", "?")
+        wind = current.get("wind_kph", "?")
+        return f"Погода в {city.capitalize()} сейчас: {formatted_condition}, температура {temp}°C, ветер {wind} км/ч."
+    else:
+        forecast_days = data.get("forecast", {}).get("forecastday", [])
+        if mode in ["завтра", "послезавтра"]:
+            index = 1 if mode == "завтра" else 2
+            if len(forecast_days) > index:
+                day_info = forecast_days[index]
+                date = day_info.get("date", "")
+                day = day_info.get("day", {})
+                condition_text = day.get("condition", {}).get("text", "Неизвестно")
+                formatted_condition = format_condition(condition_text)
+                mintemp = day.get("mintemp_c", "?")
+                maxtemp = day.get("maxtemp_c", "?")
+                return f"{date}: {formatted_condition}, температура от {mintemp}°C до {maxtemp}°C."
+            else:
+                return "Нет данных на выбранный день."
+        else:
+            forecast_lines = [f"<b>Прогноз погоды в {city.capitalize()}:</b>"]
+            available_days = min(len(forecast_days), days)
+            for i in range(available_days):
+                day_info = forecast_days[i]
+                date = day_info.get("date", "")
+                day = day_info.get("day", {})
+                condition_text = day.get("condition", {}).get("text", "Неизвестно")
+                formatted_condition = format_condition(condition_text)
+                mintemp = day.get("mintemp_c", "?")
+                maxtemp = day.get("maxtemp_c", "?")
+                forecast_lines.append(f"• {date}: {formatted_condition}, от {mintemp}°C до {maxtemp}°C")
+            return "\n".join(forecast_lines)
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
 async def send_voice_message(chat_id: int, text: str):
@@ -499,7 +450,6 @@ async def send_voice_message(chat_id: int, text: str):
     os.remove(ogg_path)
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
-
 def thread(message: Message) -> dict:
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
         return {"message_thread_id": message.message_thread_id}
@@ -811,7 +761,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 await message.answer(exchange_text)
             return
 
-    # Исправленная обработка запроса погоды
+    # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
