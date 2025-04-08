@@ -778,14 +778,26 @@ async def handle_photo_message(message: Message):
             user_images_text[message.from_user.id] = extracted_latex
             try:
                 img_bytes = latex_to_image(extracted_latex)
-                latex_file = FSInputFile(img_bytes, filename="formula.png")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpf:
+                    tmpf.write(img_bytes.getbuffer())
+                    tmp_path = tmpf.name
+
+                latex_file = FSInputFile(tmp_path, filename="formula.png")
                 caption, rest = split_caption_and_text("🧾 Текст с картинки считан. Задайте ваш вопрос по картинке.")
-                await safe_send_photo(
+                await bot.send_photo(
                     chat_id=message.chat.id,
                     photo=latex_file,
                     caption=caption,
                     **thread(message)
                 )
+                for c in rest:
+                    await message.answer(c, **thread(message))
+
+                os.remove(tmp_path)
+
+
+
+                
                 for c in rest:
                     await message.answer(c, **thread(message))
             except Exception as e:
