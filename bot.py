@@ -1311,8 +1311,28 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         conversation.pop(0)
 
     try:
+                # Стартуем фоновое сообщение "Обрабатываю...", если ответ долгий
+        processing_message = None
+
+        async def show_processing_notice():
+            nonlocal processing_message
+            await asyncio.sleep(8)
+            try:
+                processing_message = await bot.send_message(chat_id=cid, text="⏳ Обрабатываю...")
+            except:
+                pass
+
+        notice_task = asyncio.create_task(show_processing_notice())
+
         await bot.send_chat_action(chat_id=cid, action="typing")
         resp = model.generate_content(conversation)
+        await notice_task
+
+        if processing_message:
+            try:
+                await processing_message.delete()
+            except:
+                pass
 
         if not resp.candidates:
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
@@ -1348,35 +1368,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
     except Exception as e:
         logging.error(f"[BOT] Ошибка при генерации Gemini: {e}")
         return "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
-
-    # Если просто запрос "покажи X"
-    if show_image and rus_word and not leftover:
-        gemini_text = generate_short_caption(rus_word)
-        return gemini_text
-    conversation = chat_history.setdefault(cid, [])
-    conversation.append({"role": "user", "parts": [full_prompt]})
-    if len(conversation) > 8:
-        conversation.pop(0)
-    try:
-        await bot.send_chat_action(chat_id=cid, action="typing")
-        resp = model.generate_content(conversation)
-        if not resp.candidates:
-            reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-            logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-            gemini_text = "⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент."
-        else:
-            raw_model_text = resp.text
-            # Добавляем требование: оборачивай все формулы в конструкции \[ ... \]
-            if "integral" in raw_model_text.lower() or "∫" in raw_model_text:
-                raw_model_text += "\n\nПожалуйста, убедись, что все формулы обернуты в конструкции \\[ ... \\]."
-            gemini_text = format_gemini_response(raw_model_text)
-            conversation.append({"role": "model", "parts": [raw_model_text]})
-            if len(conversation) > 8:
-                conversation.pop(0)
-    except Exception as e:
-        logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-        gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
-    return gemini_text
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
