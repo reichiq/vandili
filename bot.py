@@ -1005,65 +1005,63 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         return
 
         # ======= Распознан текст с изображения =======
-    if uid in user_images_text:
-        extracted = user_images_text[uid]
-        is_latex_formula = bool(re.search(r'[=+\-\^\\]', extracted)) and extracted.startswith("\\")  # грубая эвристика
-    
+if uid in user_images_text:
+    extracted = user_images_text[uid]
+    is_latex_formula = bool(re.search(r'[=+\-\^\\]', extracted)) and extracted.startswith("\\")  # грубая эвристика
 
-        if is_latex_formula:
-            question_lower = user_input.lower()
+    if is_latex_formula:
+        question_lower = user_input.lower()
 
-            if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower or "интеграл" in question_lower:
-                prompt = (
-                    f"Реши следующее математическое выражение в LaTeX:\n\n"
-                    f"\\[{extracted}\\]\n\n"
-                    f"Покажи решение пошагово, с объяснениями. Не добавляй преобразований, если они не нужны. "
-                )
-            else:
-                prompt = (
-                    f"Формула, распознанная с изображения:\n\n\\[{extracted}\\]\n\n"
-                    f"Пользователь спрашивает: {user_input}\n\n"
-                    f"Ответь строго по теме, используй формулу как контекст."
-                )
-
-            response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-            formulas = extract_latex_blocks(response)
-            if formulas:
-                for i, formula in enumerate(formulas):
-                    try:
-                        img_bytes = latex_to_image(formula)
-                        latex_file = FSInputFile(img_bytes, filename=f"formula_{i+1}.png")
-                        await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
-                    except Exception as e:
-                        logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
-                        
-            try:
-                img_bytes = latex_to_image(extracted)
-                latex_file = FSInputFile(img_bytes, filename="formula.png")
-                caption, rest = split_caption_and_text(response or "...")
-                
-                await safe_send_photo(chat_id=cid, photo=latex_file, caption=caption, **thread(message))
-                for c in rest:
-                    await message.answer(c)
-            except Exception as e:
-                logging.warning(f"[BOT] Ошибка отрисовки формулы: {e}")
-                await message.answer(response or "⚠️ Не удалось отрисовать формулу, но вот ответ:")
-            
-        
+        if question_lower.startswith("реши") or "распиши" in question_lower or "помоги" in question_lower or "интеграл" in question_lower:
+            prompt = (
+                f"Реши следующее математическое выражение в LaTeX:\n\n"
+                f"\\[{extracted}\\]\n\n"
+                f"Покажи решение пошагово, с объяснениями. Не добавляй преобразований, если они не нужны. "
+            )
         else:
             prompt = (
-                f"На изображении был распознан следующий текст:\n\n{extracted}\n\n"
+                f"Формула, распознанная с изображения:\n\n\\[{extracted}\\]\n\n"
                 f"Пользователь спрашивает: {user_input}\n\n"
-                f"Ответь по его содержимому."
+                f"Ответь строго по теме, используй формулу как контекст."
             )
-            response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-            await message.answer(response)
 
-        del user_images_text[uid]
-        return
+        response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+        formulas = extract_latex_blocks(response)
+        if formulas:
+            for i, formula_img in enumerate(formulas):
+                try:
+                    img_bytes = latex_to_image(formula_img)
+                    latex_file = FSInputFile(img_bytes, filename=f"formula_{i+1}.png")
+                    await safe_send_photo(chat_id=cid, photo=latex_file, caption=f"📌 Формула {i+1} из ответа", **thread(message))
+                except Exception as e:
+                    logging.warning(f"[BOT] Ошибка отрисовки формулы {i+1}: {e}")
 
-    if uid in user_documents:
-        return
+        try:
+            img_bytes = latex_to_image(extracted)
+            latex_file = FSInputFile(img_bytes, filename="formula.png")
+            caption, rest = split_caption_and_text(response or "...")
+            await safe_send_photo(chat_id=cid, photo=latex_file, caption=caption, **thread(message))
+            for c in rest:
+                await message.answer(c)
+        except Exception as e:
+            logging.warning(f"[BOT] Ошибка отрисовки исходной формулы: {e}")
+            await message.answer(response or "⚠️ Не удалось отрисовать формулу, но вот ответ:")
+
+    else:
+        prompt = (
+            f"На изображении был распознан следующий текст:\n\n{extracted}\n\n"
+            f"Пользователь спрашивает: {user_input}\n\n"
+            f"Ответь по его содержимому."
+        )
+        response = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+        await message.answer(response)
+
+    del user_images_text[uid]
+    return
+
+
+if uid in user_documents:
+    return
 
     # Все остальные запросы идут сюда:
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
