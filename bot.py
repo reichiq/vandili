@@ -7,8 +7,6 @@ import random
 import aiohttp
 import requests
 import pytesseract
-from matplotlib import pyplot as plt
-from matplotlib import rc
 from PIL import Image
 from io import BytesIO
 from aiogram.types import FSInputFile
@@ -91,7 +89,7 @@ import asyncio
 async def safe_send_photo(chat_id, photo, caption="", retries=5, **kwargs):
     for attempt in range(retries):
         try:
-            return await safe_send_photo(chat_id=chat_id, photo=photo, caption=caption, **kwargs)
+            return await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption, **kwargs)
         except Exception as e:
             logging.warning(f"[SEND_PHOTO] Попытка {attempt+1} не удалась: {e}")
             await asyncio.sleep(2)
@@ -442,7 +440,7 @@ async def geocode_city(city_name: str) -> dict:
 
 def emoji_for_condition(text: str) -> str:
     text = text.lower()
-    if "ясно" in text:
+    if "ясно" in text or "солнечно" in text:
         return "☀️"
     elif "облачно" in text or "пасмурно" in text:
         return "☁️"
@@ -756,16 +754,16 @@ async def handle_photo_message(message: Message):
                     user_images_text[message.from_user.id] = extracted_latex
 
         # 🔥 Отбрасываем слишком сложные/мусорные формулы
-                    #if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
-                    #logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
-                    #extracted_latex = ""
-                    #is_formula_like = False
+                    if len(extracted_latex) > 120 or extracted_latex.count('{') > 6:
+                    logging.warning(f"[Formula] Слишком сложная/мусорная формула отброшена: {extracted_latex}")
+                    extracted_latex = ""
+                    is_formula_like = False
             except Exception as e:
                 logging.error(f"LatexOCR error: {traceback.format_exc()}")
 
 
         # 3. Проверяем, похоже ли на формулу и валидно ли LaTeX
-        is_formula_like = bool(re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex))
+        is_formula_like = bool(re.search(r'\\[a-zA-Z]+|[\^_]', extracted_latex)) or extracted_latex.strip().startswith("\\")
         if is_formula_like:
             if not is_latex_valid(extracted_latex):
                 user_images_text[message.from_user.id] = extracted_latex
