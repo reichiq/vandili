@@ -39,7 +39,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # Новый ключ для WeatherAPI.com
+# Приводим к строке для гарантии, что тип правильный (если вдруг значение None)
+WEATHER_API_KEY = str(os.getenv("WEATHER_API_KEY"))
 
 logging.basicConfig(level=logging.INFO)
 
@@ -231,14 +232,9 @@ def normalize_city_name(raw_city: str) -> str:
         w_clean = w.strip(punctuation).lower()
         parsed = morph.parse(w_clean)
         if not parsed:
-            # Если вообще не распарсилось
             norm_words.append(w_clean)
             continue
-
         best = parsed[0]
-        # Если нормальная форма совпадает с исходной
-        # или слишком короткая (например, 'm')
-        # тогда оставляем w_clean
         if best.normal_form == w_clean or len(best.normal_form) < 2:
             norm_words.append(w_clean)
         else:
@@ -359,6 +355,7 @@ def format_condition(condition_text: str) -> str:
     weather_emojis = {
         "ясно": "☀️",
         "солнечно": "☀️",
+        "солнечная": "☀️",  # Добавлено для вариантов "солнечная"
         "облачно": "☁️",
         "пасмурно": "☁️",
         "туман": "🌫️",
@@ -510,7 +507,7 @@ async def cmd_help(message: Message):
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]] 
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
         await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
 
