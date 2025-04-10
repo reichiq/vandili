@@ -781,15 +781,6 @@ async def handle_timezone_setting(message: Message):
             f"Запомнил: <b>{value.capitalize()}</b> ✅\n"
             f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
         )
-        if user_id in pending_note_or_reminder:
-            prev_text = pending_note_or_reminder.pop(user_id)
-            await handle_reminder(
-                type("FakeMessage", (object,), {
-                    "from_user": type("U", (), {"id": user_id})(),
-                    "text": prev_text,
-                    "answer": message.answer
-                })
-            )
 
     else:
         tz_str = value
