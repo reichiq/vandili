@@ -674,12 +674,25 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             try:
                 await send_admin_reply_as_single_message(message, user_id)
                 if message.from_user.id != ADMIN_ID:
-                    sender_name = message.from_user.full_name
+                    sender = message.from_user
+                    sender_name = sender.full_name
+                    sender_username = f"@{sender.username}" if sender.username else f"(ID: <code>{sender.id}</code>)"
+                    try:
+                        user = await bot.get_chat(user_id)
+                        user_name = user.full_name
+                        user_username = f"@{user.username}" if user.username else f"(ID: <code>{user.id}</code>)"
+                    except Exception:
+                        user_name = "пользователь"
+                        user_username = f"(ID: <code>{user_id}</code>)"
                     text_preview = message.text or "[медиа]"
                     await bot.send_message(
                         chat_id=ADMIN_ID,
-                        text=f"👁 <b>{sender_name}</b> ответил пользователю (id: <code>{user_id}</code>):\n\n{escape(text_preview)}"
+                        text=(
+                            f"👁 <b>{sender_name}</b> {sender_username} ответил <b>{user_name}</b> {user_username}:\n\n"
+                            f"{escape(text_preview)}"
+                        )
                     )
+                    
             except Exception as e:
                 logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
