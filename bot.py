@@ -873,7 +873,6 @@ async def handle_timezone_setting(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
 
-    # Попробуем распарсить, если сообщение начинается с "Мой часовой пояс:" или "Мой город:"
     tz_match = re.match(r"(?i)^мой\s+(город|часовой\s+пояс)\s*:?\s*(\S.+)$", text)
     if tz_match:
         setting_type = tz_match.group(1).lower()
@@ -892,13 +891,14 @@ async def handle_timezone_setting(message: Message):
                 f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
             )
         else:
-            tz_str = value  # предполагаем, что пользователь передаёт корректное название timezone, например "Europe/Moscow"
+            tz_str = value
             user_timezones[user_id] = tz_str
             save_timezones(user_timezones)
             await message.answer(
                 f"Часовой пояс установлен: <code>{tz_str}</code>. "
                 f"Теперь я буду использовать его для напоминаний."
             )
+        return  # ✅ ВАЖНО: чтобы не обрабатывалось дальше
     else:
         await message.answer(
             "Чтобы установить часовой пояс, напишите сообщение в формате:\n"
@@ -907,6 +907,7 @@ async def handle_timezone_setting(message: Message):
             "<b>Мой город: Москва</b>",
             parse_mode="HTML"
         )
+        return  # ✅ тоже добавляем return
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
