@@ -71,6 +71,27 @@ STATS_FILE = "stats.json"
 SUPPORT_MAP_FILE = "support_map.json"
 NOTES_FILE = "notes.json"
 REMINDERS_FILE = "reminders.json"
+TIMEZONES_FILE = "timezones.json"
+
+def load_timezones() -> dict:
+    if not os.path.exists(TIMEZONES_FILE):
+        return {}
+    try:
+        with open(TIMEZONES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)  # ключ — user_id (строкой или числом), значение — строка (например, "Europe/Moscow")
+    except Exception as e:
+        logging.warning(f"Не удалось загрузить timezones.json: {e}")
+        return {}
+
+def save_timezones(timezones: dict):
+    try:
+        with open(TIMEZONES_FILE, "w", encoding="utf-8") as f:
+            json.dump(timezones, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"Не удалось сохранить timezones.json: {e}")
+
+# Глобальный словарь для часовых поясов пользователей
+user_timezones = load_timezones()
 
 def load_reminders():
     if not os.path.exists(REMINDERS_FILE):
@@ -758,101 +779,124 @@ async def handle_notes_phrases(message: Message):
             await message.answer("Нет такой заметки 😅")
         return
 
-@dp.message(lambda msg: msg.text and "напомни" in msg.text.lower())
-async def handle_reminder(message: Message):    
+@dp.message(lambda message: message.text and "напомни" in message.text.lower())
+async def handle_reminder(message: Message):
+    import dateparser
+    import pytz
+    from datetime import datetime, timedelta
+
     text = message.text.strip()
     lower = text.lower()
-    # Пример входа: "напомни завтра в 10:00 купить кофе по Токио"
-    # или "напомни 12.05.2025 19:30 полить цветы по UTC+3"
+    user_id = message.from_user.id
 
-    # 1) Убираем слово "напомни"
+    # Убираем слово "напомни"
     raw = re.sub(r"(?i)^напомни\s*", "", text).strip()
-    # raw может быть: "завтра в 10:00 купить кофе по Токио"
+    # raw теперь без слова "напомни". Например: "завтра в 10:00 купить кофе" или "12.05.2024 19:30 полить цветы"
 
-    # 2) Ищем "по <город/UTC>" (например: "по Токио", "по Москве", "по UTC+3")
+    # 1. Пытаемся найти явное указание "по ..." для часового пояса или города
     city_match = re.search(r"(?i)\bпо\s+([\w\+\-]+)", raw)
-    tz_str = "UTC"  # по умолчанию
-    fixed_offset = None  # если user сказал "UTC+3", сохраним pytz.FixedOffset
-
     if city_match:
-        city_name = city_match.group(1)  # например "Токио" или "UTC+3"
-        
-        # Уберём из raw "по Токио"
-        raw = re.sub(r"(?i)\bпо\s+" + re.escape(city_name), "", raw).strip()
-        
-        # Проверим, не "UTC+3" ли это
-        if re.match(r"(?i)^utc[\+\-]?\d+(\.\d+)?$", city_name):
-            # например "UTC+3" или "UTC-4.5"
-            # выделяем часть после "UTC" => "+3" / "-4.5"
-            offset_str = re.sub(r"(?i)^utc", "", city_name)  # "+3" или "-4.5"
-            # Переведём в минуты
+        city_info = city_match.group(1)
+        # Убираем из raw слово "по ..." для парсинга даты
+        raw = re.sub(r"(?i)\bпо\s+" + re.escape(city_info), "", raw).strip()
+        # Если это формат UTC+N или UTC-N, обрабатываем как фиксированное смещение
+        if re.match(r"(?i)^utc[\+\-]?\d+(\.\d+)?$", city_info):
+            offset_str = re.sub(r"(?i)^utc", "", city_info)
             try:
                 offset_float = float(offset_str)
                 offset_minutes = int(offset_float * 60)
-                fixed_offset = pytz.FixedOffset(offset_minutes)
+                tz = pytz.FixedOffset(offset_minutes)
+                tz_str = tz.zone if hasattr(tz, "zone") else f"UTC{offset_str}"
             except:
-                pass
-        else:
-            # Иначе пытаемся найти timezone по городу
-            geo = await geocode_city(city_name)
-            if geo and "timezone" in geo:
-                tz_str = geo["timezone"]
-            else:
                 tz_str = "UTC"
+        else:
+            # Если указан город, определяем timezone через geocode_city
+            geo = await geocode_city(city_info)
+            tz_str = geo["timezone"] if geo and "timezone" in geo else "UTC"
+    else:
+        # Если нет указания "по", пробуем посмотреть, есть ли сохранённый часовой пояс для этого пользователя
+        if user_id in user_timezones:
+            tz_str = user_timezones[user_id]
+        else:
+            # Запросить у пользователя часовой пояс или город
+            await message.answer(
+                "Для корректного расписания напоминания, пожалуйста, укажите ваш часовой пояс или город. "
+                "Напишите, например: *Мой часовой пояс: Europe/Moscow* или *Мой город: Москва*.",
+                parse_mode="Markdown"
+            )
+            return
 
-    # 3) Парсим дату/время через dateparser
+    # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
     parsed_dt = dateparser.parse(raw)
     if not parsed_dt:
         await message.answer("Не смог понять дату/время. Пример:\n«напомни завтра 19:00 полить цветы по Москве»")
         return
 
-    dt_str = parsed_dt.strftime("%Y-%m-%d %H:%M")
-    
-
-    # Проверим, есть ли двоеточие
-    colon_split = raw.split(":", maxsplit=1)
-    if len(colon_split) == 2:
-        # предположим format: "завтра 19:00: купить кофе"
-        date_part = colon_split[0].strip()
-        task_text = colon_split[1].strip()
-    else:
-        splitted = raw.split()
-        if len(splitted) < 3:
-            # слишком мало слов, пусть задача = "..."
-            task_text = splitted[-1] if len(splitted) > 1 else "(без описания)"
-        else:
-            task_text = " ".join(splitted[2:])
-    
-    # 6) Применяем локализацию
-    import pytz
-    if fixed_offset:
-        # пользователь указал UTC+3
-        local_tz = fixed_offset
-    else:
-        # timezone_str
+    # 3. Определяем локальный часовой пояс и локализуем время
+    try:
         local_tz = pytz.timezone(tz_str)
+    except Exception as e:
+        logging.warning(f"Ошибка при определении timezone для {tz_str}: {e}")
+        local_tz = pytz.utc
     local_dt = local_tz.localize(parsed_dt)
 
-    # Если parsed_dt < сейчас (прошло время), сдвигаем на завтра (пример).
+    # Если время уже прошло, добавим один день (упрощённая логика)
     now_local = datetime.now(local_tz)
     if local_dt < now_local:
-        # добавим 1 день
-        from datetime import timedelta
         local_dt += timedelta(days=1)
 
     event_utc = local_dt.astimezone(pytz.utc)
 
-    # 7) Добавляем в reminders
-    reminders.append((message.from_user.id, event_utc, task_text))
+    # 4. Извлекаем текст задачи
+    # Пример: если raw вида "завтра в 10:00 купить кофе", то ищем "в 10:00"
+    time_match = re.search(r"\bв\s*(\d{1,2}:\d{2})\b", raw)
+    if time_match:
+        task_text = raw.replace(time_match.group(0), "").strip()
+    else:
+        splitted = raw.split()
+        task_text = " ".join(splitted[1:]) if len(splitted) > 1 else "(без описания)"
+
+    # 5. Добавляем напоминание и сохраняем его
+    reminders.append((user_id, event_utc, task_text))
     save_reminders()
 
-    # 8) Сообщим пользователю
+    # 6. Сообщаем пользователю
     await message.answer(
         f"Ок, напомню:\n<b>{task_text}</b>\n\n"
-        f"Локальное время: {local_dt.strftime('%Y-%m-%d %H:%M:%S')} ({local_tz})\n"
+        f"Локальное время: {local_dt.strftime('%Y-%m-%d %H:%M:%S')} ({tz_str})\n"
         f"В UTC: {event_utc.isoformat()}\n\n"
         "Сохранено!"
     )
+
+@dp.message(lambda message: message.text and message.text.lower().startswith("мой"))
+async def handle_timezone_setting(message: Message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    # Попробуем распарсить, если сообщение начинается с "Мой часовой пояс:" или "Мой город:"
+    tz_match = re.match(r"(?i)^мой\s+(часовой\s+пояс|город):\s*(.+)$", text)
+    if tz_match:
+        setting_type = tz_match.group(1).lower()
+        value = tz_match.group(2).strip()
+
+        # Если указан "город", определим timezone через geокодирование
+        if "город" in setting_type:
+            geo = await geocode_city(value)
+            if geo and "timezone" in geo:
+                tz_str = geo["timezone"]
+            else:
+                tz_str = "UTC"
+        else:
+            tz_str = value  # предполагаем, что пользователь передаёт корректное название timezone, например "Europe/Moscow"
+
+        user_timezones[user_id] = tz_str
+        save_timezones(user_timezones)
+        await message.answer(f"Ваш часовой пояс установлен: {tz_str}. Теперь я буду использовать его для напоминаний.")
+    else:
+        await message.answer("Чтобы установить часовой пояс, напишите сообщение в формате:\n"
+                               "*Мой часовой пояс: Europe/Moscow*\n"
+                               "или\n"
+                               "*Мой город: Москва*", parse_mode="Markdown")
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
