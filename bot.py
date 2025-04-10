@@ -755,6 +755,14 @@ async def handle_note_type_choice(callback: CallbackQuery):
 async def handle_notes_phrases(message: Message):
     uid = message.from_user.id
     text = (message.text or "").strip().lower()
+    # Эстетичная очистка от "добавь заметку:", "запиши заметку:" и т.п.
+    text = re.sub(
+        r"^(добавь|запиши|запомни|сделай пометку|сохрани|добавь себе)\s+(в\s+список дел\s*:?|заметку\s*:?)",
+        "",
+    text,
+    flags=re.IGNORECASE
+).strip()
+
 
     if any(text.startswith(kw) for kw in ["добавь", "запиши", "запомни", "добавь себе", "сохрани", "добавь в список дел", "сделай пометку", "заметка"]):
         clean_text = re.sub(r"^(добавь|запиши|напомни|запомни|добавь себе|сохрани)( мне)?( пожалуйста)?", "", text, flags=re.IGNORECASE).strip()
