@@ -2,6 +2,7 @@
 import logging
 import os
 import re
+from html import unescape
 import random
 import aiohttp
 import requests
@@ -32,6 +33,14 @@ import speech_recognition as sr
 from pydub import AudioSegment
 from gtts import gTTS
 from datetime import datetime
+
+
+def clean_for_tts(text: str) -> str:
+    """
+    Удаляет HTML-теги и заменяет спецсимволы (например, &nbsp; → пробел) для озвучки.
+    """
+    text = re.sub(r"<[^>]+>", "", text)   # удаляем HTML-теги
+    return unescape(text).strip()
 
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -453,10 +462,12 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
 async def send_voice_message(chat_id: int, text: str):
     client = texttospeech.TextToSpeechClient()
 
-    synthesis_input = texttospeech.SynthesisInput(text=text)
+    clean_text = clean_for_tts(text)  # 💥 вот эта строка — очищаем HTML
+
+    synthesis_input = texttospeech.SynthesisInput(text=clean_text)
 
     voice = texttospeech.VoiceSelectionParams(
-        language_code="ru-RU", name="ru-RU-Wavenet-C"  # можно сменить голос
+        language_code="ru-RU", name="ru-RU-Wavenet-C"
     )
 
     audio_config = texttospeech.AudioConfig(
