@@ -861,15 +861,23 @@ async def handle_reminder(message: Message):
     except Exception as e:
         logging.warning(f"Ошибка timezone {tz_str}: {e}")
         now_in_tz = datetime.utcnow()
-    parsed_dt = dateparser.parse(
-        raw,
-        settings={
-            "TIMEZONE": tz_str,
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DATES_FROM": "future",
-            "RELATIVE_BASE": now_in_tz
-        }
-    )
+        
+        parsed_raw = raw
+        match = re.search(r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)", raw)
+        if match:
+            idx = match.start()
+            parsed_raw = raw[:idx + len(match.group(0))].strip()
+        
+        parsed_dt = dateparser.parse(
+            parsed_raw,
+            settings={
+                "TIMEZONE": tz_str,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future",
+                "RELATIVE_BASE": now_in_tz
+            }
+        )
+        
 
     
     if not parsed_dt:
