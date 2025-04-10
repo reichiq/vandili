@@ -874,7 +874,7 @@ async def handle_timezone_setting(message: Message):
     text = message.text.strip()
 
     # Попробуем распарсить, если сообщение начинается с "Мой часовой пояс:" или "Мой город:"
-    tz_match = re.match(r"(?i)^мой\s+(часовой\s+пояс|город):\s*(.+)$", text)
+    tz_match = re.match(r"(?i)^мой\s+(город|часовой\s+пояс)\s*:?\s*(\S.+)$", text)
     if tz_match:
         setting_type = tz_match.group(1).lower()
         value = tz_match.group(2).strip()
