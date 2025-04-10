@@ -917,10 +917,14 @@ async def handle_timezone_setting(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
 
-    tz_match = re.match(r"(?i)^мой\s+(город|часовой\s+пояс)\s*:?\s*(\S.+)$", text)
+    tz_match = re.match(r"(?i)^мой\s+(город|часовой\s+пояс)\s*[:\-—]?\s*(.+?)\s*[!.\-…]*\s*$", text)
     if tz_match:
         setting_type = tz_match.group(1).lower()
         value = tz_match.group(2).strip()
+        # Нормализуем название города: "ташкенте" → "ташкент"
+    if "город" in setting_type:
+        value = normalize_city_name(value)
+
 
         if "город" in setting_type:
             geo = await geocode_city(value)
