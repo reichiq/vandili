@@ -671,12 +671,19 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     voice_response_requested = False  # исправление UnboundLocalError
 
     # Если админ отвечает на сообщение поддержки
-    if message.chat.id == ADMIN_ID and message.reply_to_message:
+    if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if original_id in support_reply_map:
             user_id = support_reply_map[original_id]
             try:
                 await send_admin_reply_as_single_message(message, user_id)
+                if message.from_user.id != ADMIN_ID:
+                    sender_name = message.from_user.full_name
+                    text_preview = message.text or "[медиа]"
+                    await bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"👁 <b>{sender_name}</b> ответил пользователю (id: <code>{user_id}</code>):\n\n{escape(text_preview)}"
+                    )
             except Exception as e:
                 logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
@@ -705,9 +712,12 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                         video_bytes = await resp.read()
                 sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content)
             else:
-                sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=content)
-            if sent_msg:
-                support_reply_map[sent_msg.message_id] = uid
+                for support_id in SUPPORT_IDS:
+                    try:
+                        sent_msg = await bot.send_message(chat_id=support_id, text=content)
+                        support_reply_map[sent_msg.message_id] = uid
+                    except Exception as e:
+                        logging.warning(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
             await message.answer("Сообщение отправлено в поддержку.")
         except Exception as e:
             logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
