@@ -31,7 +31,6 @@ from PyPDF2 import PdfReader
 import json
 import speech_recognition as sr
 from pydub import AudioSegment
-from gtts import gTTS
 from datetime import datetime
 
 
@@ -51,7 +50,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 # Приводим к строке для гарантии, что тип правильный (если вдруг значение None)
-WEATHER_API_KEY = str(os.getenv("WEATHER_API_KEY"))
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 
 logging.basicConfig(level=logging.INFO)
 
@@ -65,6 +64,23 @@ model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
+SUPPORT_MAP_FILE = "support_map.json"
+
+def load_support_map() -> dict:
+    if not os.path.exists(SUPPORT_MAP_FILE):
+        return {}
+    try:
+        with open(SUPPORT_MAP_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_support_map():
+    try:
+        with open(SUPPORT_MAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(support_reply_map, f)
+    except Exception as e:
+        logging.warning(f"Ошибка при сохранении support_map: {e}")
 
 def load_stats() -> dict:
     """
@@ -105,7 +121,7 @@ def save_stats():
 stats = load_stats()  # подгружаем основные метрики
 
 support_mode_users = set()
-support_reply_map = {}  # {admin_msg_id: user_id}
+support_reply_map = load_support_map()
 chat_history = {}
 user_documents = {}
 
@@ -672,8 +688,9 @@ async def handle_voice_message(message: Message):
     except Exception as e:
         logging.error(f"Ошибка распознавания голосового сообщения: {e}")
     os.remove(wav_path)
-    if recognized_text:
-        await handle_all_messages_impl(message, recognized_text)
+    if not recognized_text:
+        await message.answer("Извините, я не смог распознать голосовое сообщение 😔")
+        return
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -747,6 +764,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                     try:
                         sent_msg = await bot.send_message(chat_id=support_id, text=content)
                         support_reply_map[sent_msg.message_id] = uid
+                        save_support_map()
                     except Exception as e:
                         logging.warning(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
             await message.answer("Сообщение отправлено в поддержку.")
@@ -1017,7 +1035,7 @@ def fallback_translate_to_english(rus_word: str) -> str:
         logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
 
-def generate_short_caption(rus_word: str) -> str:
+async def generate_short_caption(rus_word: str) -> str:
     short_prompt = (
         "ИНСТРУКЦИЯ: Ты — творческий помощник, который умеет писать очень короткие, дружелюбные подписи "
         "на русском языке. Не упоминай, что ты ИИ или Google. Старайся не превышать 15 слов.\n\n"
@@ -1025,7 +1043,7 @@ def generate_short_caption(rus_word: str) -> str:
         "Можно с лёгкой эмоцией или юмором, не более 15 слов."
     )
     try:
-        response = model.generate_content([
+        response = await model.generate_content_async([
             {"role": "user", "parts": [short_prompt]}
         ])
         caption = format_gemini_response(response.text.strip())
@@ -1156,7 +1174,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         full_prompt = smart_prompt + full_prompt
 
     if show_image and rus_word and not leftover:
-        gemini_text = generate_short_caption(rus_word)
+        gemini_text = await generate_short_caption(rus_word)
         return gemini_text
 
     conversation = chat_history.setdefault(cid, [])
@@ -1169,7 +1187,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         if not resp.candidates:
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
             logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-            gemini_text = ("⚠️ Запрос отклонён. Возможно, он содержит недопустимый или чувствительный контент.")
+            gemini_text = f"⚠️ Запрос отклонён. Возможная причина: <b>{reason}</b>.\nПопробуйте переформулировать запрос."
         else:
             raw_model_text = resp.text
             gemini_text = format_gemini_response(raw_model_text)
