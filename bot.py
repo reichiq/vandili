@@ -34,7 +34,6 @@ from PyPDF2 import PdfReader
 import json
 import speech_recognition as sr
 from pydub import AudioSegment
-from datetime import datetime
 from collections import defaultdict
 
 
