@@ -27,6 +27,7 @@ from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
 from google.cloud import translate
+translate_client = translate.TranslationServiceClient()
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
@@ -868,15 +869,24 @@ async def handle_reminder(message: Message):
             idx = match.start()
             parsed_raw = raw[:idx + len(match.group(0))].strip()
         
-        parsed_dt = dateparser.parse(
-            parsed_raw,
-            settings={
-                "TIMEZONE": tz_str,
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": now_in_tz
-            }
-        )
+        parsed_dt = None  # ← важно!
+        parsed_raw = raw
+        match = re.search(r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)", raw)
+        if match:
+            idx = match.start()
+            parsed_raw = raw[:idx + len(match.group(0))].strip()
+        try:
+            parsed_dt = dateparser.parse(
+                parsed_raw,
+                settings={
+                    "TIMEZONE": tz_str,
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "PREFER_DATES_FROM": "future",
+                    "RELATIVE_BASE": now_in_tz
+                }
+            )
+        except Exception as e:
+            logging.warning(f"[REMINDER] Ошибка при парсинге времени: {e}")
         
 
     
