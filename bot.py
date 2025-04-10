@@ -5,6 +5,7 @@ import re
 import random
 import aiohttp
 import requests
+from google.cloud import texttospeech
 from io import BytesIO
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
@@ -34,6 +35,7 @@ from datetime import datetime
 
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key.json"
 
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -449,19 +451,28 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
 async def send_voice_message(chat_id: int, text: str):
-    clean_text = re.sub(r'<[^>]+>', '', text or "")
-    if not clean_text.strip():
-        clean_text = "Нет данных для голосового ответа."
-    tts = gTTS(clean_text, lang='ru')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
-        tts.save(tmp_audio.name)
-        mp3_path = tmp_audio.name
-    audio = AudioSegment.from_file(mp3_path, format="mp3")
-    ogg_path = mp3_path.replace(".mp3", ".ogg")
-    audio.export(ogg_path, format="ogg")
-    os.remove(mp3_path)
-    await bot.send_voice(chat_id=chat_id, voice=FSInputFile(ogg_path, filename="voice.ogg"))
-    os.remove(ogg_path)
+    client = texttospeech.TextToSpeechClient()
+
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="ru-RU", name="ru-RU-Wavenet-C"  # можно сменить голос
+    )
+
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
+    )
+
+    response = client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out:
+        out.write(response.audio_content)
+        out_path = out.name
+
+    await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename="voice.ogg"))
+    os.remove(out_path)
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
 def thread(message: Message) -> dict:
