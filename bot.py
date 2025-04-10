@@ -756,36 +756,7 @@ async def handle_timezone_setting(message: Message):
     text = message.text.strip()
 
     tz_match = re.match(r"(?i)^мой\s+(город|часовой\s+пояс)\s*[:\-—]?\s*(.+?)\s*[!.\-…]*\s*$", text)
-    if tz_match:
-        setting_type = tz_match.group(1).lower()
-        value = tz_match.group(2).strip()
-        # Нормализуем название города: "ташкенте" → "ташкент"
-    if "город" in setting_type:
-        value = normalize_city_name(value)
-
-
-        if "город" in setting_type:
-            geo = await geocode_city(value)
-            if geo and "timezone" in geo:
-                tz_str = geo["timezone"]
-            else:
-                tz_str = "UTC"
-            user_timezones[user_id] = tz_str
-            save_timezones(user_timezones)
-            await message.answer(
-                f"Запомнил: <b>{value.capitalize()}</b> ✅\n"
-                f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
-            )
-        else:
-            tz_str = value
-            user_timezones[user_id] = tz_str
-            save_timezones(user_timezones)
-            await message.answer(
-                f"Часовой пояс установлен: <code>{tz_str}</code>. "
-                f"Теперь я буду использовать его для напоминаний."
-            )
-        return  # ✅ ВАЖНО: чтобы не обрабатывалось дальше
-    else:
+    if not tz_match:
         await message.answer(
             "Чтобы установить часовой пояс, напишите сообщение в формате:\n"
             "<b>Мой часовой пояс: Europe/Moscow</b>\n"
@@ -793,7 +764,44 @@ async def handle_timezone_setting(message: Message):
             "<b>Мой город: Москва</b>",
             parse_mode="HTML"
         )
-        return  # ✅ тоже добавляем return
+        return
+
+    setting_type = tz_match.group(1).lower()
+    value = tz_match.group(2).strip()
+
+    if "город" in setting_type:
+        value = normalize_city_name(value)
+        geo = await geocode_city(value)
+        tz_str = geo["timezone"] if geo and "timezone" in geo else "UTC"
+
+        user_timezones[user_id] = tz_str
+        save_timezones(user_timezones)
+
+        await message.answer(
+            f"Запомнил: <b>{value.capitalize()}</b> ✅\n"
+            f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
+        )
+
+    else:
+        tz_str = value
+        user_timezones[user_id] = tz_str
+        save_timezones(user_timezones)
+
+        await message.answer(
+            f"Часовой пояс установлен: <code>{tz_str}</code>. "
+            f"Теперь я буду использовать его для напоминаний."
+        )
+
+    # 🔧 ШАГ 2: если раньше было ожидающее напоминание — обрабатываем его
+    if user_id in pending_note_or_reminder:
+        prev_text = pending_note_or_reminder.pop(user_id)
+        await handle_reminder(
+            type("FakeMessage", (object,), {
+                "from_user": type("U", (), {"id": user_id})(),
+                "text": prev_text,
+                "answer": message.answer
+            })
+        )
 
 @dp.message(lambda message: message.text and "напомни" in message.text.lower())
 async def handle_reminder(message: Message):
@@ -838,6 +846,7 @@ async def handle_reminder(message: Message):
                 "Напишите, например: *Мой часовой пояс: Europe/Moscow* или *Мой город: Москва*.",
                 parse_mode="Markdown"
             )
+            pending_note_or_reminder[user_id] = message.text
             return
 
     # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
