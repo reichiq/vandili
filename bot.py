@@ -46,7 +46,8 @@ def clean_for_tts(text: str) -> str:
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key.json"
-translate_client = translate.TranslationServiceClient()
+credentials = service_account.Credentials.from_service_account_file("/root/vandili/key.json")
+translate_client = translate.TranslationServiceClient(credentials=credentials)
 
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
