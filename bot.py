@@ -194,7 +194,7 @@ def save_stats():
 
 # ---------------------- Глобальные структуры ---------------------- #
 stats = load_stats()  # подгружаем основные метрики
-
+pending_note_or_reminder = {}  # user_id: текст, ожидающий уточнения
 support_mode_users = set()
 support_reply_map = load_support_map()
 chat_history = {}
@@ -729,14 +729,50 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
+@dp.callback_query(F.data.startswith("note_type:"))
+async def handle_note_type_choice(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    choice = callback.data.split(":")[1]
+    original_text = pending_note_or_reminder.pop(user_id, None)
+
+    if not original_text:
+        await callback.message.edit_text("Нет ожидающего текста для обработки.")
+        return
+
+    await callback.answer()
+
+    if choice == "note":
+        user_notes[user_id].append(original_text)
+        save_notes()
+        await callback.message.edit_text("📝 Сохранил как заметку.")
+    elif choice == "reminder":
+        await callback.message.edit_text(
+            "Хорошо, напомни мне так: «напомни {текст} по Москве», чтобы я установил напоминание.\n\n"
+            "Например: <i>напомни завтра в 10:00 купить хлеб по Москве</i>"
+        )
+
 @dp.message()
 async def handle_notes_phrases(message: Message):
     uid = message.from_user.id
     text = (message.text or "").strip().lower()
 
-    if any(text.startswith(kw) for kw in ["добавь", "запиши", "напомни", "запомни", "добавь себе", "сохрани"]):
+    if any(text.startswith(kw) for kw in ["добавь", "запиши", "запомни", "добавь себе", "сохрани", "добавь в список дел", "сделай пометку", "заметка"]):
         clean_text = re.sub(r"^(добавь|запиши|напомни|запомни|добавь себе|сохрани)( мне)?( пожалуйста)?", "", text, flags=re.IGNORECASE).strip()
         if clean_text:
+            if re.search(r"\bнапомн(и(ть)?|ание)\b", clean_text, re.IGNORECASE):
+                pending_note_or_reminder[uid] = clean_text
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="💬 Заметка", callback_data="note_type:note"),
+                        InlineKeyboardButton(text="⏰ Напоминание", callback_data="note_type:reminder")
+                    ]
+                ])
+                await message.answer(
+                    "Я вижу в тексте слово «напомнить». Сохранить это как заметку или как напоминание?",
+                    reply_markup=keyboard
+                )
+                return
+
             # Поиск времени в формате "в 15:00", "в 7:45", "в 23:10"
             time_match = re.search(r"\bв\s*(\d{1,2}:\d{2})\b", clean_text)
             if time_match:
