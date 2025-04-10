@@ -841,14 +841,23 @@ async def handle_reminder(message: Message):
             return
 
     # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
+    try:
+        tz = pytz.timezone(tz_str)
+        now_in_tz = datetime.now(tz)
+    except Exception as e:
+        logging.warning(f"Ошибка timezone {tz_str}: {e}")
+        now_in_tz = datetime.utcnow()
     parsed_dt = dateparser.parse(
         raw,
         settings={
             "TIMEZONE": tz_str,
             "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DATES_FROM": "future"
+            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": now_in_tz
         }
     )
+
+    
     if not parsed_dt:
         await message.answer("Не смог понять дату/время. Пример:\n«напомни завтра 19:00 полить цветы по Москве»")
         return
