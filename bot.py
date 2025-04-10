@@ -2,7 +2,7 @@
 import logging
 import os
 import re
-from html import unescape
+from html import unescape, escape
 import random
 import aiohttp
 import dateparser
@@ -18,7 +18,6 @@ from aiogram.types import (
     CallbackQuery, BufferedInputFile
 )
 from aiogram.client.default import DefaultBotProperties
-from html import escape
 from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
@@ -798,8 +797,6 @@ async def handle_timezone_setting(message: Message):
 
 @dp.message(lambda message: message.text and "напомни" in message.text.lower())
 async def handle_reminder(message: Message):
-    import dateparser
-    import pytz
     from datetime import datetime, timedelta
 
     text = message.text.strip()
