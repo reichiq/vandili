@@ -221,10 +221,6 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
 
-    # 👁 Отправим копию главному админу, если отвечает не он сам
-    if sender_id != ADMIN_ID:
-        await bot.send_message(chat_id=ADMIN_ID, text=f"👁 Ответ пользователю от {admin_message.from_user.full_name} (id: <code>{sender_id}</code>)")
-
 # ---------------------- Морфологическая нормализация для валют и городов ---------------------- #
 def normalize_currency_rus(word: str) -> str:
     word_clean = word.strip().lower()
