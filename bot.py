@@ -193,7 +193,7 @@ def save_stats():
 
 # ---------------------- Глобальные структуры ---------------------- #
 stats = load_stats()  # подгружаем основные метрики
-pending_note_or_reminder = {}  # user_id: текст, ожидающий уточнения
+pending_note_or_reminder = {}
 support_mode_users = set()
 support_reply_map = load_support_map()
 chat_history = {}
@@ -802,8 +802,10 @@ async def handle_timezone_setting(message: Message):
         )
 
     # 🔧 ШАГ 2: если раньше было ожидающее напоминание — обрабатываем его
-    if user_id in pending_note_or_reminder:
-        prev_text = pending_note_or_reminder.pop(user_id)
+    reminder_data = pending_note_or_reminder.get(user_id)
+    if reminder_data and not reminder_data.get("was_retried"):
+        pending_note_or_reminder[user_id]["was_retried"] = True
+        prev_text = reminder_data["text"]
         await handle_reminder(
             type("FakeMessage", (object,), {
                 "from_user": type("U", (), {"id": user_id})(),
@@ -855,7 +857,10 @@ async def handle_reminder(message: Message):
                 "Напишите, например: *Мой часовой пояс: Europe/Moscow* или *Мой город: Москва*.",
                 parse_mode="Markdown"
             )
-            pending_note_or_reminder[user_id] = message.text
+            pending_note_or_reminder[user_id] = {
+                "text": message.text,
+                "was_retried": False
+            }
             return
 
     # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
