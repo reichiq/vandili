@@ -32,6 +32,7 @@ import json
 import speech_recognition as sr
 from pydub import AudioSegment
 from datetime import datetime
+from collections import defaultdict
 
 
 def clean_for_tts(text: str) -> str:
@@ -65,6 +66,24 @@ model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
 STATS_FILE = "stats.json"
 SUPPORT_MAP_FILE = "support_map.json"
+NOTES_FILE = "notes.json"
+
+def load_notes() -> dict:
+    if not os.path.exists(NOTES_FILE):
+        return defaultdict(list)
+    try:
+        with open(NOTES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return defaultdict(list, {int(k): v for k, v in data.items()})
+    except:
+        return defaultdict(list)
+
+def save_notes():
+    try:
+        with open(NOTES_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_notes, f, ensure_ascii=False)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить заметки: {e}")
 
 def load_support_map() -> dict:
     if not os.path.exists(SUPPORT_MAP_FILE):
@@ -124,6 +143,7 @@ support_mode_users = set()
 support_reply_map = load_support_map()
 chat_history = {}
 user_documents = {}
+user_notes = load_notes()
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -648,6 +668,55 @@ async def handle_support_click(callback: CallbackQuery):
     await callback.answer()
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
+
+@dp.message()
+async def handle_notes_phrases(message: Message):
+    uid = message.from_user.id
+    text = (message.text or "").strip().lower()
+
+    if any(text.startswith(kw) for kw in ["добавь", "запиши", "напомни", "запомни", "добавь себе", "сохрани"]):
+        clean_text = re.sub(r"^(добавь|запиши|напомни|запомни|добавь себе|сохрани)( мне)?( пожалуйста)?", "", text, flags=re.IGNORECASE).strip()
+        if clean_text:
+            # Поиск времени в формате "в 15:00", "в 7:45", "в 23:10"
+            time_match = re.search(r"\bв\s*(\d{1,2}:\d{2})\b", clean_text)
+            if time_match:
+                time_str = time_match.group(1)
+                note_text = clean_text.replace(time_match.group(0), "").strip()
+                final_note = f"[Напомнить в {time_str}] {note_text}"
+            else:
+                final_note = clean_text
+
+            user_notes[uid].append(final_note)
+            save_notes()
+            await message.answer("Заметка добавлена 📝")
+            return
+
+    if "мои заметки" in text or "покажи заметки" in text:
+        notes = user_notes.get(uid, [])
+        if not notes:
+            await message.answer("У тебя пока нет заметок 🗒️")
+            return
+        formatted = "\n".join([f"{i+1}. {n}" for i, n in enumerate(notes)])
+        await message.answer(f"<b>Твои заметки:</b>\n{formatted}")
+        return
+
+    if "удали заметки" in text or "очисти заметки" in text:
+        user_notes[uid] = []
+        save_notes()
+        await message.answer("Все заметки удалены 🗑️")
+        return
+
+    delete_match = re.search(r"(удали|удалить)\s+(\d+)(?:-?ю)?\s+заметк", text)
+    if delete_match:
+        index = int(delete_match.group(2)) - 1
+        notes = user_notes.get(uid, [])
+        if 0 <= index < len(notes):
+            removed = notes.pop(index)
+            save_notes()
+            await message.answer(f"Удалена заметка: <i>{removed}</i> 🗑️")
+        else:
+            await message.answer("Нет такой заметки 😅")
+        return
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
