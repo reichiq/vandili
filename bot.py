@@ -841,12 +841,12 @@ async def handle_reminder(message: Message):
             return
 
     # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
-   parsed_dt = dateparser.parse(
-       raw,
-       settings={
-           "TIMEZONE": tz_str,
-           "RETURN_AS_TIMEZONE_AWARE": True,
-           "PREFER_DATES_FROM": "future"
+    parsed_dt = dateparser.parse(
+        raw,
+        settings={
+            "TIMEZONE": tz_str,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DATES_FROM": "future"
         }
     )
     if not parsed_dt:
