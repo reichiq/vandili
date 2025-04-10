@@ -956,8 +956,7 @@ async def handle_reminder(message: Message):
         f"В UTC: {event_utc.isoformat()}\n\n"
         "Сохранено!"
     )
-
-
+    return
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
