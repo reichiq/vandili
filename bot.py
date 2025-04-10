@@ -8,6 +8,7 @@ import aiohttp
 import dateparser
 import pytz
 import requests
+from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
 from aiogram import Bot, Dispatcher, F
@@ -581,7 +582,8 @@ async def cmd_start(message: Message, command: CommandObject):
 •🏞Показываю изображения по ключевым словам.
 •☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
 •💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
-•📝 Заметки: скажи "добавь заметку купить хлеб", "покажи мои заметки" или "удали 2 заметку".
+•📝Заметки: «добавь заметку купить хлеб», «покажи мои заметки», «удали 2 заметку» и т.д.
+•⏰Напоминания: «напомни завтра в 10:00 полить цветы по Варшаве» - пришлю уведомление вовремя.
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
@@ -757,11 +759,7 @@ async def handle_notes_phrases(message: Message):
         return
 
 @dp.message(lambda msg: msg.text and "напомни" in msg.text.lower())
-async def handle_reminder(message: Message):
-    import dateparser
-    import pytz
-    from datetime import datetime
-
+async def handle_reminder(message: Message):    
     text = message.text.strip()
     lower = text.lower()
     # Пример входа: "напомни завтра в 10:00 купить кофе по Токио"
