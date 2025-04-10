@@ -5,6 +5,8 @@ import re
 from html import unescape
 import random
 import aiohttp
+import dateparser
+import pytz
 import requests
 from google.cloud import texttospeech
 from io import BytesIO
@@ -67,6 +69,39 @@ model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 STATS_FILE = "stats.json"
 SUPPORT_MAP_FILE = "support_map.json"
 NOTES_FILE = "notes.json"
+REMINDERS_FILE = "reminders.json"
+
+def load_reminders():
+    if not os.path.exists(REMINDERS_FILE):
+        return []
+    try:
+        with open(REMINDERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # data — список словарей [{"user_id": ..., "datetime_utc": ..., "text": ...}]
+            # Превратим datetime_utc обратно в datetime
+            from datetime import datetime
+            out = []
+            for item in data:
+                dt_str = item["datetime_utc"]
+                dt_obj = datetime.fromisoformat(dt_str)
+                out.append((item["user_id"], dt_obj, item["text"]))
+            return out
+    except:
+        return []
+
+def save_reminders():
+    data_to_save = []
+    for (user_id, dt_obj, text) in reminders:
+        data_to_save.append({
+            "user_id": user_id,
+            "datetime_utc": dt_obj.isoformat(),
+            "text": text
+        })
+    try:
+        with open(REMINDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить reminders: {e}")
 
 def load_notes() -> dict:
     if not os.path.exists(NOTES_FILE):
@@ -144,6 +179,8 @@ support_reply_map = load_support_map()
 chat_history = {}
 user_documents = {}
 user_notes = load_notes()
+reminders = []  # Список кортежей: (user_id, event_utc: datetime, text)
+reminders = load_reminders()
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -719,6 +756,106 @@ async def handle_notes_phrases(message: Message):
             await message.answer("Нет такой заметки 😅")
         return
 
+@dp.message(lambda msg: msg.text and "напомни" in msg.text.lower())
+async def handle_reminder(message: Message):
+    import dateparser
+    import pytz
+    from datetime import datetime
+
+    text = message.text.strip()
+    lower = text.lower()
+    # Пример входа: "напомни завтра в 10:00 купить кофе по Токио"
+    # или "напомни 12.05.2025 19:30 полить цветы по UTC+3"
+
+    # 1) Убираем слово "напомни"
+    raw = re.sub(r"(?i)^напомни\s*", "", text).strip()
+    # raw может быть: "завтра в 10:00 купить кофе по Токио"
+
+    # 2) Ищем "по <город/UTC>" (например: "по Токио", "по Москве", "по UTC+3")
+    city_match = re.search(r"(?i)\bпо\s+([\w\+\-]+)", raw)
+    tz_str = "UTC"  # по умолчанию
+    fixed_offset = None  # если user сказал "UTC+3", сохраним pytz.FixedOffset
+
+    if city_match:
+        city_name = city_match.group(1)  # например "Токио" или "UTC+3"
+        
+        # Уберём из raw "по Токио"
+        raw = re.sub(r"(?i)\bпо\s+" + re.escape(city_name), "", raw).strip()
+        
+        # Проверим, не "UTC+3" ли это
+        if re.match(r"(?i)^utc[\+\-]?\d+(\.\d+)?$", city_name):
+            # например "UTC+3" или "UTC-4.5"
+            # выделяем часть после "UTC" => "+3" / "-4.5"
+            offset_str = re.sub(r"(?i)^utc", "", city_name)  # "+3" или "-4.5"
+            # Переведём в минуты
+            try:
+                offset_float = float(offset_str)
+                offset_minutes = int(offset_float * 60)
+                fixed_offset = pytz.FixedOffset(offset_minutes)
+            except:
+                pass
+        else:
+            # Иначе пытаемся найти timezone по городу
+            geo = await geocode_city(city_name)
+            if geo and "timezone" in geo:
+                tz_str = geo["timezone"]
+            else:
+                tz_str = "UTC"
+
+    # 3) Парсим дату/время через dateparser
+    parsed_dt = dateparser.parse(raw)
+    if not parsed_dt:
+        await message.answer("Не смог понять дату/время. Пример:\n«напомни завтра 19:00 полить цветы по Москве»")
+        return
+
+    dt_str = parsed_dt.strftime("%Y-%m-%d %H:%M")
+    
+
+    # Проверим, есть ли двоеточие
+    colon_split = raw.split(":", maxsplit=1)
+    if len(colon_split) == 2:
+        # предположим format: "завтра 19:00: купить кофе"
+        date_part = colon_split[0].strip()
+        task_text = colon_split[1].strip()
+    else:
+        splitted = raw.split()
+        if len(splitted) < 3:
+            # слишком мало слов, пусть задача = "..."
+            task_text = splitted[-1] if len(splitted) > 1 else "(без описания)"
+        else:
+            task_text = " ".join(splitted[2:])
+    
+    # 6) Применяем локализацию
+    import pytz
+    if fixed_offset:
+        # пользователь указал UTC+3
+        local_tz = fixed_offset
+    else:
+        # timezone_str
+        local_tz = pytz.timezone(tz_str)
+    local_dt = local_tz.localize(parsed_dt)
+
+    # Если parsed_dt < сейчас (прошло время), сдвигаем на завтра (пример).
+    now_local = datetime.now(local_tz)
+    if local_dt < now_local:
+        # добавим 1 день
+        from datetime import timedelta
+        local_dt += timedelta(days=1)
+
+    event_utc = local_dt.astimezone(pytz.utc)
+
+    # 7) Добавляем в reminders
+    reminders.append((message.from_user.id, event_utc, task_text))
+    save_reminders()
+
+    # 8) Сообщим пользователю
+    await message.answer(
+        f"Ок, напомню:\n<b>{task_text}</b>\n\n"
+        f"Локальное время: {local_dt.strftime('%Y-%m-%d %H:%M:%S')} ({local_tz})\n"
+        f"В UTC: {event_utc.isoformat()}\n\n"
+        "Сохранено!"
+    )
+
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
     _register_message_stats(message)
@@ -1275,8 +1412,38 @@ EXCHANGE_PATTERN = re.compile(
     r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
 )
 
+async def reminder_loop():
+    import pytz
+    from datetime import datetime
+    global reminders
+    
+    while True:
+        now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+        to_send = []
+        
+        # Собираем индексы просроченных напоминаний
+        for i, (user_id, remind_dt_utc, note_text) in enumerate(reminders):
+            if remind_dt_utc <= now_utc:
+                to_send.append(i)
+        
+        # Отправляем и удаляем из списка (с конца, чтобы не сбить индексы)
+        for i in reversed(to_send):
+            user_id, remind_dt_utc, note_text = reminders.pop(i)
+            save_reminders()
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"🔔 Напоминание!\n{note_text}"
+                )
+            except Exception as e:
+                logging.warning(f"[REMINDER] Не удалось отправить напоминание: {e}")
+        
+        await asyncio.sleep(30)  # каждые 30 секунд проверяем
+
 # ---------------------- Запуск бота ---------------------- #
 async def main():
+    asyncio.create_task(reminder_loop())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
