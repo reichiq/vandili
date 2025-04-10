@@ -879,24 +879,34 @@ async def handle_timezone_setting(message: Message):
         setting_type = tz_match.group(1).lower()
         value = tz_match.group(2).strip()
 
-        # Если указан "город", определим timezone через geокодирование
         if "город" in setting_type:
             geo = await geocode_city(value)
             if geo and "timezone" in geo:
                 tz_str = geo["timezone"]
             else:
                 tz_str = "UTC"
+            user_timezones[user_id] = tz_str
+            save_timezones(user_timezones)
+            await message.answer(
+                f"Запомнил: <b>{value.capitalize()}</b> ✅\n"
+                f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
+            )
         else:
             tz_str = value  # предполагаем, что пользователь передаёт корректное название timezone, например "Europe/Moscow"
-
-        user_timezones[user_id] = tz_str
-        save_timezones(user_timezones)
-        await message.answer(f"Ваш часовой пояс установлен: {tz_str}. Теперь я буду использовать его для напоминаний.")
+            user_timezones[user_id] = tz_str
+            save_timezones(user_timezones)
+            await message.answer(
+                f"Часовой пояс установлен: <code>{tz_str}</code>. "
+                f"Теперь я буду использовать его для напоминаний."
+            )
     else:
-        await message.answer("Чтобы установить часовой пояс, напишите сообщение в формате:\n"
-                               "*Мой часовой пояс: Europe/Moscow*\n"
-                               "или\n"
-                               "*Мой город: Москва*", parse_mode="Markdown")
+        await message.answer(
+            "Чтобы установить часовой пояс, напишите сообщение в формате:\n"
+            "<b>Мой часовой пояс: Europe/Moscow</b>\n"
+            "или\n"
+            "<b>Мой город: Москва</b>",
+            parse_mode="HTML"
+        )
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
