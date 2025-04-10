@@ -27,7 +27,6 @@ from aiogram.filters import Command
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
 from google.cloud import translate
-translate_client = translate.TranslationServiceClient()
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
@@ -47,6 +46,7 @@ def clean_for_tts(text: str) -> str:
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key.json"
+translate_client = translate.TranslationServiceClient()
 
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
