@@ -165,6 +165,8 @@ unique_users = load_unique_users()
 unique_groups = load_unique_groups()
 
 ADMIN_ID = 1936733487
+EESKELA_ID = 6208034574
+SUPPORT_IDS = {ADMIN_ID, EESKELA_ID}
 SUPPORT_PROMPT_TEXT = ("Отправьте любое сообщение (текст, фото, видео, файлы, аудио, голосовые) — всё дойдёт до поддержки.")
 
 # Глобальное множество для хранения chat_id (текущая сессия)
@@ -190,7 +192,14 @@ def _register_message_stats(message: Message):
 
 # ---------------------- Функция отправки ответа админа одним сообщением ---------------------- #
 async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
-    prefix = "<b>Ответ от поддержки:</b>"
+    sender_id = admin_message.from_user.id
+    if sender_id == ADMIN_ID:
+        prefix = "<b>📩 Ответ от службы поддержки. С вами — 👾 Admin:</b>"
+    elif sender_id == EESKELA_ID:
+        prefix = "<b>📩 Ответ от службы поддержки. С вами — 💭 eeskela:</b>"
+    else:
+        prefix = "<b>📩 Ответ от поддержки:</b>"
+
     if admin_message.text:
         reply_text = f"{prefix}\n{admin_message.text}"
         await bot.send_message(chat_id=user_id, text=reply_text)
@@ -211,6 +220,10 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
         await bot.send_audio(chat_id=user_id, audio=admin_message.audio.file_id, caption=caption)
     else:
         await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
+
+    # 👁 Отправим копию главному админу, если отвечает не он сам
+    if sender_id != ADMIN_ID:
+        await bot.send_message(chat_id=ADMIN_ID, text=f"👁 Ответ пользователю от {admin_message.from_user.full_name} (id: <code>{sender_id}</code>)")
 
 # ---------------------- Морфологическая нормализация для валют и городов ---------------------- #
 def normalize_currency_rus(word: str) -> str:
@@ -511,18 +524,18 @@ async def cmd_help(message: Message):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread(message))
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напиши мне в личку:", reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread(message))
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
     _register_message_stats(message)
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in SUPPORT_IDS:
         return
     total_msgs = stats["messages_total"]
     unique_users_count = len(unique_users)
