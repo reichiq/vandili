@@ -777,6 +777,7 @@ async def handle_notes_phrases(message: Message):
         else:
             await message.answer("Нет такой заметки 😅")
         return
+    await handle_all_messages_impl(message, message.text or "")
 
 @dp.message(lambda message: message.text and "напомни" in message.text.lower())
 async def handle_reminder(message: Message):
