@@ -468,7 +468,11 @@ async def geocode_city(city_name: str) -> dict:
     }
 
     if city_name in KNOWN_CITIES:
-        return await do_geocoding_request(KNOWN_CITIES[city_name])
+        return {
+            "lat": 0,
+            "lon": 0,
+            "timezone": KNOWN_CITIES[city_name]
+        }
 
     # 1. Сначала пробуем как есть
     result = await do_geocoding_request(city_name)
@@ -822,7 +826,13 @@ async def handle_timezone_setting(message: Message):
     if "город" in setting_type:
         value = normalize_city_name(value)
         geo = await geocode_city(value)
-        tz_str = geo["timezone"] if geo and "timezone" in geo else "UTC"
+        if not geo or "timezone" not in geo:
+            await message.answer(
+                f"❌ Не удалось определить часовой пояс для <b>{value}</b>.\n"
+                "Попробуй указать другой город или написать: <code>Мой часовой пояс: Europe/Warsaw</code>"
+            )
+            return
+        tz_str = geo["timezone"]
 
         user_timezones[user_id] = tz_str
         save_timezones(user_timezones)
@@ -1059,6 +1069,31 @@ async def process_reminder_text(message: Message, state: FSMContext):
     save_reminders()
     await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
     await state.clear()
+
+from datetime import timedelta
+
+async def handle_reminder(message: Message):
+    user_id = message.from_user.id
+    reminder_data = pending_note_or_reminder.pop(user_id, None)
+    if not reminder_data:
+        await message.answer("❌ Не удалось обработать напоминание.")
+        return
+
+    tz_str = user_timezones.get(user_id)
+    if not tz_str:
+        await message.answer("❌ Не удалось найти часовой пояс.")
+        return
+
+    try:
+        now = datetime.now(pytz.timezone(tz_str))
+        dt_local = now + timedelta(minutes=1)  # ближайшая минута, можно заменить на более сложную логику
+        dt_utc = dt_local.astimezone(pytz.utc)
+        reminders.append((user_id, dt_utc, reminder_data["text"]))
+        save_reminders()
+        await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
+    except Exception as e:
+        logging.warning(f"[DELAYED_REMINDER] Ошибка: {e}")
+        await message.answer("❌ Не удалось установить напоминание.")
 
 
 @dp.message()
