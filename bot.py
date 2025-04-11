@@ -957,16 +957,16 @@ async def handle_reminder(message: Message):
 @dp.message()
 async def handle_notes_phrases(message: Message):
     uid = message.from_user.id
-        if uid in pending_note_or_reminder:
-            elif data["type"] == "edit_reminder":
-                index = data["index"]
-                reminders.pop(index)
-                save_reminders()
-                message.text = "напомни " + message.text
-                await handle_reminder(message)
-                return
-            data = pending_note_or_reminder.pop(uid)
-        if data["type"] == "note":
+    if uid in pending_note_or_reminder:
+        data = pending_note_or_reminder.pop(uid)
+        if data["type"] == "edit_reminder":
+            index = data["index"]
+            reminders.pop(index)
+            save_reminders()
+            message.text = "напомни " + message.text
+            await handle_reminder(message)
+            return
+        elif data["type"] == "note":
             user_notes[uid].append(message.text.strip())
             save_notes()
             await show_notes(uid)
