@@ -334,7 +334,7 @@ def _register_message_stats(message: Message):
             save_unique_groups(unique_groups)
 
     if message.text and message.text.startswith('/'):
-        cmd = message.text.split()[0]
+        cmd = message.text.split()[0].strip().lower()
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
         save_stats()
 
