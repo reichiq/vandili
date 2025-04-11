@@ -983,7 +983,7 @@ async def ask_edit_reminder(callback: CallbackQuery, state: FSMContext):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_text")]
         ])
-        await message.answer(
+        await callback.message.answer(
             f"✏️ Введи новый текст напоминания или нажми <b>Пропустить</b>:\n\n"
             f"📌 <i>{old_text}</i>",
             reply_markup=keyboard
@@ -1193,7 +1193,9 @@ async def process_reminder_text(message: Message, state: FSMContext):
         await message.answer("⏳ Чтобы установить напоминание, напиши:\n<code>Мой город: Москва</code>")
         pending_note_or_reminder[user_id] = {
             "text": text,
-            "type": "reminder"
+            "type": "reminder",
+            "date": date,
+            "time": time
         }
         await state.clear()
         return
@@ -1228,9 +1230,20 @@ async def handle_reminder(message: Message):
         return
 
     try:
-        now = datetime.now(pytz.timezone(tz_str))
-        dt_local = now + timedelta(minutes=1)  # ближайшая минута, можно заменить на более сложную логику
-        dt_utc = dt_local.astimezone(pytz.utc)
+        local_tz = pytz.timezone(tz_str)
+
+        # Если есть введённые дата и время — используем их
+        date = reminder_data.get("date")
+        time = reminder_data.get("time")
+        if date and time:
+            dt_local = datetime.combine(date, time)
+        else:
+            # Иначе — ближайшая минута
+            dt_local = datetime.now(local_tz) + timedelta(minutes=1)
+
+        dt_localized = local_tz.localize(dt_local)
+        dt_utc = dt_localized.astimezone(pytz.utc)
+
         reminders.append((user_id, dt_utc, reminder_data["text"]))
         save_reminders()
         await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
