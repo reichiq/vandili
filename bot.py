@@ -107,7 +107,6 @@ def load_reminders():
             data = json.load(f)
             # data — список словарей [{"user_id": ..., "datetime_utc": ..., "text": ...}]
             # Превратим datetime_utc обратно в datetime
-            from datetime import datetime
             out = []
             for item in data:
                 dt_str = item["datetime_utc"]
@@ -962,7 +961,7 @@ async def delete_reminder(callback: CallbackQuery):
         real_index = user_reminders[index][0]
         reminders.pop(real_index)
         save_reminders()
-    await show_reminders(uid)
+    await show_reminders(uid, callback=callback)
 
 @dp.callback_query(F.data.startswith("reminder_edit:"))
 async def ask_edit_reminder(callback: CallbackQuery):
@@ -995,7 +994,7 @@ async def do_delete_all_reminders(callback: CallbackQuery):
     global reminders
     reminders = [r for r in reminders if r[0] != uid]
     save_reminders()
-    await show_reminders(uid)
+    await show_reminders(uid, callback=callback)
 
 @dp.callback_query(F.data == "reminder_cancel_delete_all")
 async def cancel_delete_all_reminders(callback: CallbackQuery):
@@ -1101,7 +1100,7 @@ async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
 
-async def show_notes(uid: int):
+async def show_notes(uid: int, callback: CallbackQuery = None):
     notes = user_notes.get(uid, [])
     if not notes:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1126,9 +1125,10 @@ async def show_notes(uid: int):
     buttons.append([
         InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")
     ])
+    await callback.message.delete()
     await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-async def show_reminders(uid: int):
+async def show_reminders(uid: int, callback: CallbackQuery = None):
     # Удаляем устаревшие напоминания
     now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
     global reminders
@@ -1136,6 +1136,12 @@ async def show_reminders(uid: int):
     save_reminders()
     
     user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+    if callback:
+        try:
+            await callback.message.delete()
+        except:
+            pass
+
     if not user_rem:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add")],
@@ -1177,7 +1183,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             return
         elif data["type"] == "edit_note":
             index = data.get("index")
-            if index is not None and 0 <= index < len(user_notes[uid]):
+            if index is not None and 0 <= index < len(user_notes.get(uid, [])):
                 user_notes[uid][index] = user_input
                 save_notes()
                 await show_notes(uid)
@@ -1188,8 +1194,8 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Если админ отвечает на сообщение поддержки
     if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
         original_id = message.reply_to_message.message_id
-        if original_id in support_reply_map:
-            user_id = support_reply_map[original_id]
+        if (admin_message.chat.id, original_id) in support_reply_map:
+            user_id = support_reply_map[(admin_message.chat.id, original_id)]
             try:
                 await send_admin_reply_as_single_message(message, user_id)
                 if message.from_user.id != ADMIN_ID:
@@ -1243,7 +1249,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                 for support_id in SUPPORT_IDS:
                     try:
                         sent_msg = await bot.send_message(chat_id=support_id, text=content)
-                        support_reply_map[sent_msg.message_id] = uid
+                        support_reply_map[(sent_msg.chat.id, sent_msg.message_id)] = uid
                         save_support_map()
                     except Exception as e:
                         logging.warning(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
@@ -1287,7 +1293,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     if voice_regex.search(user_input):
         voice_response_requested = True
-        user_input = voice_regex.sub("", user_input).strip()
+        user_input = voice_regex.sub("", user_input)
     
     lower_input = user_input.lower()
 
