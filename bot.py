@@ -1257,14 +1257,17 @@ async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
 
-async def show_notes(uid: int, callback: CallbackQuery = None):
+async def show_notes(uid: int, callback: CallbackQuery = None, message: Message = None):
     notes = user_notes.get(uid, [])
-    
-    if callback:
-        try:
+
+    # Удаляем предыдущее сообщение с кнопками, если есть
+    try:
+        if callback:
             await callback.message.delete()
-        except:
-            pass
+        elif message:
+            await message.delete()
+    except:
+        pass
 
     if not notes:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
