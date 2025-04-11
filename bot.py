@@ -762,7 +762,7 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
-@dp.message(Command("mynotes", prefix="/!"))
+@dp.message(lambda m: m.text and m.text.strip().lower() in ["/mynotes", "mynotes", "!mynotes"])
 async def show_notes_command(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=mynotes"
