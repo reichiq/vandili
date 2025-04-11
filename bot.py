@@ -1260,7 +1260,7 @@ async def handle_all_messages(message: Message):
 async def show_notes(uid: int, callback: CallbackQuery = None, message: Message = None):
     notes = user_notes.get(uid, [])
 
-    # Удаляем предыдущее сообщение с кнопками, если есть
+    # Удаляем предыдущее сообщение (если оно есть)
     try:
         if callback:
             await callback.message.delete()
@@ -1269,6 +1269,7 @@ async def show_notes(uid: int, callback: CallbackQuery = None, message: Message 
     except:
         pass
 
+    # Генерируем клавиатуру и текст
     if not notes:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
