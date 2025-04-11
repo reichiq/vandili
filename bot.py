@@ -455,9 +455,27 @@ def simple_transliterate(s: str) -> str:
     return "".join(result)
 
 async def geocode_city(city_name: str) -> dict:
-    data = await do_geocoding_request(city_name)
-    if data:
-        return data
+    city_name = city_name.strip().lower()
+
+    # Исключения, чтобы не ломать явно известные города
+    KNOWN_CITIES = {
+        "москва": "Moscow",
+        "ташкент": "Tashkent",
+        "санкт-петербург": "Saint Petersburg",
+        "петербург": "Saint Petersburg",
+        "алматы": "Almaty",
+        "астана": "Astana",
+    }
+
+    if city_name in KNOWN_CITIES:
+        return await do_geocoding_request(KNOWN_CITIES[city_name])
+
+    # 1. Сначала пробуем как есть
+    result = await do_geocoding_request(city_name)
+    if result:
+        return result
+
+    # 2. Пробуем перевод через Google Translate
     try:
         project_id = "gen-lang-client-0588633435"
         location = "global"
@@ -469,15 +487,16 @@ async def geocode_city(city_name: str) -> dict:
             source_language_code="ru",
             target_language_code="en",
         )
-        en_city = response.translations[0].translated_text
-        data = await do_geocoding_request(en_city)
-        if data:
-            return data
+        translated = response.translations[0].translated_text
+        result = await do_geocoding_request(translated)
+        if result:
+            return result
     except Exception as e:
-        logging.warning(f"Не удалось перевести город {city_name}: {e}")
+        logging.warning(f"[BOT] Ошибка перевода города '{city_name}': {e}")
+
+    # 3. Пробуем транслитерацию
     translit_city = simple_transliterate(city_name)
-    data = await do_geocoding_request(translit_city)
-    return data
+    return await do_geocoding_request(translit_city)
 
 # Новый вспомогательный метод для форматирования погодного описания с добавлением смайлика
 def format_condition(condition_text: str) -> str:
@@ -904,6 +923,7 @@ async def delete_all_notes(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "note_add")
 async def ask_add_note(callback: CallbackQuery):
+    await callback.message.delete()
     uid = callback.from_user.id
     pending_note_or_reminder[uid] = {"type": "note"}
     await callback.message.answer("✍️ Введи новую заметку.")
@@ -977,6 +997,7 @@ async def close_reminders(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "reminder_add")
 async def start_reminder_add(callback: CallbackQuery, state: FSMContext):
+    await callback.message.delete()
     await callback.message.answer("📅 Введи дату напоминания в формате <b>ДД.ММ.ГГГГ</b>\n\nПример: <code>12.04.2025</code>")
     await state.set_state(ReminderAdd.waiting_for_date)
 
@@ -1017,7 +1038,6 @@ async def process_reminder_text(message: Message, state: FSMContext):
     tz_str = user_timezones.get(user_id)
     if not tz_str:
         await message.answer("⏳ Чтобы установить напоминание, напиши:\n<code>Мой город: Москва</code>")
-        await state.update_data(text=text)
         pending_note_or_reminder[user_id] = {
             "text": text,
             "type": "reminder"
