@@ -34,7 +34,13 @@ import json
 import speech_recognition as sr
 from pydub import AudioSegment
 from collections import defaultdict
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 
+class ReminderAdd(StatesGroup):
+    waiting_for_date = State()
+    waiting_for_time = State()
+    waiting_for_text = State()
 
 def clean_for_tts(text: str) -> str:
     """
@@ -830,143 +836,39 @@ async def handle_timezone_setting(message: Message):
             })
         )
 
-@dp.message(lambda message: message.text and "напомни" in message.text.lower())
-async def handle_reminder(message: Message):
-    from datetime import datetime, timedelta
-
-    text = message.text.strip()
-    lower = text.lower()
-    user_id = message.from_user.id
-
-    # Убираем слово "напомни"
-    raw = re.sub(r"(?i)^напомни\s*", "", text).strip()
-    # raw теперь без слова "напомни". Например: "завтра в 10:00 купить кофе" или "12.05.2024 19:30 полить цветы"
-
-    # 1. Пытаемся найти явное указание "по ..." для часового пояса или города
-    city_match = re.search(r"(?i)\bпо\s+([\w\+\-]+)", raw)
-    if city_match:
-        city_info = city_match.group(1)
-        # Убираем из raw слово "по ..." для парсинга даты
-        raw = re.sub(r"(?i)\bпо\s+" + re.escape(city_info), "", raw).strip()
-        # Если это формат UTC+N или UTC-N, обрабатываем как фиксированное смещение
-        if re.match(r"(?i)^utc[\+\-]?\d+(\.\d+)?$", city_info):
-            offset_str = re.sub(r"(?i)^utc", "", city_info)
-            try:
-                offset_float = float(offset_str)
-                offset_minutes = int(offset_float * 60)
-                tz = pytz.FixedOffset(offset_minutes)
-                tz_str = tz.zone if hasattr(tz, "zone") else f"UTC{offset_str}"
-            except:
-                tz_str = "UTC"
-        else:
-            # Если указан город, определяем timezone через geocode_city
-            geo = await geocode_city(city_info)
-            tz_str = geo["timezone"] if geo and "timezone" in geo else "UTC"
-    else:
-        # Если нет указания "по", пробуем посмотреть, есть ли сохранённый часовой пояс для этого пользователя
-        if user_id in user_timezones:
-            tz_str = user_timezones[user_id]
-        else:
-            # Запросить у пользователя часовой пояс или город
-            await message.answer(
-                "Для корректного расписания напоминания, пожалуйста, укажите ваш часовой пояс или город. "
-                "Напишите, например: *Мой часовой пояс: Europe/Moscow* или *Мой город: Москва*.",
-                parse_mode="Markdown"
-            )
-            pending_note_or_reminder[user_id] = {
-                "text": message.text,
-                "was_retried": False
-            }
-            return
-
-        # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
-    parsed_dt = None  # ✅ важно! Объявляем заранее, чтобы избежать UnboundLocalError
-
-    try:
-        tz = pytz.timezone(tz_str)
-        now_in_tz = datetime.now(tz)
-    except Exception as e:
-        logging.warning(f"Ошибка timezone {tz_str}: {e}")
-        tz = pytz.utc
-        now_in_tz = datetime.utcnow()
-
-    parsed_raw = raw
-    match = re.search(
-        r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)",
-        raw
-    )
-    if match:
-        idx = match.start()
-        parsed_raw = raw[:idx + len(match.group(0))].strip()
-
-    try:
-        parsed_dt = dateparser.parse(
-            parsed_raw,
-            settings={
-                "TIMEZONE": tz_str,
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": now_in_tz
-            }
-        )
-    except Exception as e:
-        logging.warning(f"[REMINDER] Ошибка при парсинге времени: {e}")
-   
-    
-    if not parsed_dt:
-        await message.answer("Не смог понять дату/время. Пример:\n«напомни завтра 19:00 полить цветы по Москве»")
-        return
-
-    # 3. Определяем локальный часовой пояс и локализуем время
-    try:
-        local_tz = pytz.timezone(tz_str)
-    except Exception as e:
-        logging.warning(f"Ошибка при определении timezone для {tz_str}: {e}")
-        local_tz = pytz.utc
-    local_dt = parsed_dt.astimezone(local_tz)
-
-    # Если время уже прошло, добавим один день (упрощённая логика)
-    now_local = datetime.now(local_tz)
-    if local_dt < now_local:
-        local_dt += timedelta(days=1)
-
-    event_utc = local_dt.astimezone(pytz.utc)
-
-    # 4. Извлекаем текст задачи
-    # Пример: если raw вида "завтра в 10:00 купить кофе", то ищем "в 10:00"
-    time_match = re.search(r"\bв\s*(\d{1,2}:\d{2})\b", raw)
-    if time_match:
-        task_text = raw.replace(time_match.group(0), "").strip()
-    else:
-        splitted = raw.split()
-        task_text = " ".join(splitted[1:]) if len(splitted) > 1 else "(без описания)"
-
-    # 5. Добавляем напоминание и сохраняем его
-    reminders.append((user_id, event_utc, task_text))
-    save_reminders()
-
-    # 6. Сообщаем пользователю
-    await message.answer(
-        f"Ок, напомню:\n<b>{task_text}</b>\n\n"
-        f"🕓Локальное время: <code>{local_dt.strftime('%Y-%m-%d %H:%M:%S')}</code> ({tz_str})\n"
-        f"🌐В UTC: <code>{event_utc.strftime('%Y-%m-%d %H:%M:%S')}</code> (UTC)\n\n"
-        "✅Сохранено!"
-    )
-    return
 
 @dp.message()
 async def handle_notes_phrases(message: Message):
     uid = message.from_user.id
     if uid in pending_note_or_reminder:
         data = pending_note_or_reminder.pop(uid)
-        if data["type"] == "edit_reminder":
-            index = data["index"]
-            reminders.pop(index)
-            save_reminders()
-            message.text = "напомни " + message.text
-            await handle_reminder(message)
+        if data["type"] == "note":
+            user_notes[uid].append(message.text.strip())
+            save_notes()
+            await show_notes(uid)
             return
-        elif data["type"] == "note":
+
+        elif data["type"] == "edit_reminder":
+            index = data["index"]
+            text = message.text.strip()
+            dt = dateparser.parse(text, settings={"TIMEZONE": "UTC", "RETURN_AS_TIMEZONE_AWARE": True})
+
+        if not dt:
+            await message.answer("⚠️ Не удалось распознать дату и время. Попробуй снова.")
+            return
+
+        if dt <= datetime.now(pytz.utc):
+            await message.answer("⚠️ Напоминание не может быть в прошлом.")
+            return
+
+        if 0 <= index < len(reminders):
+            reminders[index] = (uid, dt, text)
+            save_reminders()
+            await message.answer("✏️ Напоминание обновлено!")
+            await show_reminders(uid)
+        else:
+            await message.answer("Такого напоминания нет.")
+        
             user_notes[uid].append(message.text.strip())
             save_notes()
             await show_notes(uid)
@@ -978,10 +880,6 @@ async def handle_notes_phrases(message: Message):
                 save_notes()
                 await show_notes(uid)
                 return
-        elif data["type"] == "reminder":
-            message.text = "напомни " + message.text
-            await handle_reminder(message)
-            return
 
     text = (message.text or "").strip().lower()
     # Эстетичная очистка от "добавь заметку:", "запиши заметку:" и т.п.
@@ -1145,6 +1043,21 @@ async def delete_reminder(callback: CallbackQuery):
         save_reminders()
     await show_reminders(uid)
 
+@dp.callback_query(F.data.startswith("reminder_edit:"))
+async def ask_edit_reminder(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+
+    user_reminders = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+    if 0 <= index < len(user_reminders):
+        real_index = user_reminders[index][0]
+        pending_note_or_reminder[uid] = {"type": "edit_reminder", "index": real_index}
+        await callback.message.answer(
+            f"✏️ Отправь новый текст для напоминания №{index+1}, включая дату/время."
+        )
+    else:
+        await callback.message.answer("Такого напоминания нет.")
+
 @dp.callback_query(F.data == "reminder_delete_all")
 async def confirm_delete_all_reminders(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1172,31 +1085,70 @@ async def close_reminders(callback: CallbackQuery):
     await callback.message.delete()
 
 @dp.callback_query(F.data == "reminder_add")
-async def ask_add_reminder(callback: CallbackQuery):
-    uid = callback.from_user.id
-    pending_note_or_reminder[uid] = {"type": "reminder"}
-    await callback.message.answer("✍️ Напиши текст напоминания с датой и временем.\nПример: «напомни завтра в 15:00 по Варшаве»")
+async def start_reminder_add(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("📅 Введи дату напоминания в формате <b>ГГГГ-ММ-ДД</b>\n\nПример: <code>2025-04-12</code>")
+    await state.set_state(ReminderAdd.waiting_for_date)
 
-@dp.callback_query(F.data.startswith("reminder_edit:"))
-async def ask_edit_reminder(callback: CallbackQuery):
-    uid = callback.from_user.id
-    parts = callback.data.split(":")
-    if len(parts) < 2:
-        await callback.message.answer("⚠️ Не удалось распознать напоминание для редактирования.")
+@dp.message(ReminderAdd.waiting_for_date)
+async def process_reminder_date(message: Message, state: FSMContext):
+    try:
+        date_obj = datetime.strptime(message.text.strip(), "%Y-%m-%d").date()
+        await state.update_data(date=date_obj)
+        await message.answer("⏰ Теперь введи время в формате <b>ЧЧ:ММ</b>\nПример: <code>15:30</code>")
+        await state.set_state(ReminderAdd.waiting_for_time)
+    except ValueError:
+        await message.answer("⚠️ Неверный формат даты. Попробуй снова. Пример: <code>2025-04-12</code>")
+
+@dp.message(ReminderAdd.waiting_for_time)
+async def process_reminder_time(message: Message, state: FSMContext):
+    try:
+        time_obj = datetime.strptime(message.text.strip(), "%H:%M").time()
+        await state.update_data(time=time_obj)
+        await message.answer("✍️ Введи текст напоминания (что нужно напомнить)")
+        await state.set_state(ReminderAdd.waiting_for_text)
+    except ValueError:
+        await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>")
+
+@dp.message(ReminderAdd.waiting_for_text)
+async def process_reminder_text(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = await state.get_data()
+    date = data.get("date")
+    time = data.get("time")
+    text = message.text.strip()
+
+    if not date or not time:
+        await message.answer("❌ Ошибка: отсутствуют дата или время. Попробуй снова.")
+        await state.clear()
+        return
+
+    dt_local = datetime.combine(date, time)
+    tz_str = user_timezones.get(user_id)
+    if not tz_str:
+        await message.answer("⏳ Чтобы установить напоминание, напиши:\n<code>Мой город: Москва</code>")
+        await state.update_data(text=text)
+        pending_note_or_reminder[user_id] = {
+            "text": text,
+            "type": "reminder"
+        }
+        await state.clear()
         return
 
     try:
-        index = int(parts[1])
-    except ValueError:
-        await callback.message.answer("⚠️ Неверный формат индекса.")
+        local_tz = pytz.timezone(tz_str)
+        dt_localized = local_tz.localize(dt_local)
+        dt_utc = dt_localized.astimezone(pytz.utc)
+    except Exception as e:
+        logging.warning(f"[FSM] Ошибка при преобразовании даты: {e}")
+        await message.answer("❌ Не удалось определить время. Убедись, что всё введено корректно.")
+        await state.clear()
         return
 
-    user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
-    if 0 <= index < len(user_rem):
-        pending_note_or_reminder[uid] = {"type": "edit_reminder", "index": user_rem[index][0]}
-        await callback.message.answer(f"✏️ Введи новый текст напоминания, включая дату/время.\nПример: «напомни завтра в 12:00 купить хлеб»")
-    else:
-        await callback.message.answer("Такого напоминания нет.")
+    reminders.append((user_id, dt_utc, text))
+    save_reminders()
+    await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
+    await state.clear()
+
 
 @dp.message()
 async def handle_all_messages(message: Message):
@@ -1231,6 +1183,12 @@ async def show_notes(uid: int):
     await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 async def show_reminders(uid: int):
+    # Удаляем устаревшие напоминания
+    now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+    global reminders
+    reminders = [r for r in reminders if not (r[0] == uid and r[1] <= now_utc)]
+    save_reminders()
+    
     user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
     if not user_rem:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
