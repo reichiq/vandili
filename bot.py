@@ -1089,18 +1089,18 @@ async def close_reminders(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "reminder_add")
 async def start_reminder_add(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("📅 Введи дату напоминания в формате <b>ГГГГ-ММ-ДД</b>\n\nПример: <code>2025-04-12</code>")
+    await callback.message.answer("📅 Введи дату напоминания в формате <b>ДД.ММ.ГГГГ</b>\n\nПример: <code>12.04.2025</code>")
     await state.set_state(ReminderAdd.waiting_for_date)
 
 @dp.message(ReminderAdd.waiting_for_date)
 async def process_reminder_date(message: Message, state: FSMContext):
     try:
-        date_obj = datetime.strptime(message.text.strip(), "%Y-%m-%d").date()
+        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
         await state.update_data(date=date_obj)
         await message.answer("⏰ Теперь введи время в формате <b>ЧЧ:ММ</b>\nПример: <code>15:30</code>")
         await state.set_state(ReminderAdd.waiting_for_time)
     except ValueError:
-        await message.answer("⚠️ Неверный формат даты. Попробуй снова. Пример: <code>2025-04-12</code>")
+        await message.answer("⚠️ Неверный формат даты. Попробуй снова. Пример: <code>12.04.2025</code>")
 
 @dp.message(ReminderAdd.waiting_for_time)
 async def process_reminder_time(message: Message, state: FSMContext):
@@ -1204,7 +1204,7 @@ async def show_reminders(uid: int):
     buttons = []
     for i, (real_i, (_, dt, msg)) in enumerate(user_rem):
         local = dt.astimezone(pytz.timezone(user_timezones.get(uid, "UTC")))
-        text += f"{i+1}. {msg} — <code>{local.strftime('%Y-%m-%d %H:%M')}</code>\n"
+        text += f"{i+1}. {msg} — <code>{local.strftime('%d.%m.%Y %H:%M')}</code>\n"
         buttons.append([
             InlineKeyboardButton(text=f"✏️ {i+1}", callback_data=f"reminder_edit:{i}"),
             InlineKeyboardButton(text=f"🗑 {i+1}", callback_data=f"reminder_delete:{i}")
