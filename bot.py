@@ -36,6 +36,8 @@ from pydub import AudioSegment
 from collections import defaultdict
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+# ★ Добавляем хранилище для FSM
+from aiogram.fsm.storage.memory import MemoryStorage
 
 class ReminderAdd(StatesGroup):
     waiting_for_date = State()
@@ -69,7 +71,8 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+# ★ Инициализируем диспетчер с MemoryStorage для FSM
+dp = Dispatcher(storage=MemoryStorage())
 morph = MorphAnalyzer()
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -762,7 +765,8 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
-@dp.message(Command("mynotes", prefix="/!"))
+# ★ Изменён обработчик команды /mynotes – теперь без prefix, чтобы команда срабатывала корректно
+@dp.message(Command("mynotes"))
 async def show_notes_command(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=mynotes"
@@ -867,8 +871,6 @@ async def handle_timezone_setting(message: Message):
                 "answer": message.answer
             })
         )
-
-
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
@@ -1002,7 +1004,7 @@ async def edit_reminder_text(message: Message, state: FSMContext):
     old_dt = data.get("old_dt")
     old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(message.from_user.id, "UTC")))
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_date")]
+        [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_date")]
     ])
     await message.answer(
         f"📅 Введи новую дату в формате <code>ДД.ММ.ГГГГ</code>\nили нажми <b>Пропустить</b>.\n\n"
@@ -1251,36 +1253,31 @@ async def handle_reminder(message: Message):
         logging.warning(f"[DELAYED_REMINDER] Ошибка: {e}")
         await message.answer("❌ Не удалось установить напоминание.")
 
-
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
 
+# ★ Изменена функция show_notes – если нет заметок, всегда отправляем сообщение
 async def show_notes(uid: int, callback: CallbackQuery = None, message: Message = None):
     notes = user_notes.get(uid, [])
 
     # Удаляем предыдущее сообщение (если оно есть)
-    deleted = False
     try:
         if callback:
             await callback.message.delete()
-            deleted = True
         elif message:
             await message.delete()
-            deleted = True
     except:
         pass
 
-    # Генерируем клавиатуру и текст
+    # Если нет заметок, отправляем сообщение с кнопками
     if not notes:
-        if deleted:
-            # Сообщение уже удалено, можно просто отправить новое
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
-                [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
-            ])
-            await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
+            [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
+        ])
+        await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
         return
 
     text = "<b>Твои заметки:</b>\n"
