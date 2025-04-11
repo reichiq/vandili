@@ -206,6 +206,26 @@ def save_stats():
     except Exception as e:
         logging.warning(f"Не удалось сохранить stats.json: {e}")
 
+def normalize_command(command: str) -> str:
+    """
+    Приводит команду к виду без @username.
+    Например, '/start@VandiliBot' -> '/start'
+    """
+    return command.split('@')[0]
+
+def get_normalized_command_stats(stats_dict: dict) -> dict:
+    """
+    Объединяет статистику команд, убирая @username из ключей.
+    """
+    raw_commands = stats_dict.get("commands_used", {})
+    normalized_stats = {}
+
+    for command, count in raw_commands.items():
+        norm_cmd = normalize_command(command)
+        normalized_stats[norm_cmd] = normalized_stats.get(norm_cmd, 0) + count
+
+    return normalized_stats
+
 def render_top_commands_bar_chart(commands_dict: dict) -> str:
     import matplotlib.pyplot as plt
     import tempfile
@@ -213,7 +233,8 @@ def render_top_commands_bar_chart(commands_dict: dict) -> str:
     if not commands_dict:
         return None
 
-    sorted_cmds = sorted(commands_dict.items(), key=lambda x: x[1], reverse=True)[:5]
+    normalized_stats = get_normalized_command_stats({"commands_used": commands_dict})
+    sorted_cmds = sorted(normalized_stats.items(), key=lambda x: x[1], reverse=True)[:5]
     commands = [cmd.replace("@VandiliBot", "") for cmd, _ in sorted_cmds]
     counts = [cnt for _, cnt in sorted_cmds]
 
@@ -335,6 +356,8 @@ def _register_message_stats(message: Message):
 
     if message.text and message.text.startswith('/'):
         cmd = message.text.split()[0].strip().lower()
+        cmd = cmd.split("@")[0].lstrip("!/")  # удаляем / ! и @VandiliBot
+        cmd = f"/{cmd}"  # нормализуем обратно с префиксом
         stats["commands_used"][cmd] = stats["commands_used"].get(cmd, 0) + 1
         save_stats()
 
@@ -660,6 +683,18 @@ async def cmd_start(message: Message, command: CommandObject):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
 
+    # 🔍 Обработка deep-link параметров
+    if command.args == "mynotes":
+        await show_notes(message.chat.id, message=message)
+        return
+    elif command.args == "myreminders":
+        await show_reminders(message.chat.id)
+        return
+    elif command.args == "support":
+        support_mode_users.add(message.from_user.id)
+        await message.answer(SUPPORT_PROMPT_TEXT)
+        return
+
     greet = """Привет! Я <b>VAI</b> — твой интеллектуальный помощник 🤖
 
 •🔊Я могу отвечать не только текстом, но и голосовыми сообщениями. Скажи "ответь голосом" или "ответь войсом".
@@ -667,7 +702,7 @@ async def cmd_start(message: Message, command: CommandObject):
 •❓Отвечаю на вопросы по содержимому файла.
 •👨‍💻Помогаю с кодом — напиши #рефактор и вставь код.
 •🏞Показываю изображения по ключевым словам.
-•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня" 
+•☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня"
 •💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
 •📝 Заметки: используй команду /mynotes — ты сможешь добавлять, редактировать и удалять свои заметки через кнопки. 
 •⏰ Напоминания: команда /myreminders — добавление, редактирование, удаление напоминаний. Добавление реализовано через пошаговые кнопки (дата → время → текст).
@@ -675,6 +710,7 @@ async def cmd_start(message: Message, command: CommandObject):
 
 Всегда на связи!"""
 
+    # 🌐 Если сообщение из группы
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id in disabled_chats:
             disabled_chats.remove(message.chat.id)
@@ -684,6 +720,7 @@ async def cmd_start(message: Message, command: CommandObject):
         await message.answer(greet)
         return
 
+    # 📩 Если в ЛС
     await message.answer(greet)
 
 @dp.message(Command("stop", prefix="/!"))
