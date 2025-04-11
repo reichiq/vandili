@@ -872,8 +872,7 @@ async def handle_notes_phrases(message: Message):
             user_notes[uid].append(message.text.strip())
             save_notes()
             await show_notes(uid)
-            return
-        elif data["type"] == "edit_note":
+            
             index = data["index"]
             if 0 <= index < len(user_notes[uid]):
                 user_notes[uid][index] = message.text.strip()
@@ -993,6 +992,10 @@ async def handle_voice_message(message: Message):
     if not recognized_text:
         await message.answer("Извините, я не смог распознать голосовое сообщение 😔")
         return
+    voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
+    voice_response_requested = bool(voice_regex.search(recognized_text))
+    cleaned_text = voice_regex.sub("", recognized_text).strip()
+    await handle_msg(message, recognized_text=cleaned_text, voice_response_requested=voice_response_requested)
 
 @dp.callback_query(F.data.startswith("note_delete:"))
 async def delete_note(callback: CallbackQuery):
@@ -1750,7 +1753,6 @@ async def reminder_loop():
                     await bot.send_message(user_id, f"🔔 Напоминание!\n{text}")
             except Exception as e:
                 logging.warning(f"[REMINDER] Не удалось отправить напоминание: {e}")
-        await asyncio.sleep(30)
 
         
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
