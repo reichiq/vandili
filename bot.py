@@ -468,7 +468,8 @@ async def geocode_city(city_name: str) -> dict:
         "москва": "Europe/Moscow",
         "ташкент": "Asia/Tashkent",
         "санкт-петербург": "Europe/Saint Petersburg",
-        "петербург": "Saint Petersburg",
+        "петербург": "Europe/Saint Petersburg",
+        "сеул": "Asia/Seoul",
         "алматы": "Asia/Almaty",
         "астана": "Asia/Astana"
     }
