@@ -900,7 +900,7 @@ async def handle_reminder(message: Message):
     except Exception as e:
         logging.warning(f"Ошибка при определении timezone для {tz_str}: {e}")
         local_tz = pytz.utc
-    local_dt = local_tz.localize(parsed_dt)
+    local_dt = parsed_dt.astimezone(local_tz)
 
     # Если время уже прошло, добавим один день (упрощённая логика)
     now_local = datetime.now(local_tz)
