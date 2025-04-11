@@ -1113,6 +1113,22 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     cid = message.chat.id
 
     voice_response_requested = False  # исправление UnboundLocalError
+    if uid in pending_note_or_reminder:
+        data = pending_note_or_reminder.pop(uid)
+        if data["type"] == "note":
+            user_notes[uid].append(user_input)
+            save_notes()
+            await show_notes(uid)
+            return
+        elif data["type"] == "edit_note":
+            index = data.get("index")
+            if index is not None and 0 <= index < len(user_notes[uid]):
+                user_notes[uid][index] = user_input
+                save_notes()
+                await show_notes(uid)
+            else:
+                await message.answer("Не удалось найти заметку для редактирования.")
+            return
 
     # Если админ отвечает на сообщение поддержки
     if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
