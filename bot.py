@@ -730,6 +730,29 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
+@dp.message(Command("mynotes"))
+async def show_notes_command(message: Message):
+    if message.chat.type != ChatType.PRIVATE:
+        private_url = f"https://t.me/{BOT_USERNAME}?start=mynotes"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Открыть мои заметки", url=private_url)]
+        ])
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
+        return
+    await show_notes(message.chat.id)
+
+@dp.message(Command("myreminders"))
+async def show_reminders_command(message: Message):
+    if message.chat.type != ChatType.PRIVATE:
+        private_url = f"https://t.me/{BOT_USERNAME}?start=myreminders"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Открыть мои напоминания", url=private_url)]
+        ])
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
+        return
+    await show_reminders(message.chat.id)
+
+
 @dp.callback_query(F.data.startswith("note_type:"))
 async def handle_note_type_choice(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -934,6 +957,32 @@ async def handle_reminder(message: Message):
 @dp.message()
 async def handle_notes_phrases(message: Message):
     uid = message.from_user.id
+        if uid in pending_note_or_reminder:
+            elif data["type"] == "edit_reminder":
+                index = data["index"]
+                reminders.pop(index)
+                save_reminders()
+                message.text = "напомни " + message.text
+                await handle_reminder(message)
+                return
+            data = pending_note_or_reminder.pop(uid)
+        if data["type"] == "note":
+            user_notes[uid].append(message.text.strip())
+            save_notes()
+            await show_notes(uid)
+            return
+        elif data["type"] == "edit_note":
+            index = data["index"]
+            if 0 <= index < len(user_notes[uid]):
+                user_notes[uid][index] = message.text.strip()
+                save_notes()
+                await show_notes(uid)
+                return
+        elif data["type"] == "reminder":
+            message.text = "напомни " + message.text
+            await handle_reminder(message)
+            return
+
     text = (message.text or "").strip().lower()
     # Эстетичная очистка от "добавь заметку:", "запиши заметку:" и т.п.
     text = re.sub(
@@ -1047,10 +1096,146 @@ async def handle_voice_message(message: Message):
         await message.answer("Извините, я не смог распознать голосовое сообщение 😔")
         return
 
+@dp.callback_query(F.data.startswith("note_delete:"))
+async def delete_note(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    notes = user_notes.get(uid, [])
+    if 0 <= index < len(notes):
+        notes.pop(index)
+        save_notes()
+    await show_notes(uid)
+
+@dp.callback_query(F.data == "note_delete_all")
+async def delete_all_notes(callback: CallbackQuery):
+    uid = callback.from_user.id
+    user_notes[uid] = []
+    save_notes()
+    await show_notes(uid)
+
+@dp.callback_query(F.data == "note_add")
+async def ask_add_note(callback: CallbackQuery):
+    uid = callback.from_user.id
+    pending_note_or_reminder[uid] = {"type": "note"}
+    await callback.message.answer("✍️ Введи новую заметку.")
+
+@dp.callback_query(F.data.startswith("note_edit:"))
+async def ask_edit_note(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    notes = user_notes.get(uid, [])
+    if 0 <= index < len(notes):
+        pending_note_or_reminder[uid] = {"type": "edit_note", "index": index}
+        await callback.message.answer(f"✏️ Отправь новый текст для заметки №{index+1}.")
+    else:
+        await callback.message.answer("Такой заметки не найдено.")
+
+@dp.callback_query(F.data == "note_close")
+async def close_notes(callback: CallbackQuery):
+    await callback.message.delete()
+
+@dp.callback_query(F.data.startswith("reminder_delete:"))
+async def delete_reminder(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    user_reminders = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+    if 0 <= index < len(user_reminders):
+        real_index = user_reminders[index][0]
+        reminders.pop(real_index)
+        save_reminders()
+    await show_reminders(uid)
+
+@dp.callback_query(F.data == "reminder_delete_all")
+async def confirm_delete_all_reminders(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="reminder_cancel_delete_all"),
+            InlineKeyboardButton(text="✅ Удалить всё", callback_data="reminder_confirm_delete_all")
+        ]
+    ])
+    await callback.message.answer("Ты точно хочешь удалить <b>все</b> напоминания?", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "reminder_confirm_delete_all")
+async def do_delete_all_reminders(callback: CallbackQuery):
+    uid = callback.from_user.id
+    global reminders
+    reminders = [r for r in reminders if r[0] != uid]
+    save_reminders()
+    await show_reminders(uid)
+
+@dp.callback_query(F.data == "reminder_cancel_delete_all")
+async def cancel_delete_all_reminders(callback: CallbackQuery):
+    await callback.message.answer("Удаление отменено.")
+
+@dp.callback_query(F.data == "reminder_close")
+async def close_reminders(callback: CallbackQuery):
+    await callback.message.delete()
+
+@dp.callback_query(F.data == "reminder_add")
+async def ask_edit_reminder(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+    if 0 <= index < len(user_rem):
+        pending_note_or_reminder[uid] = {"type": "edit_reminder", "index": user_rem[index][0]}
+        await callback.message.answer(f"✏️ Введи новый текст напоминания, включая дату/время.\nПример: «напомни завтра в 12:00 купить хлеб»")
+    else:
+        await callback.message.answer("Такого напоминания нет.")
+async def ask_add_reminder(callback: CallbackQuery):
+    uid = callback.from_user.id
+    pending_note_or_reminder[uid] = {"type": "reminder"}
+    await callback.message.answer("✍️ Напиши текст напоминания с датой и временем.\nПример: «напомни завтра в 15:00 по Варшаве»")
+
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
+
+async def show_notes(uid: int):
+    notes = user_notes.get(uid, [])
+    if not notes:
+        await bot.send_message(uid, "📭 У тебя пока нет заметок.")
+        return
+
+    text = "<b>Твои заметки:</b>\n"
+    buttons = []
+    for i, note in enumerate(notes):
+        text += f"{i+1}. {note}\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"✏️ {i+1}", callback_data=f"note_edit:{i}"),
+            InlineKeyboardButton(text=f"🗑 {i+1}", callback_data=f"note_delete:{i}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Добавить", callback_data="note_add"),
+        InlineKeyboardButton(text="🧹 Удалить все", callback_data="note_delete_all")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")
+    ])
+    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+async def show_reminders(uid: int):
+    user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+    if not user_rem:
+        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.")
+        return
+    text = "<b>Твои напоминания:</b>\n"
+    buttons = []
+    for i, (real_i, (_, dt, msg)) in enumerate(user_rem):
+        local = dt.astimezone(pytz.timezone(user_timezones.get(uid, "UTC")))
+        text += f"{i+1}. {msg} — <code>{local.strftime('%Y-%m-%d %H:%M')}</code>\n"
+        buttons.append([
+            InlineKeyboardButton(text=f"✏️ {i+1}", callback_data=f"reminder_edit:{i}"),
+            InlineKeyboardButton(text=f"🗑 {i+1}", callback_data=f"reminder_delete:{i}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add"),
+        InlineKeyboardButton(text="🧹 Удалить все", callback_data="reminder_delete_all")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")
+    ])
+    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 async def handle_all_messages_impl(message: Message, user_input: str):
     _register_message_stats(message)
@@ -1561,30 +1746,34 @@ EXCHANGE_PATTERN = re.compile(
 )
 
 async def reminder_loop():
+    global reminders
     import pytz
     from datetime import datetime
-    global reminders
-    
     while True:
         now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
         to_send = []
-        
-        # Собираем индексы просроченных напоминаний
+        to_remove = []
+
         for i, (user_id, remind_dt_utc, note_text) in enumerate(reminders):
             if remind_dt_utc <= now_utc:
-                to_send.append(i)
-        
-        # Отправляем и удаляем из списка (с конца, чтобы не сбить индексы)
-        for i in reversed(to_send):
-            user_id, remind_dt_utc, note_text = reminders.pop(i)
+                to_send.append((user_id, note_text))
+                to_remove.append(i)
+
+        for i in reversed(to_remove):
+            reminders.pop(i)
+        if to_remove:
             save_reminders()
+
+        for user_id, text in to_send:
             try:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=f"🔔 Напоминание!\n{note_text}"
-                )
+                if "войс" in text.lower() or "голосом" in text.lower():
+                    await send_voice_message(user_id, f"🔔 Напоминание!\n{text}")
+                else:
+                    await bot.send_message(user_id, f"🔔 Напоминание!\n{text}")
             except Exception as e:
                 logging.warning(f"[REMINDER] Не удалось отправить напоминание: {e}")
+        await asyncio.sleep(30)
+
         
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
 
