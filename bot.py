@@ -744,14 +744,6 @@ async def cmd_adminstats(message: Message):
     else:
         await message.answer(text + "\nНет данных по командам.")
 
-    # Генерация и отправка графика
-    chart_path = render_top_commands_bar_chart(cmd_usage)
-    if chart_path:
-        await message.answer_photo(photo=FSInputFile(chart_path, filename="top_commands.png"), caption=text)
-        os.remove(chart_path)
-    else:
-        await message.answer(text + "\nНет данных по командам.")
-
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     _register_message_stats(message)
