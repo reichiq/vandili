@@ -932,7 +932,7 @@ async def delete_all_notes(callback: CallbackQuery):
     uid = callback.from_user.id
     user_notes[uid] = []
     save_notes()
-    await show_notes(uid)
+    await show_notes(uid, callback=callback)
 
 @dp.callback_query(F.data == "note_add")
 async def ask_add_note(callback: CallbackQuery):
