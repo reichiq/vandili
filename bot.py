@@ -459,12 +459,12 @@ async def geocode_city(city_name: str) -> dict:
 
     # Исключения, чтобы не ломать явно известные города
     KNOWN_CITIES = {
-        "москва": "Moscow",
-        "ташкент": "Tashkent",
-        "санкт-петербург": "Saint Petersburg",
+        "москва": "Europe/Moscow",
+        "ташкент": "Asia/Tashkent",
+        "санкт-петербург": "Europe/Saint Petersburg",
         "петербург": "Saint Petersburg",
-        "алматы": "Almaty",
-        "астана": "Astana",
+        "алматы": "Asia/Almaty",
+        "астана": "Asia/Astana"
     }
 
     if city_name in KNOWN_CITIES:
