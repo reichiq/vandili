@@ -925,9 +925,9 @@ async def handle_reminder(message: Message):
     # 6. Сообщаем пользователю
     await message.answer(
         f"Ок, напомню:\n<b>{task_text}</b>\n\n"
-        f"Локальное время: {local_dt.strftime('%Y-%m-%d %H:%M:%S')} ({tz_str})\n"
-        f"В UTC: {event_utc.isoformat()}\n\n"
-        "Сохранено!"
+        f"🕓Локальное время: <code>{local_dt.strftime('%Y-%m-%d %H:%M:%S')}</code> ({tz_str})\n"
+        f"🌐В UTC: <code>{event_utc.strftime('%Y-%m-%d %H:%M:%S')}</code> (UTC)\n\n"
+        "✅Сохранено!"
     )
     return
 
