@@ -1172,19 +1172,31 @@ async def close_reminders(callback: CallbackQuery):
     await callback.message.delete()
 
 @dp.callback_query(F.data == "reminder_add")
+async def ask_add_reminder(callback: CallbackQuery):
+    uid = callback.from_user.id
+    pending_note_or_reminder[uid] = {"type": "reminder"}
+    await callback.message.answer("✍️ Напиши текст напоминания с датой и временем.\nПример: «напомни завтра в 15:00 по Варшаве»")
+
+@dp.callback_query(F.data.startswith("reminder_edit:"))
 async def ask_edit_reminder(callback: CallbackQuery):
     uid = callback.from_user.id
-    index = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    if len(parts) < 2:
+        await callback.message.answer("⚠️ Не удалось распознать напоминание для редактирования.")
+        return
+
+    try:
+        index = int(parts[1])
+    except ValueError:
+        await callback.message.answer("⚠️ Неверный формат индекса.")
+        return
+
     user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
     if 0 <= index < len(user_rem):
         pending_note_or_reminder[uid] = {"type": "edit_reminder", "index": user_rem[index][0]}
         await callback.message.answer(f"✏️ Введи новый текст напоминания, включая дату/время.\nПример: «напомни завтра в 12:00 купить хлеб»")
     else:
         await callback.message.answer("Такого напоминания нет.")
-async def ask_add_reminder(callback: CallbackQuery):
-    uid = callback.from_user.id
-    pending_note_or_reminder[uid] = {"type": "reminder"}
-    await callback.message.answer("✍️ Напиши текст напоминания с датой и временем.\nПример: «напомни завтра в 15:00 по Варшаве»")
 
 @dp.message()
 async def handle_all_messages(message: Message):
