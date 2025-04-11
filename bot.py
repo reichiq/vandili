@@ -1261,21 +1261,26 @@ async def show_notes(uid: int, callback: CallbackQuery = None, message: Message 
     notes = user_notes.get(uid, [])
 
     # Удаляем предыдущее сообщение (если оно есть)
+    deleted = False
     try:
         if callback:
             await callback.message.delete()
+            deleted = True
         elif message:
             await message.delete()
+            deleted = True
     except:
         pass
 
     # Генерируем клавиатуру и текст
     if not notes:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
-            [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
-        ])
-        await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
+        if deleted:
+            # Сообщение уже удалено, можно просто отправить новое
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
+            ])
+            await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
         return
 
     text = "<b>Твои заметки:</b>\n"
