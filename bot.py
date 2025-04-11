@@ -856,33 +856,38 @@ async def handle_reminder(message: Message):
             }
             return
 
-    # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
+        # 2. Парсим дату/время из оставшейся строки raw с помощью dateparser
+    parsed_dt = None  # ✅ важно! Объявляем заранее, чтобы избежать UnboundLocalError
+
     try:
         tz = pytz.timezone(tz_str)
         now_in_tz = datetime.now(tz)
     except Exception as e:
         logging.warning(f"Ошибка timezone {tz_str}: {e}")
+        tz = pytz.utc
         now_in_tz = datetime.utcnow()
-        
-        parsed_dt = None  # ← ВНЕ try/except
-        
-        parsed_raw = raw
-        match = re.search(r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)", raw)
-        if match:
-            idx = match.start()
-            parsed_raw = raw[:idx + len(match.group(0))].strip()
-        try:
-            parsed_dt = dateparser.parse(
-                parsed_raw,
-                settings={
-                    "TIMEZONE": tz_str,
-                    "RETURN_AS_TIMEZONE_AWARE": True,
-                    "PREFER_DATES_FROM": "future",
-                    "RELATIVE_BASE": now_in_tz
-                }
-            )
-        except Exception as e:
-            logging.warning(f"[REMINDER] Ошибка при парсинге времени: {e}")
+
+    parsed_raw = raw
+    match = re.search(
+        r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)",
+        raw
+    )
+    if match:
+        idx = match.start()
+        parsed_raw = raw[:idx + len(match.group(0))].strip()
+
+    try:
+        parsed_dt = dateparser.parse(
+            parsed_raw,
+            settings={
+                "TIMEZONE": tz_str,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future",
+                "RELATIVE_BASE": now_in_tz
+            }
+        )
+    except Exception as e:
+        logging.warning(f"[REMINDER] Ошибка при парсинге времени: {e}")
    
     
     if not parsed_dt:
