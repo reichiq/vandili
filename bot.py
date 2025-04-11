@@ -1004,11 +1004,25 @@ async def delete_note(callback: CallbackQuery):
     await show_notes(uid)
 
 @dp.callback_query(F.data == "note_delete_all")
-async def delete_all_notes(callback: CallbackQuery):
+async def confirm_delete_all_notes(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="note_cancel_delete_all"),
+            InlineKeyboardButton(text="✅ Удалить всё", callback_data="note_confirm_delete_all")
+        ]
+    ])
+    await callback.message.answer("Ты точно хочешь удалить <b>все</b> заметки?", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "note_confirm_delete_all")
+async def do_delete_all_notes(callback: CallbackQuery):
     uid = callback.from_user.id
     user_notes[uid] = []
     save_notes()
     await show_notes(uid, callback=callback)
+
+@dp.callback_query(F.data == "note_cancel_delete_all")
+async def cancel_delete_all_notes(callback: CallbackQuery):
+    await callback.message.delete()
 
 @dp.callback_query(F.data == "note_add")
 async def ask_add_note(callback: CallbackQuery):
@@ -1218,7 +1232,8 @@ async def do_delete_all_reminders(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "reminder_cancel_delete_all")
 async def cancel_delete_all_reminders(callback: CallbackQuery):
-    await callback.message.answer("Удаление отменено.")
+    await callback.message.delete()  # удаляем сообщение с кнопками
+    await callback.message.answer("❌ Удаление отменено.")
 
 @dp.callback_query(F.data == "reminder_close")
 async def close_reminders(callback: CallbackQuery):
