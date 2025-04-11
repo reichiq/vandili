@@ -1259,6 +1259,13 @@ async def handle_all_messages(message: Message):
 
 async def show_notes(uid: int, callback: CallbackQuery = None):
     notes = user_notes.get(uid, [])
+    
+    if callback:
+        try:
+            await callback.message.delete()
+        except:
+            pass
+
     if not notes:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
@@ -1282,7 +1289,6 @@ async def show_notes(uid: int, callback: CallbackQuery = None):
     buttons.append([
         InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")
     ])
-    await callback.message.delete()
     await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 async def show_reminders(uid: int, callback: CallbackQuery = None):
