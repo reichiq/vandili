@@ -1364,7 +1364,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Если админ отвечает на сообщение поддержки
     if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
         original_id = message.reply_to_message.message_id
-        if (admin_message.chat.id, original_id) in support_reply_map:
+        if (message.chat.id, original_id) in support_reply_map:
             user_id = support_reply_map[(admin_message.chat.id, original_id)]
             try:
                 await send_admin_reply_as_single_message(message, user_id)
