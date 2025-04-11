@@ -1194,7 +1194,11 @@ async def handle_all_messages(message: Message):
 async def show_notes(uid: int):
     notes = user_notes.get(uid, [])
     if not notes:
-        await bot.send_message(uid, "📭 У тебя пока нет заметок.")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
+            [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
+        ])
+        await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
         return
 
     text = "<b>Твои заметки:</b>\n"
@@ -1217,7 +1221,11 @@ async def show_notes(uid: int):
 async def show_reminders(uid: int):
     user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
     if not user_rem:
-        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add")],
+            [InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")]
+        ])
+        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.", reply_markup=keyboard)
         return
     text = "<b>Твои напоминания:</b>\n"
     buttons = []
