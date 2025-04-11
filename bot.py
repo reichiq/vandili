@@ -15,7 +15,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import (
     FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
-    CallbackQuery, BufferedInputFile
+    CallbackQuery, BufferedInputFile, ReplyKeyboardRemove
 )
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
@@ -41,6 +41,10 @@ class ReminderAdd(StatesGroup):
     waiting_for_date = State()
     waiting_for_time = State()
     waiting_for_text = State()
+class ReminderEdit(StatesGroup):
+    waiting_for_new_text = State()
+    waiting_for_new_date = State()
+    waiting_for_new_time = State()
 
 def clean_for_tts(text: str) -> str:
     """
@@ -964,19 +968,159 @@ async def delete_reminder(callback: CallbackQuery):
     await show_reminders(uid, callback=callback)
 
 @dp.callback_query(F.data.startswith("reminder_edit:"))
-async def ask_edit_reminder(callback: CallbackQuery):
+async def ask_edit_reminder(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
     index = int(callback.data.split(":")[1])
-
     user_reminders = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+
     if 0 <= index < len(user_reminders):
         real_index = user_reminders[index][0]
-        pending_note_or_reminder[uid] = {"type": "edit_reminder", "index": real_index}
-        await callback.message.answer(
-            f"✏️ Отправь новый текст для напоминания №{index+1}, включая дату/время."
+        old_uid, old_dt, old_text = reminders[real_index]
+
+        await state.update_data(reminder_index=real_index, old_text=old_text, old_dt=old_dt)
+        await state.set_state(ReminderEdit.waiting_for_new_text)
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_text")]
+        ])
+        await message.answer(
+            f"✏️ Введи новый текст напоминания или нажми <b>Пропустить</b>:\n\n"
+            f"📌 <i>{old_text}</i>",
+            reply_markup=keyboard
         )
+
     else:
         await callback.message.answer("Такого напоминания нет.")
+
+@dp.message(ReminderEdit.waiting_for_new_text)
+async def edit_reminder_text(message: Message, state: FSMContext):
+    new_text = message.text.strip()
+    data = await state.get_data()
+    await state.update_data(new_text=None if new_text.lower() == "пропустить" else new_text)
+    await state.set_state(ReminderEdit.waiting_for_new_date)
+
+    old_dt = data.get("old_dt")
+    old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(message.from_user.id, "UTC")))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_date")]
+    ])
+    await message.answer(
+        f"📅 Введи новую дату в формате <code>ДД.ММ.ГГГГ</code>\nили нажми <b>Пропустить</b>.\n\n"
+        f"Текущая дата: <code>{old_local.strftime('%d.%m.%Y')}</code>",
+        reply_markup=keyboard
+    )
+
+
+@dp.message(ReminderEdit.waiting_for_new_date)
+async def edit_reminder_date(message: Message, state: FSMContext):
+    raw = message.text.strip()
+    data = await state.get_data()
+
+    if raw.lower() == "пропустить":
+        await state.update_data(new_date=None)
+        await state.set_state(ReminderEdit.waiting_for_new_time)
+        old_dt = data.get("old_dt")
+        old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(message.from_user.id, "UTC")))
+        await message.answer(
+            f"⏰ Введи новое время в формате <code>ЧЧ:ММ</code>,\nили напиши <b>Пропустить</b>.\n\n"
+            f"Текущее время: <code>{old_local.strftime('%H:%M')}</code>"
+        )
+        return
+
+    try:
+        date_obj = datetime.strptime(raw, "%d.%m.%Y").date()
+        await state.update_data(new_date=date_obj)
+        await state.set_state(ReminderEdit.waiting_for_new_time)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_time")]
+        ])
+        await message.answer(
+            "⏰ Введи новое время в формате <code>ЧЧ:ММ</code>\nили нажми <b>Пропустить</b>.",
+            reply_markup=keyboard
+        )
+    except ValueError:
+        await message.answer("⚠️ Неверный формат даты. Пример: <code>12.04.2025</code>")
+
+@dp.message(ReminderEdit.waiting_for_new_time)
+async def edit_reminder_time(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    raw = message.text.strip()
+    data = await state.get_data()
+
+    old_dt: datetime = data.get("old_dt")
+    old_text: str = data.get("old_text")
+    index: int = data.get("reminder_index")
+    new_text = data.get("new_text") or old_text
+    new_date = data.get("new_date") or old_dt.astimezone(pytz.timezone(user_timezones.get(user_id, "UTC"))).date()
+
+    if raw.lower() == "пропустить":
+        new_time = old_dt.astimezone(pytz.timezone(user_timezones.get(user_id, "UTC"))).time()
+    else:
+        try:
+            new_time = datetime.strptime(raw, "%H:%M").time()
+        except ValueError:
+            await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>")
+            return
+
+    tz_str = user_timezones.get(user_id)
+    if not tz_str:
+        await message.answer("❌ Не найден часовой пояс. Напиши: <code>Мой город: Москва</code>")
+        await state.clear()
+        return
+
+    try:
+        local_tz = pytz.timezone(tz_str)
+        dt_local = datetime.combine(new_date, new_time)
+        dt_localized = local_tz.localize(dt_local)
+        dt_utc = dt_localized.astimezone(pytz.utc)
+
+        reminders[index] = (user_id, dt_utc, new_text)
+        save_reminders()
+        await message.answer(f"✅ Напоминание обновлено: <b>{new_text}</b> — <code>{dt_local.strftime('%d.%m.%Y %H:%M')}</code> ({tz_str})")
+    except Exception as e:
+        logging.warning(f"[REMINDER_EDIT] Ошибка: {e}")
+        await message.answer("❌ Не удалось обновить напоминание.")
+    await state.clear()
+
+
+@dp.callback_query(F.data == "edit_skip_text")
+async def skip_edit_text(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(new_text=None)
+    data = await state.get_data()
+    old_dt = data.get("old_dt")
+    old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(callback.from_user.id, "UTC")))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_date")]
+    ])
+    await state.set_state(ReminderEdit.waiting_for_new_date)
+    await callback.message.edit_text(
+        f"📅 Введи новую дату в формате <code>ДД.ММ.ГГГГ</code>\nили нажми <b>Пропустить</b>.\n\n"
+        f"Текущая дата: <code>{old_local.strftime('%d.%m.%Y')}</code>",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(F.data == "edit_skip_date")
+async def skip_edit_date(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(new_date=None)
+    data = await state.get_data()
+    old_dt = data.get("old_dt")
+    old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(callback.from_user.id, "UTC")))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Пропустить", callback_data="edit_skip_time")]
+    ])
+    await state.set_state(ReminderEdit.waiting_for_new_time)
+    await callback.message.edit_text(
+        f"⏰ Введи новое время в формате <code>ЧЧ:ММ</code>\nили нажми <b>Пропустить</b>.\n\n"
+        f"Текущее время: <code>{old_local.strftime('%H:%M')}</code>",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(F.data == "edit_skip_time")
+async def skip_edit_time(callback: CallbackQuery, state: FSMContext):
+    message = callback.message
+    message.from_user = callback.from_user  # чтобы переиспользовать message-хендлер
+    await edit_reminder_time(message, state)
+
 
 @dp.callback_query(F.data == "reminder_delete_all")
 async def confirm_delete_all_reminders(callback: CallbackQuery):
