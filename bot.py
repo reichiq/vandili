@@ -762,7 +762,7 @@ async def handle_support_click(callback: CallbackQuery):
     support_mode_users.add(callback.from_user.id)
     await callback.message.answer(SUPPORT_PROMPT_TEXT)
 
-@dp.message(Command("mynotes"))
+@dp.message(Command("mynotes", prefix="/!"))
 async def show_notes_command(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=mynotes"
@@ -773,7 +773,7 @@ async def show_notes_command(message: Message):
         return
     await show_notes(message.chat.id)
 
-@dp.message(Command("myreminders"))
+@dp.message(Command("myreminders", prefix="/!"))
 async def show_reminders_command(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=myreminders"
