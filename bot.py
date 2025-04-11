@@ -207,21 +207,28 @@ def save_stats():
         logging.warning(f"Не удалось сохранить stats.json: {e}")
 
 def render_top_commands_bar_chart(commands_dict: dict) -> str:
+    import matplotlib.pyplot as plt
     import tempfile
-    from io import BytesIO
 
     if not commands_dict:
         return None
 
     sorted_cmds = sorted(commands_dict.items(), key=lambda x: x[1], reverse=True)[:5]
-    commands = [cmd for cmd, _ in sorted_cmds]
+    commands = [cmd.replace("@VandiliBot", "") for cmd, _ in sorted_cmds]
     counts = [cnt for _, cnt in sorted_cmds]
 
-    plt.figure(figsize=(8, 4))
-    plt.bar(commands, counts)
-    plt.xlabel("Команды")
-    plt.ylabel("Использований")
-    plt.title("Топ-5 команд")
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(commands, counts)
+
+    ax.set_title("📊 Топ-5 команд")
+    ax.set_xlabel("Команды")
+    ax.set_ylabel("Использований")
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, height + 0.5, f"{int(height)}",
+                ha='center', va='bottom', fontsize=10)
+
     plt.tight_layout()
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpf:
@@ -713,16 +720,29 @@ async def cmd_adminstats(message: Message):
         return
 
     total_msgs = stats.get("messages_total", 0)
-    unique_users_count = len(set(stats.get("unique_users", [])))
+    unique_users_list = stats.get("unique_users", [])
+    unique_users_count = len(set(unique_users_list))
     files_received = stats.get("files_received", 0)
     cmd_usage = stats.get("commands_used", {})
 
+    total_cmds = sum(cmd_usage.values())
+    avg_per_user = round(total_msgs / unique_users_count, 2) if unique_users_count else "—"
+
     text = (
-        f"📊 <b>Статистика бота</b>\n\n"
-        f"Всего сообщений: <b>{total_msgs}</b>\n"
-        f"Уникальных пользователей: <b>{unique_users_count}</b>\n"
-        f"Получено файлов: <b>{files_received}</b>\n"
+        "📊 <b>Статистика бота</b>\n\n"
+        f"💬 Всего сообщений: <b>{total_msgs}</b>\n"
+        f"👤 Уникальных пользователей: <b>{unique_users_count}</b>\n"
+        f"📎 Получено файлов: <b>{files_received}</b>\n"
+        f"🧠 Команд выполнено: <b>{total_cmds}</b>\n"
+        f"📈 Среднее сообщений на пользователя: <b>{avg_per_user}</b>"
     )
+
+    chart_path = render_top_commands_bar_chart(cmd_usage)
+    if chart_path:
+        await message.answer_photo(photo=FSInputFile(chart_path, filename="top_commands.png"), caption=text)
+        os.remove(chart_path)
+    else:
+        await message.answer(text + "\nНет данных по командам.")
 
     # Генерация и отправка графика
     chart_path = render_top_commands_bar_chart(cmd_usage)
