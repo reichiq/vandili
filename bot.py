@@ -864,13 +864,8 @@ async def handle_reminder(message: Message):
         logging.warning(f"Ошибка timezone {tz_str}: {e}")
         now_in_tz = datetime.utcnow()
         
-        parsed_raw = raw
-        match = re.search(r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)", raw)
-        if match:
-            idx = match.start()
-            parsed_raw = raw[:idx + len(match.group(0))].strip()
+        parsed_dt = None  # ← ВНЕ try/except
         
-        parsed_dt = None  # ← важно!
         parsed_raw = raw
         match = re.search(r"(сегодня|завтра|послезавтра|\d{1,2}[.:]\d{2}|\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?)", raw)
         if match:
@@ -888,8 +883,7 @@ async def handle_reminder(message: Message):
             )
         except Exception as e:
             logging.warning(f"[REMINDER] Ошибка при парсинге времени: {e}")
-        
-
+   
     
     if not parsed_dt:
         await message.answer("Не смог понять дату/время. Пример:\n«напомни завтра 19:00 полить цветы по Москве»")
