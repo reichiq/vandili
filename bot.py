@@ -803,6 +803,7 @@ async def handle_support_click(callback: CallbackQuery):
 # ★ Изменён обработчик команды /mynotes – теперь без prefix, чтобы команда срабатывала корректно
 @dp.message(Command("mynotes"))
 async def show_notes_command(message: Message):
+    _register_message_stats(message)
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=mynotes"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -814,6 +815,7 @@ async def show_notes_command(message: Message):
 
 @dp.message(Command("myreminders", prefix="/!"))
 async def show_reminders_command(message: Message):
+    _register_message_stats(message)
     if message.chat.type != ChatType.PRIVATE:
         private_url = f"https://t.me/{BOT_USERNAME}?start=myreminders"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
