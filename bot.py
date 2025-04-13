@@ -953,12 +953,13 @@ async def cmd_learn_en(message: Message):
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
 
-@dp.callback_query(F.data.startswith("learn_"))
+@dp.callback_query(F.data.in_({"learn_back", "learn_toggle_reminders", "learn_dialogues", "learn_course"}))
 async def handle_learn_menu(callback: CallbackQuery):
     data = callback.data
     await callback.answer()
 
     if data == "learn_back":
+        await callback.message.delete()
         await cmd_learn_en(callback.message)
         return
     elif data == "learn_toggle_reminders":
@@ -968,6 +969,7 @@ async def handle_learn_menu(callback: CallbackQuery):
         save_vocab_reminder_settings()
         status = "включены ✅" if not current else "отключены ❌"
         await callback.answer(f"Напоминания теперь {status}", show_alert=True)
+        await callback.message.delete()
         await cmd_learn_en(callback.message)
         return
 
