@@ -1065,7 +1065,7 @@ async def handle_learn_level(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
         ])
 
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
     except Exception as e:
         await callback.message.edit_text("❌ Ошибка при генерации курса.")
@@ -1112,7 +1112,7 @@ async def handle_learn_more(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
         ])
 
-        await callback.message.answer(f"<b>📘 Дополнительные темы для уровня {level}</b>\n\n{text}", reply_markup=keyboard)
+        await callback.message.answer(f"<b>📘 Дополнительные темы для уровня {level}</b>\n\n{text}", reply_markup=keyboard, parse_mode="HTML")
     except Exception as e:
         await callback.message.answer("❌ Не удалось сгенерировать дополнительные темы.")
         logging.warning(f"[learn_more:{level}] Ошибка Gemini: {e}")
@@ -1384,7 +1384,7 @@ async def handle_word_of_the_day(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
         ])
 
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     except Exception as e:
         logging.warning(f"[WORD_OF_DAY] Ошибка: {e}")
         await callback.message.edit_text("❌ Не удалось получить слово дня.")
@@ -1533,7 +1533,7 @@ async def handle_vocab_stats(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
-    await callback.message.edit_text(stats_text.strip(), reply_markup=keyboard)
+    await callback.message.edit_text(stats_text.strip(), reply_markup=keyboard, parse_mode="HTML")
 
 @dp.callback_query(F.data == "vocab_close")
 async def close_vocab(callback: CallbackQuery):
