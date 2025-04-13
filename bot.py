@@ -48,6 +48,12 @@ class ReminderEdit(StatesGroup):
     waiting_for_new_text = State()
     waiting_for_new_date = State()
     waiting_for_new_time = State()
+class VocabAdd(StatesGroup):
+    waiting_for_word = State()
+class VocabEdit(StatesGroup):
+    waiting_for_field = State()
+    waiting_for_new_value = State()
+
 
 def clean_for_tts(text: str) -> str:
     """
@@ -92,6 +98,8 @@ SUPPORT_MAP_FILE = "support_map.json"
 NOTES_FILE = "notes.json"
 REMINDERS_FILE = "reminders.json"
 TIMEZONES_FILE = "timezones.json"
+PROGRESS_FILE = "progress.json"
+VOCAB_FILE = "vocab.json"
 
 def load_timezones() -> dict:
     if not os.path.exists(TIMEZONES_FILE):
@@ -212,6 +220,41 @@ def save_stats():
     except Exception as e:
         logging.warning(f"Не удалось сохранить stats.json: {e}")
 
+def load_progress() -> dict:
+    if not os.path.exists(PROGRESS_FILE):
+        return {}
+    try:
+        with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось загрузить progress.json: {e}")
+        return {}
+
+def save_progress(progress: dict):
+    try:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+            json.dump(progress, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить progress.json: {e}")
+
+def load_vocab() -> dict[int, list[dict]]:
+    if not os.path.exists(VOCAB_FILE):
+        return {}
+    try:
+        with open(VOCAB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {int(k): v for k, v in data.items()}
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось загрузить vocab: {e}")
+        return {}
+
+def save_vocab(vocab: dict[int, list[dict]]):
+    try:
+        with open(VOCAB_FILE, "w", encoding="utf-8") as f:
+            json.dump(vocab, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить vocab: {e}")
+
 def normalize_command(command: str) -> str:
     """
     Приводит команду к виду без @username.
@@ -263,6 +306,28 @@ def render_top_commands_bar_chart(commands_dict: dict) -> str:
         return tmpf.name
 
 # ---------------------- Глобальные структуры ---------------------- #
+# Включено ли автонапоминание по повторению слов для каждого пользователя
+vocab_reminders_enabled = {}
+VOCAB_REMINDERS_FILE = "vocab_reminders.json"
+
+def load_vocab_reminder_settings():
+    if not os.path.exists(VOCAB_REMINDERS_FILE):
+        return {}
+    try:
+        with open(VOCAB_REMINDERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось загрузить {VOCAB_REMINDERS_FILE}: {e}")
+        return {}
+
+def save_vocab_reminder_settings():
+    try:
+        with open(VOCAB_REMINDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(vocab_reminders_enabled, f)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить {VOCAB_REMINDERS_FILE}: {e}")
+
+vocab_reminders_enabled = load_vocab_reminder_settings()
 stats = load_stats()  # подгружаем основные метрики
 pending_note_or_reminder = {}
 support_mode_users = set()
@@ -272,6 +337,9 @@ user_documents = {}
 user_notes = load_notes()
 reminders = []  # Список кортежей: (user_id, event_utc: datetime, text)
 reminders = load_reminders()
+quiz_storage = {}
+user_progress = load_progress()
+user_vocab: dict[int, list[dict]] = load_vocab()
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -876,23 +944,645 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="💬 Диалоги", callback_data="learn_dialogues")],
         [InlineKeyboardButton(text="🧠 Слово дня", callback_data="learn_word")],
         [InlineKeyboardButton(text="📓 Мой словарь", callback_data="learn_vocab")],
+        [InlineKeyboardButton(text="➕ Добавить слово", callback_data="learn_add_word")],
+        [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="learn_review")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
+        [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
+        [InlineKeyboardButton(text="📙 Грамматика", callback_data="learn_grammar")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("learn_"))
 async def handle_learn_menu(callback: CallbackQuery):
-    action = callback.data.replace("learn_", "")
+    data = callback.data
     await callback.answer()
 
-    if action == "back":
+    if data == "learn_back":
+        await cmd_learn_en(callback.message)
+        return
+    elif data == "learn_toggle_reminders":
+        uid = callback.from_user.id
+        current = vocab_reminders_enabled.get(str(uid), True)
+        vocab_reminders_enabled[str(uid)] = not current
+        save_vocab_reminder_settings()
+        status = "включены ✅" if not current else "отключены ❌"
+        await callback.answer(f"Напоминания теперь {status}", show_alert=True)
         await cmd_learn_en(callback.message)
         return
 
-    if action == "dialogues":
-        await show_dialogues(callback)
+
+    if data == "learn_dialogues":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👋 Small Talk", callback_data="dialogue_topic:Small Talk")],
+            [InlineKeyboardButton(text="🛫 Аэропорт", callback_data="dialogue_topic:Airport")],
+            [InlineKeyboardButton(text="☕ Кафе", callback_data="dialogue_topic:Cafe")],
+            [InlineKeyboardButton(text="🏨 Отель", callback_data="dialogue_topic:Hotel")],
+            [InlineKeyboardButton(text="🧑\u200d⚕️ У врача", callback_data="dialogue_topic:Doctor")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+        await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
         return
+
+@dp.callback_query(F.data.startswith("dialogue_topic:"))
+async def generate_dialogue(callback: CallbackQuery):
+    topic = callback.data.split(":")[1]
+    await callback.answer(f"Генерирую диалог по теме: {topic}...")
+
+    prompt = (
+        f"Сгенерируй диалог на английском языке по теме '{topic}'. "
+        "Сделай 4–6 реплик между двумя людьми (A и B). "
+        "После каждой реплики добавь её перевод на русский. Формат:\n\n"
+        "A: Hello!\nA (перевод): Привет!\nB: Hi!\nB (перевод): Привет!\n..."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Новый диалог", callback_data=f"dialogue_topic:{topic}"),
+                InlineKeyboardButton(text="🔊 Озвучить", callback_data="dialogue_voice")
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_dialogues")]
+        ])
+        chat_history[callback.from_user.id] = text
+
+        await callback.message.edit_text(f"<b>💬 Диалог по теме:</b> {topic}\n\n{text}", reply_markup=keyboard)
+
+        # 🎙️ Добавляем озвучку
+        await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+
+    except Exception as e:
+        logging.warning(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
+        await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
+
+    if data == "learn_course":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
+            [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
+            [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
+            [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
+            [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+        await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
+        return
+
+    if data.startswith("learn_level:"):
+        level = data.split(":")[1]
+        await callback.message.edit_text(f"📚 Генерирую материалы для уровня {level}, подожди немного...")
+
+        prompt = (
+            f"Ты — профессиональный преподаватель английского языка. Составь краткий учебный план для уровня {level}.\n"
+            "Перечисли 3–5 тем, для каждой дай короткое описание и задание.\n"
+            "Ответ в формате:\n\n"
+            "<b>📘 Уровень {level}</b>\n"
+            "• Тема 1: Название\n"
+            "Описание: ...\n"
+            "Задание: ...\n\n"
+            "• Тема 2: ..."
+        )
+
+        try:
+            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            text = format_gemini_response(response.text.strip())
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}"),
+                    InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")
+                ]
+            ])
+            await callback.message.edit_text(text, reply_markup=keyboard)
+        except Exception as e:
+            await callback.message.edit_text("❌ Ошибка при генерации курса.")
+            logging.warning(f"[learn_level:{level}] Ошибка Gemini: {e}")
+        return
+
+@dp.callback_query(F.data == "dialogue_voice")
+async def handle_dialogue_voice(callback: CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+
+    text = chat_history.get(uid)
+    if not text:
+        await callback.message.answer("❌ Не удалось найти последний диалог.")
+        return
+
+    await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+
+@dp.callback_query(F.data.startswith("learn_more:"))
+async def handle_learn_more(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    await callback.answer("Генерирую дополнительные темы...")
+
+    prompt = (
+        f"Сгенерируй ещё 3–5 новых учебных тем для уровня {level} по английскому языку.\n"
+        "Формат:\n\n"
+        "• Тема: Название\n"
+        "Описание: ...\n"
+        "Задание: ..."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
+            [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
+        ])
+
+        await callback.message.answer(f"<b>📘 Дополнительные темы для уровня {level}</b>\n\n{text}", reply_markup=keyboard)
+    except Exception as e:
+        await callback.message.answer("❌ Не удалось сгенерировать дополнительные темы.")
+        logging.warning(f"[learn_more:{level}] Ошибка Gemini: {e}")
+
+@dp.callback_query(F.data == "learn_quiz")
+async def handle_quiz_menu(callback: CallbackQuery):
+    await callback.answer()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟦 A1", callback_data="quiz_level:A1")],
+        [InlineKeyboardButton(text="🟩 A2", callback_data="quiz_level:A2")],
+        [InlineKeyboardButton(text="🟨 B1", callback_data="quiz_level:B1")],
+        [InlineKeyboardButton(text="🟥 B2", callback_data="quiz_level:B2")],
+        [InlineKeyboardButton(text="⬛ C1", callback_data="quiz_level:C1")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text("🎯 <b>Выбери уровень квиза по английскому:</b>", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("quiz_level:"))
+async def handle_quiz_level(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    await callback.answer()
+    await callback.message.edit_text(f"📚 Генерирую квиз для уровня <b>{level}</b>...")
+
+    prompt = (
+        f"Составь квиз по английскому языку для уровня {level}. "
+        "Сделай 5 коротких вопросов с 4 вариантами ответов (A–D), "
+        "указывая правильный вариант. Используй формат:\n\n"
+        "1. Вопрос\nA) ...\nB) ...\nC) ...\nD) ...\nПравильный ответ: X\n\n"
+        "2. ... и т.д."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        questions = parse_quiz_questions(text)
+
+        if not questions:
+            await callback.message.edit_text("❌ Не удалось сгенерировать квиз.")
+            return
+
+        for idx, q in enumerate(questions, start=1):
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="A", callback_data=f"quiz_answer:{level}:{idx}:A"),
+                    InlineKeyboardButton(text="B", callback_data=f"quiz_answer:{level}:{idx}:B"),
+                    InlineKeyboardButton(text="C", callback_data=f"quiz_answer:{level}:{idx}:C"),
+                    InlineKeyboardButton(text="D", callback_data=f"quiz_answer:{level}:{idx}:D")
+                ]
+            ])
+            await callback.message.answer(f"<b>Вопрос {idx}:</b>\n{q['question']}", reply_markup=keyboard)
+
+        next_button = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Новый квиз", callback_data=f"quiz_level:{level}")],
+            [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_quiz")]
+        ])
+        await callback.message.answer("✅ Выбирай варианты ответа, и я скажу правильно или нет 😉", reply_markup=next_button)
+
+        # Сохраняем правильные ответы во временное хранилище
+        quiz_storage[callback.from_user.id] = {i + 1: q["answer"] for i, q in enumerate(questions)}
+
+    except Exception as e:
+        await callback.message.edit_text("❌ Ошибка при генерации квиза.")
+        logging.warning(f"[quiz_level:{level}] Ошибка Gemini: {e}")
+
+@dp.callback_query(F.data.startswith("quiz_answer:"))
+async def handle_quiz_answer(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer("Неверный формат ответа.")
+        return
+
+    _, level, q_number_str, user_choice = parts
+    user_id = callback.from_user.id
+
+    try:
+        q_number = int(q_number_str)
+    except:
+        await callback.answer("Ошибка обработки вопроса.")
+        return
+
+    correct_answer = quiz_storage.get(user_id, {}).get(q_number)
+    if not correct_answer:
+        await callback.answer("Вопрос не найден или устарел.")
+        return
+
+    if user_choice == correct_answer:
+        progress = user_progress.setdefault(callback.from_user.id, {})
+        progress[level] = progress.get(level, 0) + 1
+        save_progress(user_progress)
+        correct = user_progress[callback.from_user.id][level]
+        msg = f"📈 Прогресс: <b>{correct}</b> правильных ответов по уровню {level}"
+        await callback.message.answer(msg)
+        await callback.answer("✅ Верно!", show_alert=False)
+        await callback.message.edit_text(callback.message.text + f"\n\n✅ Ответ: <b>{user_choice}</b>")
+    else:
+        await callback.answer("❌ Неверно!", show_alert=False)
+        await callback.message.edit_text(callback.message.text + f"\n\n❌ Твой ответ: <b>{user_choice}</b>\n✔️ Правильный ответ: <b>{correct_answer}</b>")
+
+
+@dp.callback_query(F.data == "learn_progress")
+async def handle_learn_progress(callback: CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    user_progress = user_progress.get(uid, {})
+
+    if not user_progress:
+        await callback.message.edit_text("📊 У тебя пока нет прогресса. Пройди пару квизов и возвращайся!")
+        return
+
+    text = "<b>📈 Твой прогресс по уровням:</b>\n"
+    for level, correct_count in user_progress.items():
+        text += f"• {level}: <b>{correct_count}</b> правильных ответов\n"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        [InlineKeyboardButton(text="🔄 Сбросить прогресс", callback_data="progress_reset")]
+    ])
+    await callback.message.edit_text(text.strip(), reply_markup=keyboard)
+
+@dp.callback_query(F.data == "learn_grammar")
+async def handle_grammar(callback: CallbackQuery):
+    await callback.answer("Генерирую грамматическое упражнение...")
+
+    prompt = (
+        "Составь одно небольшое грамматическое упражнение (A1–B2).\n"
+        "Формат:\n"
+        "<b>Тема:</b> Present Simple\n"
+        "Задание: Поставь глагол в правильной форме\n"
+        "1. He ____ (go) to school every day.\n"
+        "Ответ: goes"
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Новое упражнение", callback_data="learn_grammar")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception as e:
+        await callback.message.edit_text("❌ Не удалось сгенерировать упражнение.")
+        logging.warning(f"[GRAMMAR] Ошибка: {e}")
+
+@dp.callback_query(F.data == "learn_add_word")
+async def handle_add_word_click(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text("✍️ Введи слово на английском, которое хочешь добавить:")
+    await state.set_state(VocabAdd.waiting_for_word)
+
+@dp.message(VocabAdd.waiting_for_word)
+async def handle_add_word_input(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    word_raw = message.text.strip()
+
+    prompt = (
+        f"Дай краткое определение и пример для английского слова '{word_raw}'. "
+        "Ответ в формате:\n"
+        "Значение: ...\nПример: ..."
+    )
+
+    await message.answer("🔄 Обрабатываю слово...")
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        raw = response.text.strip().split("\n")
+        meaning = raw[0].replace("Значение:", "").strip()
+        example = raw[1].replace("Пример:", "").strip()
+
+        entry = {
+            "word": word_raw,
+            "meaning": meaning,
+            "example": example,
+            "last_reviewed": datetime.utcnow().isoformat(),
+            "review_level": 0
+        }
+
+        user_vocab.setdefault(uid, []).append(entry)
+        save_vocab(user_vocab)
+
+        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.")
+    except Exception as e:
+        logging.warning(f"[VOCAB_ADD_INTERFACE] Ошибка: {e}")
+        await message.answer("❌ Не удалось добавить слово.")
+    await state.clear()
+
+@dp.callback_query(F.data == "progress_reset")
+async def handle_progress_reset(callback: CallbackQuery):
+    uid = callback.from_user.id
+    if uid in user_progress:
+        user_progress.pop(uid)
+        save_progress(user_progress)
+        await callback.answer("Прогресс сброшен ❌", show_alert=True)
+    else:
+        await callback.answer("У тебя и так нет прогресса 😄", show_alert=True)
+
+@dp.callback_query(F.data == "learn_word")
+async def handle_word_of_the_day(callback: CallbackQuery):
+    await callback.answer("Генерирую слово дня...")
+
+    prompt = (
+        "Придумай интересное английское слово дня, желательно не слишком простое.\n"
+        "Формат:\n\n"
+        "<b>📘 Слово дня:</b> example\n"
+        "Значение: пример, образец\n"
+        "Пример: This is just an example."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Новое слово", callback_data="learn_word")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception as e:
+        await callback.message.edit_text("❌ Не удалось получить слово дня.")
+        logging.warning(f"[WORD_OF_DAY] Ошибка: {e}")
+
+@dp.callback_query(F.data == "learn_vocab")
+async def handle_vocab(callback: CallbackQuery):
+    uid = callback.from_user.id
+    await callback.answer()
+
+    vocab = user_vocab.get(uid, [])
+    if not vocab:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить слово", callback_data="vocab_add")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+        await callback.message.edit_text("📓 В твоём словаре пока нет слов.", reply_markup=keyboard)
+        return
+
+    for i, entry in enumerate(vocab):
+        word = entry['word']
+        meaning = entry['meaning']
+        example = entry['example']
+        last_reviewed = entry.get('last_reviewed', 'неизвестно')
+        date_str = ""
+        try:
+            dt = datetime.fromisoformat(last_reviewed)
+            date_str = dt.strftime('%d.%m.%Y')
+        except:
+            date_str = "неизвестно"
+
+        text = (
+            f"<b>{i+1}. {word}</b> — {meaning}\n"
+            f"<i>{example}</i>\n"
+            f"📅 Последнее повторение: <code>{date_str}</code>"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"vocab_delete:{i}"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"vocab_edit:{i}")
+            ]
+        ])
+        await callback.message.answer(text, reply_markup=keyboard)
+
+    bottom = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить слово", callback_data="vocab_add")],
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="learn_vocab_stats")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back"),
+         InlineKeyboardButton(text="❌ Закрыть", callback_data="vocab_close")]
+    ])
+    await callback.message.answer("📚 Вот все твои слова:", reply_markup=bottom)
+
+@dp.callback_query(F.data == "vocab_add")
+async def ask_add_vocab(callback: CallbackQuery):
+    uid = callback.from_user.id
+    await callback.message.delete()
+    pending_note_or_reminder[uid] = {"type": "add_vocab"}
+    await bot.send_message(uid, "✍️ Введи английское слово, которое хочешь добавить в словарь.")
+
+@dp.callback_query(F.data == "learn_review")
+async def handle_vocab_review(callback: CallbackQuery):
+    uid = callback.from_user.id
+    # Проверяем, включены ли напоминания
+    if not vocab_reminders_enabled.get(str(uid), True):
+        await callback.message.edit_text("🔕 У тебя отключены напоминания для слов. Включи их, чтобы повторять слова.")
+        return
+    await callback.answer()
+
+    vocab = user_vocab.get(uid, [])
+    if not vocab:
+        await callback.message.edit_text("📓 В твоём словаре пока нет слов для повторения.")
+        return
+
+    # Фильтруем слова, которые пора повторять
+    now = datetime.utcnow()
+    due_words = []
+    for entry in vocab:
+        last = datetime.fromisoformat(entry.get("last_reviewed", now.isoformat()))
+        level = entry.get("review_level", 0)
+        interval_days = [0, 1, 2, 4, 7, 14, 30]
+        interval = interval_days[min(level, len(interval_days) - 1)]
+        if (now - last).days >= interval:
+            due_words.append(entry)
+
+    if not due_words:
+        await callback.message.edit_text("✅ У тебя нет слов, которые нужно повторить прямо сейчас.")
+        return
+
+    # Берём первое слово на повтор
+    word = due_words[0]
+    user_vocab[uid].remove(word)
+    user_vocab[uid].insert(0, word)  # чтобы знать, какое сейчас в ревью
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Помню", callback_data="review_remember"),
+            InlineKeyboardButton(text="❌ Не помню", callback_data="review_forget")
+        ]
+    ])
+    await callback.message.edit_text(
+        f"<b>{word['word']}</b> — {word['meaning']}\n\n"
+        f"<i>{word['example']}</i>",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(F.data == "learn_vocab_stats")
+async def handle_vocab_stats(callback: CallbackQuery):
+    uid = callback.from_user.id
+    await callback.answer()
+
+    vocab = user_vocab.get(uid, [])
+    if not vocab:
+        await callback.message.edit_text("📓 В твоём словаре пока нет слов.")
+        return
+
+    total = len(vocab)
+    levels = {}
+    now = datetime.utcnow()
+
+    next_reviews = []
+
+    for entry in vocab:
+        level = entry.get("level", 1)
+        levels[level] = levels.get(level, 0) + 1
+
+        due = entry.get("next_review")
+        if due:
+            try:
+                due_dt = datetime.fromisoformat(due)
+                if due_dt > now:
+                    next_reviews.append(due_dt)
+            except:
+                continue
+
+    stats_text = f"<b>📊 Статистика словаря</b>\n\nВсего слов: <b>{total}</b>\n"
+
+    for lvl in sorted(levels):
+        stats_text += f"• Уровень {lvl}: <b>{levels[lvl]}</b>\n"
+
+    if next_reviews:
+        nearest = min(next_reviews)
+        in_minutes = int((nearest - now).total_seconds() // 60)
+        stats_text += f"\n⏰ Следующее повторение через <b>{in_minutes} мин</b>"
+    else:
+        stats_text += "\n✅ Все слова готовы к повторению!"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text(stats_text.strip(), reply_markup=keyboard)
+
+@dp.callback_query(F.data == "vocab_close")
+async def close_vocab(callback: CallbackQuery):
+    await callback.message.delete()
+
+@dp.callback_query(F.data.startswith("vocab_delete:"))
+async def handle_vocab_delete(callback: CallbackQuery):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    vocab = user_vocab.get(uid, [])
+
+    if 0 <= index < len(vocab):
+        deleted_word = vocab.pop(index)
+        save_vocab(user_vocab)
+        await callback.answer(f"Удалено: {deleted_word['word']}", show_alert=True)
+    else:
+        await callback.answer("❌ Не удалось найти слово для удаления.")
+
+    # Возвращаемся к обновлённому списку
+    await handle_vocab(callback)
+
+@dp.callback_query(F.data.startswith("vocab_edit:"))
+async def handle_vocab_edit(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    index = int(callback.data.split(":")[1])
+    vocab = user_vocab.get(uid, [])
+
+    if 0 <= index < len(vocab):
+        await state.update_data(edit_index=index)
+        await state.set_state(VocabEdit.waiting_for_field)
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Слово", callback_data="edit_field:word")],
+            [InlineKeyboardButton(text="✏️ Перевод", callback_data="edit_field:meaning")],
+            [InlineKeyboardButton(text="✏️ Пример", callback_data="edit_field:example")]
+        ])
+        await callback.message.answer("Что ты хочешь изменить?", reply_markup=keyboard)
+    else:
+        await callback.message.answer("❌ Слово не найдено.")
+
+@dp.callback_query(F.data.startswith("edit_field:"))
+async def ask_new_value(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.split(":")[1]
+    await state.update_data(field_to_edit=field)
+    await state.set_state(VocabEdit.waiting_for_new_value)
+    await callback.message.answer(f"✍️ Введи новое значение для <b>{field}</b>:")
+
+@dp.message(VocabEdit.waiting_for_new_value)
+async def save_new_value(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    new_value = message.text.strip()
+    data = await state.get_data()
+
+    index = data["edit_index"]
+    field = data["field_to_edit"]
+    vocab = user_vocab.get(uid, [])
+
+    if 0 <= index < len(vocab) and field in ["word", "meaning", "example"]:
+        vocab[index][field] = new_value
+        save_vocab(user_vocab)
+        await message.answer(f"✅ Обновлено: <b>{field}</b> → {new_value}")
+    else:
+        await message.answer("❌ Ошибка при обновлении.")
+
+    await state.clear()
+    # Показываем обновлённый словарь
+    fake_callback = type("Fake", (), {"from_user": message.from_user, "message": message})
+    await handle_vocab(fake_callback)
+
+
+@dp.callback_query(F.data.in_({"review_remember", "review_forget"}))
+async def handle_review_response(callback: CallbackQuery):
+    uid = callback.from_user.id
+    await callback.answer()
+
+    vocab = user_vocab.get(uid, [])
+    if not vocab:
+        await callback.message.edit_text("Нет слов для повторения.")
+        return
+
+    current = vocab[0]  # первое слово — текущее
+    if callback.data == "review_remember":
+        current["review_level"] = current.get("review_level", 0) + 1
+    else:
+        current["review_level"] = 0  # сбрасываем
+
+    current["last_reviewed"] = datetime.utcnow().isoformat()
+    save_vocab(user_vocab)
+
+    await handle_vocab_review(callback)  # повторяем следующий
+
+
+@dp.callback_query(F.data == "learn_grammar")
+async def handle_grammar(callback: CallbackQuery):
+    await callback.answer("Генерирую грамматическое упражнение...")
+
+    prompt = (
+        "Составь одно небольшое грамматическое упражнение (A1–B2).\n"
+        "Формат:\n"
+        "<b>Тема:</b> Present Simple\n"
+        "Задание: Поставь глагол в правильной форме\n"
+        "1. He ____ (go) to school every day.\n"
+        "Ответ: goes"
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Новое упражнение", callback_data="learn_grammar")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    except Exception as e:
+        await callback.message.edit_text("❌ Не удалось сгенерировать упражнение.")
+        logging.warning(f"[GRAMMAR] Ошибка: {e}")
 
 
 @dp.callback_query(F.data.startswith("note_type:"))
@@ -1374,6 +2064,88 @@ async def handle_reminder(message: Message):
         logging.warning(f"[DELAYED_REMINDER] Ошибка: {e}")
         await message.answer("❌ Не удалось установить напоминание.")
 
+@dp.message(F.text.lower().startswith("добавь слово:"))
+async def handle_add_vocab(message: Message):
+    uid = message.from_user.id
+    try:
+        word_raw = message.text.split(":", 1)[1].strip()
+    except:
+        await message.answer("Формат: <code>Добавь слово: example</code>")
+        return
+
+    prompt = (
+        f"Дай краткое определение и пример для английского слова '{word_raw}'. "
+        "Ответ в формате:\n"
+        "Значение: ...\nПример: ..."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        raw = response.text.strip().split("\n")
+        meaning = raw[0].replace("Значение:", "").strip()
+        example = raw[1].replace("Пример:", "").strip()
+        from datetime import datetime
+        entry = {
+            "word": word_raw,
+            "meaning": meaning,
+            "example": example,
+            "last_reviewed": datetime.utcnow().isoformat(),
+            "review_level": 0
+        }
+
+        user_vocab.setdefault(uid, []).append(entry)
+        save_vocab(user_vocab)
+        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.")
+    except Exception as e:
+        logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
+        await message.answer("❌ Не удалось добавить слово.")
+
+@dp.message()
+async def handle_vocab_word_input(message: Message):
+    uid = message.from_user.id
+
+    # Проверяем, ожидается ли добавление слова
+    if pending_note_or_reminder.get(uid, {}).get("type") != "add_vocab":
+        return  # если нет — передаём в основной обработчик
+
+    pending_note_or_reminder.pop(uid)
+
+    word_raw = message.text.strip()
+    if not word_raw or len(word_raw) < 2:
+        await message.answer("❌ Слово слишком короткое. Попробуй снова.")
+        return
+
+    prompt = (
+        f"Дай краткое определение и пример для английского слова '{word_raw}'. "
+        "Ответ в формате:\n"
+        "Значение: ...\nПример: ..."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        raw = response.text.strip().split("\n")
+        meaning = raw[0].replace("Значение:", "").strip()
+        example = raw[1].replace("Пример:", "").strip()
+
+        entry = {
+            "word": word_raw,
+            "meaning": meaning,
+            "example": example,
+            "last_reviewed": datetime.utcnow().isoformat(),
+            "review_level": 0
+        }
+
+        user_vocab.setdefault(uid, []).append(entry)
+        save_vocab(user_vocab)
+
+        await message.answer(
+            f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.\n"
+            f"<b>Значение:</b> {meaning}\n<i>{example}</i>"
+        )
+    except Exception as e:
+        logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
+        await message.answer("❌ Не удалось добавить слово. Попробуй позже.")
+
 @dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
@@ -1764,6 +2536,50 @@ def format_gemini_response(text: str) -> str:
 
     return text
 
+def parse_quiz_questions(text: str) -> list[dict]:
+    """
+    Парсит текст квиза в формате:
+    1. Вопрос
+    A) ...
+    B) ...
+    C) ...
+    D) ...
+    Правильный ответ: X
+
+    Возвращает список словарей:
+    [
+        {"question": "...", "options": ["A", "B", "C", "D"], "answer": "B"},
+        ...
+    ]
+    """
+    questions = []
+    blocks = re.split(r"\n\s*(?=\d+\.\s)", text)
+    for block in blocks:
+        lines = block.strip().split("\n")
+        if len(lines) < 6:
+            continue
+        question_line = lines[0].strip()
+        options = []
+        for i in range(1, 5):
+            option_line = lines[i].strip()
+            parts = option_line.split(")", 1)
+            if len(parts) == 2:
+                options.append(parts[1].strip())
+            else:
+                options.append(option_line)
+        answer_line = lines[-1].strip()
+        answer_match = re.search(r"правильный\s+ответ\s*[:\-]?\s*([A-D])", answer_line, re.IGNORECASE)
+        if not answer_match:
+            continue
+        correct = answer_match.group(1).upper()
+        question_text = "\n".join(lines[:5])
+        questions.append({
+            "question": question_text,
+            "options": options,
+            "answer": correct
+        })
+    return questions
+
 IMAGE_TRIGGERS_RU = ["покажи", "покажи мне", "хочу увидеть", "пришли фото", "фото"]
 NAME_COMMANDS = ["как тебя зовут", "твое имя", "твоё имя", "what is your name", "who are you"]
 INFO_COMMANDS = ["кто тебя создал", "кто ты", "кто разработчик", "кто твой автор",
@@ -1997,6 +2813,36 @@ EXCHANGE_PATTERN = re.compile(
     r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
 )
 
+async def vocab_reminder_loop():
+    while True:
+        now = datetime.utcnow()
+        for uid, vocab in user_vocab.items():
+            if not vocab_reminders_enabled.get(str(uid), True):
+                continue
+            for entry in vocab:
+                last = datetime.fromisoformat(entry.get("last_reviewed", now.isoformat()))
+                level = entry.get("review_level", 0)
+                interval_days = [0, 1, 2, 4, 7, 14, 30]
+                interval = interval_days[min(level, len(interval_days) - 1)]
+                if (now - last).days >= interval:
+                    try:
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                            [
+                                InlineKeyboardButton(text="✅ Помню", callback_data="review_remember"),
+                                InlineKeyboardButton(text="❌ Не помню", callback_data="review_forget")
+                            ]
+                        ])
+                        await bot.send_message(uid,
+                            f"🔁 Пора повторить слово: <b>{entry['word']}</b>\n"
+                            f"{entry['meaning']}\n<i>{entry['example']}</i>",
+                            reply_markup=keyboard
+                        )
+                        break  # только одно напоминание за цикл
+                    except Exception as e:
+                        logging.warning(f"[VOCAB_REMINDER] Ошибка при отправке: {e}")
+                    break
+        await asyncio.sleep(3600)  # проверяем раз в час
+
 async def reminder_loop():
     global reminders
     import pytz
@@ -2031,6 +2877,7 @@ async def reminder_loop():
 # ---------------------- Запуск бота ---------------------- #
 async def main():
     asyncio.create_task(reminder_loop())
+    asyncio.create_task(vocab_reminder_loop())
     
     await dp.start_polling(bot)
 
