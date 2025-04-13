@@ -2888,7 +2888,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         conversation.pop(0)
     try:
         await bot.send_chat_action(chat_id=cid, action="typing")
-        resp = model.generate_content(conversation)
+        resp = await model.generate_content_async(conversation)
         if not resp.candidates:
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
             logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
