@@ -2904,6 +2904,10 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
 
+@dp.message()
+async def fallback_handler(message: Message):
+    await handle_msg(message)
+
 # ---------------------- Новый блок для обработки запроса курса валют ---------------------- #
 # Используем универсальное регулярное выражение, чтобы поддержать варианты типа "1 доллар сум" или "1 долар в сум".
 EXCHANGE_PATTERN = re.compile(
@@ -2980,7 +2984,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-@dp.message()
-async def fallback_handler(message: Message):
-    await handle_msg(message)
