@@ -2195,8 +2195,8 @@ async def handle_add_vocab(message: Message):
         logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово.")
 
-@dp.message()
-async def handle_vocab_word_input(message: Message):
+@dp.message(VocabAdd.waiting_for_word)
+async def handle_vocab_word_input(message: Message, state: FSMContext):
     uid = message.from_user.id
 
     # Проверяем, ожидается ли добавление слова
