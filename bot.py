@@ -2971,10 +2971,6 @@ async def reminder_loop():
         
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
 
-@dp.message()
-async def handle_general_text(message: Message):
-    await handle_msg(message)
-
 # ---------------------- Запуск бота ---------------------- #
 async def main():
     asyncio.create_task(reminder_loop())
@@ -2984,3 +2980,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+@dp.message()
+async def fallback_handler(message: Message):
+    await handle_msg(message)
