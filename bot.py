@@ -2241,11 +2241,6 @@ async def handle_vocab_word_input(message: Message):
         logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово. Попробуй позже.")
 
-@dp.message()
-async def handle_all_messages(message: Message):
-    user_input = (message.text or "").strip()
-    await handle_all_messages_impl(message, user_input)
-
 # ★ Изменена функция show_notes – если нет заметок, всегда отправляем сообщение
 async def show_notes(uid: int, callback: CallbackQuery = None, message: Message = None):
     notes = user_notes.get(uid, [])
@@ -2972,8 +2967,9 @@ async def reminder_loop():
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
 
 @dp.message()
-async def fallback_handler(message: Message):
-    await handle_msg(message)
+async def handle_all_messages(message: Message):
+    user_input = (message.text or "").strip()
+    await handle_all_messages_impl(message, user_input)
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
