@@ -56,6 +56,12 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)   # удаляем HTML-теги
     return unescape(text).strip()
 
+def load_dialogues():
+    with open("learning/dialogues.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+dialogues = load_dialogues()
+
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key.json"
@@ -862,6 +868,32 @@ async def show_reminders_command(message: Message):
         return
     await show_reminders(message.chat.id)
 
+@dp.message(Command("learn_en"))
+async def cmd_learn_en(message: Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Курс", callback_data="learn_course")],
+        [InlineKeyboardButton(text="🎯 Квиз", callback_data="learn_quiz")],
+        [InlineKeyboardButton(text="💬 Диалоги", callback_data="learn_dialogues")],
+        [InlineKeyboardButton(text="🧠 Слово дня", callback_data="learn_word")],
+        [InlineKeyboardButton(text="📓 Мой словарь", callback_data="learn_vocab")],
+        [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("learn_"))
+async def handle_learn_menu(callback: CallbackQuery):
+    action = callback.data.replace("learn_", "")
+    await callback.answer()
+
+    if action == "back":
+        await cmd_learn_en(callback.message)
+        return
+
+    if action == "dialogues":
+        await show_dialogues(callback)
+        return
+
 
 @dp.callback_query(F.data.startswith("note_type:"))
 async def handle_note_type_choice(callback: CallbackQuery):
@@ -1424,6 +1456,22 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
         InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")
     ])
     await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+async def show_dialogues(callback: CallbackQuery):
+    if not dialogues:
+        await callback.message.edit_text("Диалоги не найдены.")
+        return
+
+    text = "<b>💬 Пример диалога</b>\n\n"
+    for exchange in dialogues[:10]:  # Показываем первые 10
+        user_msg = exchange.get("user", "")
+        bot_msg = exchange.get("bot", "")
+        text += f"<b>Ты:</b> {user_msg}\n<b>VAI:</b> {bot_msg}\n\n"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
 async def handle_all_messages_impl(message: Message, user_input: str):
     _register_message_stats(message)
