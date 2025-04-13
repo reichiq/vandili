@@ -1033,35 +1033,38 @@ async def generate_dialogue(callback: CallbackQuery):
         logging.warning(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
         await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
 
-    if data.startswith("learn_level:"):
-        level = data.split(":")[1]
-        await callback.message.edit_text(f"📚 Генерирую материалы для уровня {level}, подожди немного...")
+@dp.callback_query(F.data.startswith("learn_level:"))
+async def handle_learn_level(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    await callback.answer()
+    await callback.message.edit_text(f"📚 Генерирую материалы для уровня {level}, подожди немного...")
 
-        prompt = (
-            f"Ты — профессиональный преподаватель английского языка. Составь краткий учебный план для уровня {level}.\n"
-            "Перечисли 3–5 тем, для каждой дай короткое описание и задание.\n"
-            "Ответ в формате:\n\n"
-            "<b>📘 Уровень {level}</b>\n"
-            "• Тема 1: Название\n"
-            "Описание: ...\n"
-            "Задание: ...\n\n"
-            "• Тема 2: ..."
-        )
+    prompt = (
+        f"Ты — профессиональный преподаватель английского языка. "
+        f"Составь краткий учебный план для уровня {level}.\n"
+        "Перечисли 3–5 тем, для каждой дай короткое описание и задание.\n"
+        "Ответ в формате:\n\n"
+        "<b>📘 Уровень {level}</b>\n"
+        "• Тема 1: Название\n"
+        "Описание: ...\n"
+        "Задание: ...\n\n"
+        "• Тема 2: ..."
+    )
 
-        try:
-            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-            text = format_gemini_response(response.text.strip())
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}"),
-                    InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")
-                ]
-            ])
-            await callback.message.edit_text(text, reply_markup=keyboard)
-        except Exception as e:
-            await callback.message.edit_text("❌ Ошибка при генерации курса.")
-            logging.warning(f"[learn_level:{level}] Ошибка Gemini: {e}")
-        return
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
+            [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
+        ])
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+
+    except Exception as e:
+        await callback.message.edit_text("❌ Ошибка при генерации курса.")
+        logging.warning(f"[learn_level:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "dialogue_voice")
 async def handle_dialogue_voice(callback: CallbackQuery):
@@ -1091,9 +1094,16 @@ async def handle_learn_more(callback: CallbackQuery):
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         text = format_gemini_response(response.text.strip())
+        chat_history[callback.from_user.id] = text
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
+            [
+                InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}"),
+                InlineKeyboardButton(text="🔊 Озвучить", callback_data=f"voice_material:{level}")
+            ],
+            [
+                InlineKeyboardButton(text="🧪 Тест по теме", callback_data=f"quiz_for:{level}")
+            ],
             [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
         ])
 
@@ -1101,6 +1111,62 @@ async def handle_learn_more(callback: CallbackQuery):
     except Exception as e:
         await callback.message.answer("❌ Не удалось сгенерировать дополнительные темы.")
         logging.warning(f"[learn_more:{level}] Ошибка Gemini: {e}")
+
+@dp.callback_query(F.data.startswith("voice_material:"))
+async def handle_voice_material(callback: CallbackQuery):
+    uid = callback.from_user.id
+    await callback.answer()
+
+    text = chat_history.get(uid)
+    if not text:
+        await callback.message.answer("❌ Не удалось найти последний текст.")
+        return
+
+    await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+
+@dp.callback_query(F.data.startswith("quiz_for:"))
+async def handle_quiz_for_topic(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    await callback.answer("Генерирую тест по теме...")
+
+    prompt = (
+        f"Составь мини-квиз по английскому уровню {level}. "
+        "Сделай 3 коротких вопроса с 4 вариантами ответов (A–D), "
+        "указывая правильный вариант. Формат:\n\n"
+        "1. Вопрос\nA) ...\nB) ...\nC) ...\nD) ...\nПравильный ответ: X\n\n"
+        "2. ... и т.д."
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        text = format_gemini_response(response.text.strip())
+
+        # Парсим текст в структуру вопросов
+        questions = parse_quiz_questions(text)
+
+        if not questions:
+            await callback.message.answer("❌ Не удалось распознать тест.")
+            return
+
+        # Сохраняем правильные ответы для этого пользователя
+        quiz_storage[callback.from_user.id] = {i + 1: q["answer"] for i, q in enumerate(questions)}
+
+        for idx, q in enumerate(questions, start=1):
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="A", callback_data=f"quiz_answer:{level}:{idx}:A"),
+                    InlineKeyboardButton(text="B", callback_data=f"quiz_answer:{level}:{idx}:B"),
+                    InlineKeyboardButton(text="C", callback_data=f"quiz_answer:{level}:{idx}:C"),
+                    InlineKeyboardButton(text="D", callback_data=f"quiz_answer:{level}:{idx}:D"),
+                ]
+            ])
+            await callback.message.answer(f"<b>Вопрос {idx}:</b>\n{q['question']}", reply_markup=keyboard)
+
+        await callback.message.answer("Выбирай ответы 👇 я скажу, правильно или нет.")
+
+    except Exception as e:
+        await callback.message.answer("❌ Ошибка при генерации теста.")
+        logging.warning(f"[quiz_for:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "learn_quiz")
 async def handle_quiz_menu(callback: CallbackQuery):
