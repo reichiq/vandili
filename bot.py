@@ -986,6 +986,19 @@ async def handle_learn_menu(callback: CallbackQuery):
         await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
         return
 
+        elif data == "learn_course":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
+            [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
+            [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
+            [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
+            [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        ])
+        await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
+        return
+
+
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def generate_dialogue(callback: CallbackQuery):
     topic = callback.data.split(":")[1]
@@ -1019,18 +1032,6 @@ async def generate_dialogue(callback: CallbackQuery):
     except Exception as e:
         logging.warning(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
         await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
-
-    if data == "learn_course":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
-            [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
-            [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
-            [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
-            [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
-        await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
-        return
 
     if data.startswith("learn_level:"):
         level = data.split(":")[1]
@@ -1303,14 +1304,35 @@ async def handle_word_of_the_day(callback: CallbackQuery):
     prompt = (
         "Придумай интересное английское слово дня, желательно не слишком простое.\n"
         "Формат:\n\n"
-        "<b>📘 Слово дня:</b> example\n"
-        "Значение: пример, образец\n"
-        "Пример: This is just an example."
+        "Слово: ...\n"
+        "Значение: ...\n"
+        "Пример: ..."
     )
 
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        text = format_gemini_response(response.text.strip())
+        raw = response.text.strip().split("\n")
+
+        word = ""
+        meaning = ""
+        example = ""
+
+        for line in raw:
+            if line.lower().startswith("слово:"):
+                word = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("значение:"):
+                meaning = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("пример:"):
+                example = line.split(":", 1)[1].strip()
+
+        if not word or not meaning:
+            raise ValueError("Недостаточно данных от Gemini.")
+
+        text = (
+            f"<b>📘 Слово дня:</b> <i>{word}</i>\n\n"
+            f"<b>Значение:</b> {escape(meaning)}\n"
+            f"<b>Пример:</b> {escape(example)}"
+        )
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔁 Новое слово", callback_data="learn_word")],
@@ -1319,8 +1341,8 @@ async def handle_word_of_the_day(callback: CallbackQuery):
 
         await callback.message.edit_text(text, reply_markup=keyboard)
     except Exception as e:
-        await callback.message.edit_text("❌ Не удалось получить слово дня.")
         logging.warning(f"[WORD_OF_DAY] Ошибка: {e}")
+        await callback.message.edit_text("❌ Не удалось получить слово дня.")
 
 @dp.callback_query(F.data == "learn_vocab")
 async def handle_vocab(callback: CallbackQuery):
