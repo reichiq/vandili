@@ -986,7 +986,7 @@ async def handle_learn_menu(callback: CallbackQuery):
         await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
         return
 
-        elif data == "learn_course":
+    elif data == "learn_course":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
             [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
