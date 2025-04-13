@@ -2858,6 +2858,8 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
         chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
         for c in chunks:
             await message.answer(c)
+    else:
+        await message.answer("❌ Я не смог сгенерировать ответ.")
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
