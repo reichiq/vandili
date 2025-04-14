@@ -102,6 +102,7 @@ REMINDERS_FILE = "reminders.json"
 TIMEZONES_FILE = "timezones.json"
 PROGRESS_FILE = "progress.json"
 VOCAB_FILE = "vocab.json"
+WORD_OF_DAY_HISTORY_FILE = "word_of_day_per_user.json"
 
 def load_timezones() -> dict:
     if not os.path.exists(TIMEZONES_FILE):
@@ -257,6 +258,24 @@ def save_vocab(vocab: dict[int, list[dict]]):
     except Exception as e:
         logging.warning(f"[BOT] Не удалось сохранить vocab: {e}")
 
+def load_word_of_day_history() -> dict[int, list[str]]:
+    if not os.path.exists(WORD_OF_DAY_HISTORY_FILE):
+        return {}
+    try:
+        with open(WORD_OF_DAY_HISTORY_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+            return {int(k): v for k, v in raw.items()}
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось загрузить историю слов дня: {e}")
+        return {}
+
+def save_word_of_day_history(history: dict[int, list[str]]):
+    try:
+        with open(WORD_OF_DAY_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[BOT] Не удалось сохранить историю слов дня: {e}")
+
 def normalize_text(text: str) -> str:
     return re.sub(r"[^\w]", "", text.strip().lower())
 
@@ -345,6 +364,7 @@ reminders = load_reminders()
 quiz_storage = {}
 user_progress = load_progress()
 user_vocab: dict[int, list[dict]] = load_vocab()
+user_word_of_day_history = load_word_of_day_history()
 
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
@@ -783,8 +803,9 @@ async def cmd_start(message: Message, command: CommandObject):
 •🏞Показываю изображения по ключевым словам.
 •☀️Погода: спроси "погода в Москве" или "погода в Варшаве на 3 дня"
 •💱Курс валют: узнай курс "100 долларов в рублях", "100 USD в KRW" и т.д. 
-•📝 Заметки: используй команду /mynotes — ты сможешь добавлять, редактировать и удалять свои заметки через кнопки. 
-•⏰ Напоминания: команда /myreminders — добавление, редактирование, удаление напоминаний. Добавление реализовано через пошаговые кнопки (дата → время → текст).
+•📝Заметки: используй команду /mynotes — ты сможешь добавлять, редактировать и удалять свои заметки через кнопки. 
+•⏰Напоминания: команда /myreminders — добавление, редактирование, удаление напоминаний. Добавление реализовано через пошаговые кнопки (дата → время → текст).
+•🇬🇧Хочешь выучить английский? Используй команду /learn_en — диалоги, грамматика, слово дня, мини-тесты и твой личный словарь.
 •🔎Поддерживаю команды /help и режим поддержки.
 
 Всегда на связи!"""
@@ -954,7 +975,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="learn_review")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="learn_close")]
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
 
@@ -977,6 +998,11 @@ async def handle_learn_menu(callback: CallbackQuery):
         await callback.message.delete()
         await cmd_learn_en(callback.message)
         return
+
+@dp.callback_query(F.data == "learn_close")
+async def handle_learn_close(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
 
 
     if data == "learn_dialogues":
@@ -1346,52 +1372,66 @@ async def handle_progress_reset(callback: CallbackQuery):
 async def handle_word_of_the_day(callback: CallbackQuery):
     await callback.answer("Генерирую слово дня...")
 
-    prompt = (
-        "Придумай одно уникальное английское слово, желательно нужное и важное. "
-        "Не повторяй слова, которые выдавал раньше, и не используй generic вроде 'hello'.\n\n"
-        "Ответ строго в формате:\n"
-        "Слово: cat\n"
-        "Значение: Кошка\n"
-        "Пример: I have a cat.\n\n"
-        "Пожалуйста, каждый раз выдавай действительно новое слово."
-        "Пожалуйста, не добавляй ничего лишнего, кроме этих трёх строк. "
-        "На русском языке укажи «Слово:», «Значение:», «Пример:» именно так."
-    )
+        uid = callback.from_user.id
+    user_history = user_word_of_day_history.get(uid, [])
 
-    try:
-        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        raw = response.text.strip().split("\n")
+    attempts = 0
+    max_attempts = 5
+    word = ""
+    meaning = ""
+    example = ""
 
-        word = ""
-        meaning = ""
-        example = ""
+    while attempts < max_attempts:
+        attempts += 1
 
-        for line in raw:
-            if line.lower().startswith("слово:"):
-                word = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("значение:"):
-                meaning = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("пример:"):
-                example = line.split(":", 1)[1].strip()
-
-        if not word or not meaning:
-            raise ValueError("Недостаточно данных от Gemini.")
-
-        text = (
-            f"<b>📘 Слово дня:</b> <i>{word}</i>\n\n"
-            f"<b>Значение:</b> {escape(meaning)}\n"
-            f"<b>Пример:</b> {escape(example)}"
+        prompt = (
+            "Придумай одно уникальное английское слово, желательно нужное и важное. "
+            "Не повторяй слова, которые выдавал раньше, и не используй generic вроде 'hello'.\n\n"
+            "Ответ строго в формате:\n"
+            "Слово: cat\n"
+            "Значение: Кошка\n"
+            "Пример: I have a cat.\n\n"
+            "Пожалуйста, не добавляй ничего лишнего, кроме этих трёх строк. "
+            "На русском языке укажи «Слово:», «Значение:», «Пример:»."
         )
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔁 Новое слово", callback_data="learn_word")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
+        try:
+            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            raw = response.text.strip().split("\n")
 
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    except Exception as e:
-        logging.warning(f"[WORD_OF_DAY] Ошибка: {e}")
-        await callback.message.edit_text("❌ Не удалось получить слово дня.")
+            for line in raw:
+                if line.lower().startswith("слово:"):
+                    word = line.split(":", 1)[1].strip()
+                elif line.lower().startswith("значение:"):
+                    meaning = line.split(":", 1)[1].strip()
+                elif line.lower().startswith("пример:"):
+                    example = line.split(":", 1)[1].strip()
+
+            if word and word.lower() not in [w.lower() for w in user_history]:
+                user_history.append(word)
+                user_word_of_day_history[uid] = user_history[-100:]  # ограничим историю 100 словами
+                save_word_of_day_history(user_word_of_day_history)
+                break
+        except Exception as e:
+            logging.warning(f"[WORD_OF_DAY_ATTEMPT] Ошибка: {e}")
+            continue
+
+    if not word:
+        await callback.message.edit_text("❌ Не удалось получить уникальное слово.")
+        return
+
+    text = (
+        f"<b>📘 Слово дня:</b> <i>{word}</i>\n\n"
+        f"<b>Значение:</b> {escape(meaning)}\n"
+        f"<b>Пример:</b> {escape(example)}"
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Новое слово", callback_data="learn_word")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 @dp.callback_query(F.data == "learn_vocab")
 async def handle_vocab(callback: CallbackQuery):
