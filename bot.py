@@ -945,6 +945,7 @@ async def show_reminders_command(message: Message):
 async def cmd_learn_en(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 Курс", callback_data="learn_course")],
+        [InlineKeyboardButton(text="📙 Грамматика", callback_data="learn_grammar")],
         [InlineKeyboardButton(text="🎯 Квиз", callback_data="learn_quiz")],
         [InlineKeyboardButton(text="💬 Диалоги", callback_data="learn_dialogues")],
         [InlineKeyboardButton(text="🧠 Слово дня", callback_data="learn_word")],
@@ -953,7 +954,6 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="learn_review")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
-        [InlineKeyboardButton(text="📙 Грамматика", callback_data="learn_grammar")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
