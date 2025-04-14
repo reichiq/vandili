@@ -16,7 +16,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import (
     FSInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton,
-    CallbackQuery, BufferedInputFile, ReplyKeyboardRemove
+    CallbackQuery, BufferedInputFile, ReplyKeyboardRemove,
+    ReplyKeyboardMarkup, KeyboardButton
 )
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
@@ -86,6 +87,21 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+# Клавиатура с основными действиями
+main_menu_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="📝 Мои заметки"),
+            KeyboardButton(text="⏰ Мои напоминания")
+        ],
+        [
+            KeyboardButton(text="🇬🇧 Изучение английского"),
+            KeyboardButton(text="🆘 Помощь")
+        ]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False
+)
 # ★ Инициализируем диспетчер с MemoryStorage для FSM
 dp = Dispatcher(storage=MemoryStorage())
 morph = MorphAnalyzer()
@@ -817,11 +833,11 @@ async def cmd_start(message: Message, command: CommandObject):
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
         await message.answer("Бот включён ✅")
-        await message.answer(greet)
+        await message.answer(greet, reply_markup=main_menu_keyboard)
         return
 
     # 📩 Если в ЛС
-    await message.answer(greet)
+    await message.answer(greet, reply_markup=main_menu_keyboard)
 
 @dp.message(Command("stop", prefix="/!"))
 async def cmd_stop(message: Message, command: CommandObject):
@@ -2238,6 +2254,22 @@ async def handle_add_vocab(message: Message):
     except Exception as e:
         logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово.")
+
+@dp.message(F.text == "📝 Мои заметки")
+async def handle_notes_button(message: Message):
+    await show_notes(message.chat.id, message=message)
+
+@dp.message(F.text == "⏰ Мои напоминания")
+async def handle_reminders_button(message: Message):
+    await show_reminders(message.chat.id)
+
+@dp.message(F.text == "🇬🇧 Изучение английского")
+async def handle_learn_button(message: Message):
+    await cmd_learn_en(message)
+
+@dp.message(F.text == "🆘 Помощь")
+async def handle_help_button(message: Message):
+    await cmd_help(message)
 
 @dp.message(VocabAdd.waiting_for_word)
 async def handle_vocab_word_input(message: Message, state: FSMContext):
