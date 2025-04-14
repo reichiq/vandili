@@ -1372,7 +1372,7 @@ async def handle_progress_reset(callback: CallbackQuery):
 async def handle_word_of_the_day(callback: CallbackQuery):
     await callback.answer("Генерирую слово дня...")
 
-        uid = callback.from_user.id
+    uid = callback.from_user.id
     user_history = user_word_of_day_history.get(uid, [])
 
     attempts = 0
