@@ -206,13 +206,14 @@ def save_support_map():
 
 def load_stats() -> dict:
     """
-    Загружает основные метрики (messages_total, files_received, commands_used) из stats.json.
+    Загружает основные метрики (messages_total, files_received, commands_used, unique_users) из stats.json.
     """
     if not os.path.exists(STATS_FILE):
         return {
             "messages_total": 0,
             "files_received": 0,
-            "commands_used": {}
+            "commands_used": {},
+            "unique_users": []
         }
     try:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
@@ -220,13 +221,15 @@ def load_stats() -> dict:
             data.setdefault("messages_total", 0)
             data.setdefault("files_received", 0)
             data.setdefault("commands_used", {})
+            data.setdefault("unique_users", [])  
             return data
     except Exception as e:
         logging.warning(f"Не удалось загрузить stats.json: {e}")
         return {
             "messages_total": 0,
             "files_received": 0,
-            "commands_used": {}
+            "commands_used": {},
+            "unique_users": []  
         }
 
 def save_stats():
@@ -464,6 +467,8 @@ def _register_message_stats(message: Message):
         if message.from_user.id not in unique_users:
             unique_users.add(message.from_user.id)
             save_unique_users(unique_users)
+            stats["unique_users"] = list(unique_users)
+            save_stats()
     elif message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if message.chat.id not in unique_groups:
             unique_groups.add(message.chat.id)
