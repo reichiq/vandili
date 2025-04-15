@@ -65,12 +65,12 @@ class VocabReview(StatesGroup):
 
 
 def recognize_formula_from_image(image_path: str) -> str:
-    """
-    Распознаёт LaTeX-формулу с изображения.
-    """
     try:
         img = Image.open(image_path).convert("RGB")
-        return latex_ocr(img)
+        result = latex_ocr(img)
+        if isinstance(result, dict) and "text" in result:
+            return result["text"]
+        return str(result)
     except Exception as e:
         return f"Ошибка при распознавании формулы: {e}"
 
