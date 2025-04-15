@@ -28,8 +28,22 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+REMINDERS_FILE = DATA_DIR / "reminders.json"
+STATS_FILE = DATA_DIR / "stats.json"
+NOTES_FILE = DATA_DIR / "notes.json"
+SUPPORT_MAP_FILE = DATA_DIR / "support_map.json"
+TIMEZONES_FILE = DATA_DIR / "timezones.json"
+PROGRESS_FILE = DATA_DIR / "progress.json"
+VOCAB_FILE = DATA_DIR / "vocab.json"
+WORD_OF_DAY_HISTORY_FILE = DATA_DIR / "word_of_day_per_user.json"
+REVIEW_STATS_FILE = DATA_DIR / "review_stats.json"
+ACHIEVEMENTS_FILE = DATA_DIR / "achievements.json"
+VOCAB_REMINDERS_FILE = DATA_DIR / "vocab_reminders.json"
+DISABLED_CHATS_FILE = DATA_DIR / "disabled_chats.json"
+UNIQUE_USERS_FILE = DATA_DIR / "unique_users.json"
+UNIQUE_GROUPS_FILE = DATA_DIR / "unique_groups.json"
+
 # Пути к JSON-файлам
-REMINDERS_FILE = DATA_DIR / REMINDERS_FILE
 STATS_FILE = DATA_DIR / STATS_FILE
 NOTES_FILE = DATA_DIR / NOTES_FILE
 SUPPORT_MAP_FILE = DATA_DIR / SUPPORT_MAP_FILE
