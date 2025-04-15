@@ -1079,14 +1079,17 @@ async def generate_dialogue(callback: CallbackQuery):
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         text = format_gemini_response(response.text.strip())
+        await state.update_data(last_dialogue=text)
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить слова", callback_data="dialogue_add_words")],
             [
                 InlineKeyboardButton(text="🔄 Новый диалог", callback_data=f"dialogue_topic:{topic}"),
                 InlineKeyboardButton(text="🔊 Озвучить", callback_data="dialogue_voice")
             ],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_dialogues")]
         ])
+
         chat_history[callback.from_user.id] = text
 
         await callback.message.edit_text(f"<b>💬 Диалог по теме:</b> {topic}\n\n{text}", reply_markup=keyboard)
@@ -1142,6 +1145,74 @@ async def handle_dialogue_voice(callback: CallbackQuery):
         return
 
     await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+
+@dp.callback_query(F.data == "dialogue_add_words")
+async def handle_dialogue_add_words(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    dialogue = data.get("last_dialogue")
+
+    if not dialogue:
+        await callback.message.answer("❌ Диалог не найден.")
+        return
+
+    prompt = (
+        "Вот английский диалог. Найди 3–5 полезных или сложных слов, "
+        "и для каждого дай перевод и короткий пример. Формат:\n\n"
+        "Слово: ...\nЗначение: ...\nПример: ...\n---\n\n"
+        + dialogue
+    )
+
+    await callback.message.edit_text("🔍 Анализирую диалог...")
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        words = response.text.strip()
+        await state.update_data(dialogue_words=words)
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Добавить в словарь", callback_data="dialogue_add_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="dialogue_add_cancel")]
+        ])
+        await callback.message.answer(f"<b>📘 Найденные слова:</b>\n\n{words}", reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        logging.warning(f"[dialogue_add_words] Ошибка: {e}")
+        await callback.message.answer("❌ Не удалось обработать диалог.")
+
+@dp.callback_query(F.data == "dialogue_add_confirm")
+async def handle_dialogue_add_confirm(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    data = await state.get_data()
+    text = data.get("dialogue_words", "")
+
+    count = 0
+    for block in text.split("---"):
+        lines = block.strip().split("\n")
+        if len(lines) < 3:
+            continue
+        word = lines[0].replace("Слово:", "").strip()
+        meaning = lines[1].replace("Значение:", "").strip()
+        example = lines[2].replace("Пример:", "").strip()
+        entry = {
+            "word": word,
+            "meaning": meaning,
+            "example": example,
+            "last_reviewed": datetime.utcnow().isoformat(),
+            "review_level": 0
+        }
+        user_vocab.setdefault(uid, []).append(entry)
+        count += 1
+
+    save_vocab(user_vocab)
+    await callback.message.edit_text(f"✅ Добавлено слов: <b>{count}</b>", parse_mode="HTML")
+    await state.clear()
+
+@dp.callback_query(F.data == "dialogue_add_cancel")
+async def handle_dialogue_add_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("❌ Отменено.")
+    await callback.message.delete()
+    await state.clear()
+
 
 @dp.callback_query(F.data.startswith("learn_more:"))
 async def handle_learn_more(callback: CallbackQuery):
@@ -1610,6 +1681,7 @@ async def review_remember(callback: CallbackQuery, state: FSMContext):
     data["index"] += 1
     await state.update_data(data)
     await callback.answer("✅ Отлично!")
+    await callback.message.delete()
     await send_next_review_word(uid, state)
 
 @dp.callback_query(F.data.startswith("review_forget:"))
@@ -1630,6 +1702,7 @@ async def review_forget(callback: CallbackQuery, state: FSMContext):
     data["index"] += 1
     await state.update_data(data)
     await callback.answer("🔁 Запомнишь в следующий раз!")
+    await callback.message.delete()
     await send_next_review_word(uid, state)
 
 @dp.callback_query(F.data == "review_skip")
