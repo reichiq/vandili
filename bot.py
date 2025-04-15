@@ -9,7 +9,7 @@ import aiohttp
 import dateparser
 import pytz
 import requests
-from PIL import Image
+from PIL import ImageOps, ImageFilter
 from aiogram.types import BufferedInputFile
 from pix2tex.cli import LatexOCR
 from datetime import datetime
@@ -2100,8 +2100,19 @@ async def handle_formula_image(message: Message):
         photo = message.photo[-1]
         file = await bot.download(photo)
         img = Image.open(file)
+        img = img.convert("L")  # ч/б
+        img = ImageOps.autocontrast(img)
+        img = ImageOps.invert(img)
+        img = img.filter(ImageFilter.SHARPEN)
 
-        latex = latex_ocr(img).strip()
+
+        try:
+            latex = latex_ocr(img).strip()
+        except Exception as e:
+            await message.answer("❌ Ошибка при распознавании формулы.")
+            logging.warning(f"[LaTeX OCR FAIL] {e}")
+            return
+
         if not latex or len(latex) < 3:
             await message.answer("❌ Не удалось распознать формулу.")
             return
