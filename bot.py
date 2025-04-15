@@ -1045,7 +1045,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🧠 Слово дня", callback_data="learn_word")],
         [InlineKeyboardButton(text="📓 Мой словарь", callback_data="learn_vocab")],
         [InlineKeyboardButton(text="➕ Добавить слово", callback_data="learn_add_word")],
-        [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="learn_review")],
+        [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="review_menu")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
         [InlineKeyboardButton(text="🏆 Достижения", callback_data="learn_achievements")],
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
@@ -1103,6 +1103,15 @@ async def handle_learn_close(callback: CallbackQuery):
         await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
         return
 
+@dp.callback_query(F.data == "review_menu")
+async def show_review_mode(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Только 'созревшие'", callback_data="learn_review")],
+        [InlineKeyboardButton(text="📚 Повторить весь словарь", callback_data="vocab_repeat_all")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_vocab")]
+    ])
+    await callback.answer()
+    await callback.message.edit_text("🧠 Выбери режим повторения:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def generate_dialogue(callback: CallbackQuery):
