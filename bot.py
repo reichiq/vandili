@@ -9,6 +9,7 @@ import aiohttp
 import dateparser
 import pytz
 import requests
+from PIL import Image
 from PIL import ImageOps, ImageFilter
 from aiogram.types import BufferedInputFile
 from pix2tex.cli import LatexOCR
