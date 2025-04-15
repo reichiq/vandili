@@ -12,7 +12,7 @@ import requests
 from PIL import Image
 from PIL import ImageOps, ImageFilter
 from aiogram.types import BufferedInputFile
-from pix2tex import LatexOCR
+from pix2tex.ocr import LatexOCR
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
