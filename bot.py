@@ -450,7 +450,6 @@ quiz_storage = {}
 user_progress = load_progress()
 user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
-latex_ocr = LatexOCR()
 user_images_text = {}
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
