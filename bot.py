@@ -1083,7 +1083,7 @@ async def handle_learn_close(callback: CallbackQuery):
     await callback.message.delete()
 
 
-    if data == "learn_dialogues":
+    if callback.data == "learn_dialogues":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👋 Small Talk", callback_data="dialogue_topic:Small Talk")],
             [InlineKeyboardButton(text="🛫 Аэропорт", callback_data="dialogue_topic:Airport")],
