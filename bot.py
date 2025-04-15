@@ -10,7 +10,6 @@ import pytz
 import requests
 from PIL import Image
 from PIL import ImageOps, ImageFilter
-from aiogram.types import BufferedInputFile
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
@@ -24,6 +23,27 @@ from aiogram.types import (
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 from pathlib import Path
+
+# Централизованный путь к директории данных
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+
+# Пути к JSON-файлам
+REMINDERS_FILE = DATA_DIR / REMINDERS_FILE
+STATS_FILE = DATA_DIR / STATS_FILE
+NOTES_FILE = DATA_DIR / NOTES_FILE
+SUPPORT_MAP_FILE = DATA_DIR / SUPPORT_MAP_FILE
+TIMEZONES_FILE = DATA_DIR / TIMEZONES_FILE
+PROGRESS_FILE = DATA_DIR / PROGRESS_FILE
+VOCAB_FILE = DATA_DIR / VOCAB_FILE
+WORD_OF_DAY_HISTORY_FILE = DATA_DIR / WORD_OF_DAY_HISTORY_FILE
+REVIEW_STATS_FILE = DATA_DIR / REVIEW_STATS_FILE
+ACHIEVEMENTS_FILE = DATA_DIR / ACHIEVEMENTS_FILE
+VOCAB_REMINDERS_FILE = DATA_DIR / VOCAB_REMINDERS_FILE
+DISABLED_CHATS_FILE = DATA_DIR / DISABLED_CHATS_FILE
+UNIQUE_USERS_FILE = DATA_DIR / UNIQUE_USERS_FILE
+UNIQUE_GROUPS_FILE = DATA_DIR / UNIQUE_GROUPS_FILE
+
 import asyncio
 import google.generativeai as genai
 import tempfile
@@ -117,16 +137,16 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-exp-03-25")
 
 # ---------------------- Загрузка и сохранение статистики ---------------------- #
-STATS_FILE = "stats.json"
-SUPPORT_MAP_FILE = "support_map.json"
-NOTES_FILE = "notes.json"
-REMINDERS_FILE = "reminders.json"
-TIMEZONES_FILE = "timezones.json"
-PROGRESS_FILE = "progress.json"
-VOCAB_FILE = "vocab.json"
-WORD_OF_DAY_HISTORY_FILE = "word_of_day_per_user.json"
-REVIEW_STATS_FILE = "review_stats.json"
-ACHIEVEMENTS_FILE = "achievements.json"
+STATS_FILE = STATS_FILE
+SUPPORT_MAP_FILE = SUPPORT_MAP_FILE
+NOTES_FILE = NOTES_FILE
+REMINDERS_FILE = REMINDERS_FILE
+TIMEZONES_FILE = TIMEZONES_FILE
+PROGRESS_FILE = PROGRESS_FILE
+VOCAB_FILE = VOCAB_FILE
+WORD_OF_DAY_HISTORY_FILE = WORD_OF_DAY_HISTORY_FILE
+REVIEW_STATS_FILE = REVIEW_STATS_FILE
+ACHIEVEMENTS_FILE = ACHIEVEMENTS_FILE
 
 if os.path.exists(ACHIEVEMENTS_FILE):
     with open(ACHIEVEMENTS_FILE, "r", encoding="utf-8") as f:
@@ -147,7 +167,7 @@ def load_timezones() -> dict:
         with open(TIMEZONES_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logging.warning(f"Не удалось загрузить timezones.json: {e}")
+        logging.exception(f"Не удалось загрузить timezones.json: {e}")
         return {}
 
 def save_timezones(timezones: dict):
@@ -155,7 +175,7 @@ def save_timezones(timezones: dict):
         with open(TIMEZONES_FILE, "w", encoding="utf-8") as f:
             json.dump(timezones, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"Не удалось сохранить timezones.json: {e}")
+        logging.exception(f"Не удалось сохранить timezones.json: {e}")
 
 # Глобальный словарь для часовых поясов пользователей
 user_timezones = load_timezones()
@@ -189,7 +209,7 @@ def save_reminders():
         with open(REMINDERS_FILE, "w", encoding="utf-8") as f:
             json.dump(data_to_save, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить reminders: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить reminders: {e}")
 
 def load_notes() -> dict:
     if not os.path.exists(NOTES_FILE):
@@ -206,7 +226,7 @@ def save_notes():
         with open(NOTES_FILE, "w", encoding="utf-8") as f:
             json.dump(user_notes, f, ensure_ascii=False)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить заметки: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить заметки: {e}")
 
 def load_support_map() -> dict:
     if not os.path.exists(SUPPORT_MAP_FILE):
@@ -222,7 +242,7 @@ def save_support_map():
         with open(SUPPORT_MAP_FILE, "w", encoding="utf-8") as f:
             json.dump(support_reply_map, f)
     except Exception as e:
-        logging.warning(f"Ошибка при сохранении support_map: {e}")
+        logging.exception(f"Ошибка при сохранении support_map: {e}")
 
 def load_stats() -> dict:
     """
@@ -244,7 +264,7 @@ def load_stats() -> dict:
             data.setdefault("unique_users", [])  
             return data
     except Exception as e:
-        logging.warning(f"Не удалось загрузить stats.json: {e}")
+        logging.exception(f"Не удалось загрузить stats.json: {e}")
         return {
             "messages_total": 0,
             "files_received": 0,
@@ -260,7 +280,7 @@ def save_stats():
         with open(STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"Не удалось сохранить stats.json: {e}")
+        logging.exception(f"Не удалось сохранить stats.json: {e}")
 
 def load_progress() -> dict:
     if not os.path.exists(PROGRESS_FILE):
@@ -269,7 +289,7 @@ def load_progress() -> dict:
         with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить progress.json: {e}")
+        logging.exception(f"[BOT] Не удалось загрузить progress.json: {e}")
         return {}
 
 def save_progress(progress: dict):
@@ -277,7 +297,7 @@ def save_progress(progress: dict):
         with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
             json.dump(progress, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить progress.json: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить progress.json: {e}")
 
 def save_achievements():
     with open(ACHIEVEMENTS_FILE, "w", encoding="utf-8") as f:
@@ -319,7 +339,7 @@ def load_vocab() -> dict[int, list[dict]]:
             data = json.load(f)
             return {int(k): v for k, v in data.items()}
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить vocab: {e}")
+        logging.exception(f"[BOT] Не удалось загрузить vocab: {e}")
         return {}
 
 def save_vocab(vocab: dict[int, list[dict]]):
@@ -327,7 +347,7 @@ def save_vocab(vocab: dict[int, list[dict]]):
         with open(VOCAB_FILE, "w", encoding="utf-8") as f:
             json.dump(vocab, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить vocab: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить vocab: {e}")
 
 def save_review_stats():
     with open(REVIEW_STATS_FILE, "w", encoding="utf-8") as f:
@@ -341,7 +361,7 @@ def load_word_of_day_history() -> dict[int, list[str]]:
             raw = json.load(f)
             return {int(k): v for k, v in raw.items()}
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить историю слов дня: {e}")
+        logging.exception(f"[BOT] Не удалось загрузить историю слов дня: {e}")
         return {}
 
 def save_word_of_day_history(history: dict[int, list[str]]):
@@ -349,7 +369,7 @@ def save_word_of_day_history(history: dict[int, list[str]]):
         with open(WORD_OF_DAY_HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить историю слов дня: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить историю слов дня: {e}")
 
 def normalize_text(text: str) -> str:
     return re.sub(r"[^\w]", "", text.strip().lower())
@@ -407,7 +427,7 @@ def render_top_commands_bar_chart(commands_dict: dict) -> str:
 # ---------------------- Глобальные структуры ---------------------- #
 # Включено ли автонапоминание по повторению слов для каждого пользователя
 vocab_reminders_enabled = {}
-VOCAB_REMINDERS_FILE = "vocab_reminders.json"
+VOCAB_REMINDERS_FILE = VOCAB_REMINDERS_FILE
 
 def load_vocab_reminder_settings():
     if not os.path.exists(VOCAB_REMINDERS_FILE):
@@ -416,7 +436,7 @@ def load_vocab_reminder_settings():
         with open(VOCAB_REMINDERS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить {VOCAB_REMINDERS_FILE}: {e}")
+        logging.exception(f"[BOT] Не удалось загрузить {VOCAB_REMINDERS_FILE}: {e}")
         return {}
 
 def save_vocab_reminder_settings():
@@ -424,7 +444,7 @@ def save_vocab_reminder_settings():
         with open(VOCAB_REMINDERS_FILE, "w", encoding="utf-8") as f:
             json.dump(vocab_reminders_enabled, f)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить {VOCAB_REMINDERS_FILE}: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить {VOCAB_REMINDERS_FILE}: {e}")
 
 vocab_reminders_enabled = load_vocab_reminder_settings()
 stats = load_stats()  # подгружаем основные метрики
@@ -442,7 +462,7 @@ user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
 user_images_text = {}
 # ---------------------- Работа с отключёнными чатами ---------------------- #
-DISABLED_CHATS_FILE = "disabled_chats.json"
+DISABLED_CHATS_FILE = DISABLED_CHATS_FILE
 
 def load_disabled_chats() -> set:
     if not os.path.exists(DISABLED_CHATS_FILE):
@@ -452,7 +472,7 @@ def load_disabled_chats() -> set:
             data = json.load(f)
             return set(data)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось загрузить disabled_chats: {e}")
+        logging.exception(f"[BOT] Не удалось загрузить disabled_chats: {e}")
         return set()
 
 def save_disabled_chats(chats: set):
@@ -460,13 +480,13 @@ def save_disabled_chats(chats: set):
         with open(DISABLED_CHATS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(chats), f)
     except Exception as e:
-        logging.warning(f"[BOT] Не удалось сохранить disabled_chats: {e}")
+        logging.exception(f"[BOT] Не удалось сохранить disabled_chats: {e}")
 
 disabled_chats = load_disabled_chats()
 
 # ---------------------- Persistent Unique Users и Groups ---------------------- #
-UNIQUE_USERS_FILE = "unique_users.json"
-UNIQUE_GROUPS_FILE = "unique_groups.json"
+UNIQUE_USERS_FILE = UNIQUE_USERS_FILE
+UNIQUE_GROUPS_FILE = UNIQUE_GROUPS_FILE
 
 def load_unique_users() -> set:
     if not os.path.exists(UNIQUE_USERS_FILE):
@@ -476,7 +496,7 @@ def load_unique_users() -> set:
             data = json.load(f)
             return set(data)
     except Exception as e:
-        logging.warning(f"Не удалось загрузить уникальных пользователей: {e}")
+        logging.exception(f"Не удалось загрузить уникальных пользователей: {e}")
         return set()
 
 def save_unique_users(users: set):
@@ -484,7 +504,7 @@ def save_unique_users(users: set):
         with open(UNIQUE_USERS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(users), f)
     except Exception as e:
-        logging.warning(f"Не удалось сохранить уникальных пользователей: {e}")
+        logging.exception(f"Не удалось сохранить уникальных пользователей: {e}")
 
 def load_unique_groups() -> set:
     if not os.path.exists(UNIQUE_GROUPS_FILE):
@@ -494,7 +514,7 @@ def load_unique_groups() -> set:
             data = json.load(f)
             return set(data)
     except Exception as e:
-        logging.warning(f"Не удалось загрузить уникальные группы: {e}")
+        logging.exception(f"Не удалось загрузить уникальные группы: {e}")
         return set()
 
 def save_unique_groups(groups: set):
@@ -502,7 +522,7 @@ def save_unique_groups(groups: set):
         with open(UNIQUE_GROUPS_FILE, "w", encoding="utf-8") as f:
             json.dump(list(groups), f)
     except Exception as e:
-        logging.warning(f"Не удалось сохранить уникальные группы: {e}")
+        logging.exception(f"Не удалось сохранить уникальные группы: {e}")
 
 unique_users = load_unique_users()
 unique_groups = load_unique_groups()
@@ -623,7 +643,7 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    logging.warning(f"Floatrates вернул статус {resp.status} для {url}")
+                    logging.exception(f"Floatrates вернул статус {resp.status} для {url}")
                     return None
                 data = await resp.json()
     except Exception as e:
@@ -658,7 +678,7 @@ async def do_geocoding_request(name: str) -> dict:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    logging.warning(f"Ошибка геокодинга для {name}: статус {resp.status}")
+                    logging.exception(f"Ошибка геокодинга для {name}: статус {resp.status}")
                     return None
                 geo_data = await resp.json()
     except Exception as e:
@@ -732,7 +752,7 @@ async def geocode_city(city_name: str) -> dict:
         if result:
             return result
     except Exception as e:
-        logging.warning(f"[BOT] Ошибка перевода города '{city_name}': {e}")
+        logging.exception(f"[BOT] Ошибка перевода города '{city_name}': {e}")
 
     # 3. Пробуем транслитерацию
     translit_city = simple_transliterate(city_name)
@@ -773,7 +793,7 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
         async with aiohttp.ClientSession() as session:
             async with session.get(base_url, params=params) as resp:
                 if resp.status != 200:
-                    logging.warning(f"Ошибка получения погоды: статус {resp.status}")
+                    logging.exception(f"Ошибка получения погоды: статус {resp.status}")
                     return "Не удалось получить данные о погоде."
                 data = await resp.json()
     except Exception as e:
@@ -1005,7 +1025,7 @@ async def cmd_broadcast(message: Message):
             else:
                 await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_text}")
         except Exception as e:
-            logging.warning(f"[BROADCAST] Ошибка при отправке в чат {recipient}: {e}")
+            logging.exception(f"[BROADCAST] Ошибка при отправке в чат {recipient}: {e}")
     await message.answer("Рассылка завершена.")
 
 @dp.callback_query(F.data == "support_request")
@@ -1151,7 +1171,7 @@ async def generate_dialogue(callback: CallbackQuery):
         await send_voice_message(callback.message.chat.id, clean_for_tts(text))
 
     except Exception as e:
-        logging.warning(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
+        logging.exception(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
         await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
 
 @dp.callback_query(F.data.startswith("learn_level:"))
@@ -1185,7 +1205,7 @@ async def handle_learn_level(callback: CallbackQuery):
 
     except Exception as e:
         await callback.message.edit_text("❌ Ошибка при генерации курса.")
-        logging.warning(f"[learn_level:{level}] Ошибка Gemini: {e}")
+        logging.exception(f"[learn_level:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "dialogue_voice")
 async def handle_dialogue_voice(callback: CallbackQuery):
@@ -1246,7 +1266,7 @@ async def handle_dialogue_add_words(callback: CallbackQuery, state: FSMContext):
         ])
         await callback.message.answer(f"<b>📘 Найденные слова:</b>\n\n{words}", reply_markup=keyboard, parse_mode="HTML")
     except Exception as e:
-        logging.warning(f"[dialogue_add_words] Ошибка: {e}")
+        logging.exception(f"[dialogue_add_words] Ошибка: {e}")
         await callback.message.answer("❌ Не удалось обработать диалог.")
 
 @dp.callback_query(F.data == "dialogue_add_confirm")
@@ -1317,7 +1337,7 @@ async def handle_learn_more(callback: CallbackQuery):
         await callback.message.answer(f"<b>📘 Дополнительные темы для уровня {level}</b>\n\n{text}", reply_markup=keyboard, parse_mode="HTML")
     except Exception as e:
         await callback.message.answer("❌ Не удалось сгенерировать дополнительные темы.")
-        logging.warning(f"[learn_more:{level}] Ошибка Gemini: {e}")
+        logging.exception(f"[learn_more:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data.startswith("voice_material:"))
 async def handle_voice_material(callback: CallbackQuery):
@@ -1373,7 +1393,7 @@ async def handle_quiz_for_topic(callback: CallbackQuery):
 
     except Exception as e:
         await callback.message.answer("❌ Ошибка при генерации теста.")
-        logging.warning(f"[quiz_for:{level}] Ошибка Gemini: {e}")
+        logging.exception(f"[quiz_for:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "learn_quiz")
 async def handle_quiz_menu(callback: CallbackQuery):
@@ -1435,7 +1455,7 @@ async def handle_quiz_level(callback: CallbackQuery):
 
     except Exception as e:
         await callback.message.edit_text("❌ Ошибка при генерации квиза.")
-        logging.warning(f"[quiz_level:{level}] Ошибка Gemini: {e}")
+        logging.exception(f"[quiz_level:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data.startswith("quiz_answer:"))
 async def handle_quiz_answer(callback: CallbackQuery):
@@ -1531,7 +1551,7 @@ async def handle_add_word_input(message: Message, state: FSMContext):
             reply_markup=keyboard
         )
     except Exception as e:
-        logging.warning(f"[VOCAB_ADD_INTERFACE] Ошибка: {e}")
+        logging.exception(f"[VOCAB_ADD_INTERFACE] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово.")
         await state.clear()
 
@@ -1590,7 +1610,7 @@ async def handle_word_of_the_day(callback: CallbackQuery):
                 save_word_of_day_history(user_word_of_day_history)
                 break
         except Exception as e:
-            logging.warning(f"[WORD_OF_DAY_ATTEMPT] Ошибка: {e}")
+            logging.exception(f"[WORD_OF_DAY_ATTEMPT] Ошибка: {e}")
             continue
 
     if not word:
@@ -1991,7 +2011,7 @@ async def handle_grammar(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         await callback.message.edit_text("❌ Не удалось сгенерировать упражнение.")
-        logging.warning(f"[GRAMMAR FSM] Ошибка: {e}")
+        logging.exception(f"[GRAMMAR FSM] Ошибка: {e}")
 
 @dp.message(GrammarExercise.waiting_for_answer)
 async def check_grammar_answer(message: Message, state: FSMContext):
@@ -2315,7 +2335,7 @@ async def edit_reminder_time(message: Message, state: FSMContext):
         save_reminders()
         await message.answer(f"✅ Напоминание обновлено: <b>{new_text}</b> — <code>{dt_local.strftime('%d.%m.%Y %H:%M')}</code> ({tz_str})")
     except Exception as e:
-        logging.warning(f"[REMINDER_EDIT] Ошибка: {e}")
+        logging.exception(f"[REMINDER_EDIT] Ошибка: {e}")
         await message.answer("❌ Не удалось обновить напоминание.")
     await state.clear()
 
@@ -2443,7 +2463,7 @@ async def process_reminder_text(message: Message, state: FSMContext):
         dt_localized = local_tz.localize(dt_local)
         dt_utc = dt_localized.astimezone(pytz.utc)
     except Exception as e:
-        logging.warning(f"[FSM] Ошибка при преобразовании даты: {e}")
+        logging.exception(f"[FSM] Ошибка при преобразовании даты: {e}")
         await message.answer("❌ Не удалось определить время. Убедись, что всё введено корректно.")
         await state.clear()
         return
@@ -2486,7 +2506,7 @@ async def handle_reminder(message: Message):
         save_reminders()
         await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
     except Exception as e:
-        logging.warning(f"[DELAYED_REMINDER] Ошибка: {e}")
+        logging.exception(f"[DELAYED_REMINDER] Ошибка: {e}")
         await message.answer("❌ Не удалось установить напоминание.")
 
 @dp.message(F.text.lower().startswith("добавь слово:"))
@@ -2522,7 +2542,7 @@ async def handle_add_vocab(message: Message):
         save_vocab(user_vocab)
         await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.")
     except Exception as e:
-        logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
+        logging.exception(f"[VOCAB_ADD] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово.")
 
 @dp.message(F.text == "📝 Мои заметки")
@@ -2584,7 +2604,7 @@ async def handle_vocab_word_input(message: Message, state: FSMContext):
             f"<b>Значение:</b> {meaning}\n<i>{example}</i>"
         )
     except Exception as e:
-        logging.warning(f"[VOCAB_ADD] Ошибка: {e}")
+        logging.exception(f"[VOCAB_ADD] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово. Попробуй позже.")
 
 # ★ Изменена функция show_notes – если нет заметок, всегда отправляем сообщение
@@ -2733,7 +2753,7 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                     )
                     
             except Exception as e:
-                logging.warning(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
+                logging.exception(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
     # Если пользователь только что нажал кнопку "Написать в поддержку"
@@ -2766,10 +2786,10 @@ async def handle_all_messages_impl(message: Message, user_input: str):
                         support_reply_map[(sent_msg.chat.id, sent_msg.message_id)] = uid
                         save_support_map()
                     except Exception as e:
-                        logging.warning(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
+                        logging.exception(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
             await message.answer("Сообщение отправлено в поддержку.")
         except Exception as e:
-            logging.warning(f"[BOT] Ошибка при пересылке в поддержку: {e}")
+            logging.exception(f"[BOT] Ошибка при пересылке в поддержку: {e}")
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
         return
 
@@ -3051,15 +3071,15 @@ async def get_unsplash_image_url(prompt: str, access_key: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    logging.warning(f"Unsplash returned status {response.status} for prompt '{prompt}'")
+                    logging.exception(f"Unsplash returned status {response.status} for prompt '{prompt}'")
                     return None
                 data = await response.json()
                 if "urls" not in data or "regular" not in data["urls"]:
-                    logging.warning(f"No 'regular' URL in response for '{prompt}': {data}")
+                    logging.exception(f"No 'regular' URL in response for '{prompt}': {data}")
                     return None
                 return data["urls"]["regular"]
     except Exception as e:
-        logging.warning(f"Ошибка при получении изображения: {e}")
+        logging.exception(f"Ошибка при получении изображения: {e}")
     return None
 
 def fallback_translate_to_english(rus_word: str) -> str:
@@ -3076,7 +3096,7 @@ def fallback_translate_to_english(rus_word: str) -> str:
         )
         return response.translations[0].translated_text
     except Exception as e:
-        logging.warning(f"Ошибка при переводе слова '{rus_word}': {e}")
+        logging.exception(f"Ошибка при переводе слова '{rus_word}': {e}")
         return rus_word
 
 async def generate_short_caption(rus_word: str) -> str:
@@ -3244,7 +3264,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         resp = await model.generate_content_async(conversation)
         if not resp.candidates:
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-            logging.warning(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
+            logging.exception(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
             gemini_text = f"⚠️ Запрос отклонён. Возможная причина: <b>{reason}</b>.\nПопробуйте переформулировать запрос."
         else:
             raw_model_text = resp.text
@@ -3289,7 +3309,7 @@ async def vocab_reminder_loop():
                         )
                         break  # только одно напоминание за цикл
                     except Exception as e:
-                        logging.warning(f"[VOCAB_REMINDER] Ошибка при отправке: {e}")
+                        logging.exception(f"[VOCAB_REMINDER] Ошибка при отправке: {e}")
                     break
         await asyncio.sleep(3600)  # проверяем раз в час
 
@@ -3319,7 +3339,7 @@ async def reminder_loop():
                 else:
                     await bot.send_message(user_id, f"🔔 Напоминание!\n{text}")
             except Exception as e:
-                logging.warning(f"[REMINDER] Не удалось отправить напоминание: {e}")
+                logging.exception(f"[REMINDER] Не удалось отправить напоминание: {e}")
 
         
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
