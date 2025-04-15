@@ -1219,7 +1219,7 @@ async def handle_learn_level(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
     except Exception as e:
-        await callback.message.edit_text("❌ Ошибка при генерации курса.")
+        await callback.message.edit_text("❌ Ошибка при генерации курса.", parse_mode="HTML")
         logging.exception(f"[learn_level:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "dialogue_voice")
