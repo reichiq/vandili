@@ -2108,17 +2108,18 @@ async def handle_formula_image(message: Message):
     try:
         photo = message.photo[-1]
         file = await bot.download(photo)
-        img = Image.open(file)
+        img = Image.open(file).convert("RGB")
 
+        # Вызываем вашу функцию распознавания
         latex = latex_ocr(img).strip()
         if not latex or len(latex) < 3:
             await message.answer("❌ Не удалось распознать формулу.")
             return
 
-        # Сохраняем формулу для будущего вопроса
+        # Сохраняем распознанную формулу для использования при последующих вопросах
         user_images_text[message.from_user.id] = latex
 
-        # Визуализируем
+        # Визуализируем результат – создаём изображение с формулой
         fig, ax = plt.subplots(figsize=(5, 1.5))
         ax.text(0.5, 0.5, f"${latex}$", fontsize=20, ha='center', va='center')
         ax.axis('off')
