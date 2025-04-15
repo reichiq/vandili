@@ -9,6 +9,9 @@ import aiohttp
 import dateparser
 import pytz
 import requests
+from PIL import Image
+from aiogram.types import BufferedInputFile
+from latex_ocr import LatexOCR
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
@@ -436,7 +439,8 @@ quiz_storage = {}
 user_progress = load_progress()
 user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
-
+latex_ocr = LatexOCR()
+user_images_text = {}
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = "disabled_chats.json"
 
@@ -2088,6 +2092,37 @@ async def handle_timezone_setting(message: Message):
             })
         )
 
+@dp.message(F.photo)
+async def handle_formula_image(message: Message):
+    _register_message_stats(message)
+
+    try:
+        photo = message.photo[-1]
+        file = await bot.download(photo)
+        img = Image.open(file)
+
+        latex = latex_ocr(img).strip()
+        if not latex or len(latex) < 3:
+            await message.answer("❌ Не удалось распознать формулу.")
+            return
+
+        user_images_text[message.from_user.id] = latex
+
+        fig, ax = plt.subplots(figsize=(5, 1.5))
+        ax.text(0.5, 0.5, f"${latex}$", fontsize=20, ha='center', va='center')
+        ax.axis('off')
+        buf = BytesIO()
+        plt.savefig(buf, format="png", bbox_inches='tight')
+        buf.seek(0)
+
+        await message.answer_photo(
+            BufferedInputFile(buf.getvalue(), filename="formula.png"),
+            caption="📐 Формула считана. Задай вопрос по картинке."
+        )
+
+    except Exception as e:
+        await message.answer("❌ Произошла ошибка при обработке изображения.")
+
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
     _register_message_stats(message)
@@ -3136,6 +3171,18 @@ def parse_russian_show_request(user_text: str):
 async def handle_msg(message: Message, recognized_text: str = None, voice_response_requested: bool = False):
     cid = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
+
+    uid = message.from_user.id
+    if uid in user_images_text:
+        latex = user_images_text.pop(uid)  # убираем сразу после использования
+        prompt = f"Вот формула:\n\n\\[\n{latex}\n\\]\n\nТеперь задай вопрос:\n{user_input}\n\nОтветь на основе этой формулы."
+
+        try:
+            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            await message.answer(response.text.strip())
+        except Exception:
+            await message.answer("❌ Ошибка при попытке ответа.")
+        return  # не продолжаем дальше, уже ответили
 
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
