@@ -1,3 +1,5 @@
+import sys
+sys.path.append("/root/vandili/LaTeX-OCR")
 # latexocr_minimal.py
 import cv2
 import numpy as np
