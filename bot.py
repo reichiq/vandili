@@ -38,6 +38,7 @@ import json
 import speech_recognition as sr
 from pydub import AudioSegment
 from collections import defaultdict
+dialogue_stats = defaultdict(int)
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 # ★ Добавляем хранилище для FSM
