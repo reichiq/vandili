@@ -1091,55 +1091,42 @@ async def cmd_learn_en(message: Message):
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
 
-@dp.callback_query(F.data.in_({"learn_back", "learn_toggle_reminders", "learn_dialogues", "learn_course"}))
-async def handle_learn_menu(callback: CallbackQuery):
-    data = callback.data
+@dp.callback_query(F.data == "learn_back")
+async def handle_learn_back(callback: CallbackQuery):
     await callback.answer()
+    await callback.message.delete()
+    await cmd_learn_en(callback.message)
 
-    if data == "learn_back":
-        await callback.message.delete()
-        await cmd_learn_en(callback.message)
-        return
-    elif data == "learn_toggle_reminders":
-        uid = callback.from_user.id
-        current = vocab_reminders_enabled.get(str(uid), True)
-        vocab_reminders_enabled[str(uid)] = not current
-        save_vocab_reminder_settings()
-        status = "включены ✅" if not current else "отключены ❌"
-        await callback.answer(f"Напоминания теперь {status}", show_alert=True)
-        await callback.message.delete()
-        await cmd_learn_en(callback.message)
-        return
+@dp.callback_query(F.data == "learn_toggle_reminders")
+async def handle_toggle_reminders(callback: CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    current = vocab_reminders_enabled.get(str(uid), True)
+    vocab_reminders_enabled[str(uid)] = not current
+    save_vocab_reminder_settings()
+    status = "включены ✅" if not current else "отключены ❌"
+    await callback.answer(f"Напоминания теперь {status}", show_alert=True)
+    await callback.message.delete()
+    await cmd_learn_en(callback.message)
 
 @dp.callback_query(F.data == "learn_close")
 async def handle_learn_close(callback: CallbackQuery):
     await callback.answer()
     await callback.message.delete()
 
+@dp.callback_query(F.data == "learn_dialogues")
+async def handle_learn_dialogues(callback: CallbackQuery):
+    await callback.answer()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👋 Small Talk", callback_data="dialogue_topic:Small Talk")],
+        [InlineKeyboardButton(text="🛫 Аэропорт", callback_data="dialogue_topic:Airport")],
+        [InlineKeyboardButton(text="☕ Кафе", callback_data="dialogue_topic:Cafe")],
+        [InlineKeyboardButton(text="🏨 Отель", callback_data="dialogue_topic:Hotel")],
+        [InlineKeyboardButton(text="🧑‍⚕️ У врача", callback_data="dialogue_topic:Doctor")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
 
-    if callback.data == "learn_dialogues":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👋 Small Talk", callback_data="dialogue_topic:Small Talk")],
-            [InlineKeyboardButton(text="🛫 Аэропорт", callback_data="dialogue_topic:Airport")],
-            [InlineKeyboardButton(text="☕ Кафе", callback_data="dialogue_topic:Cafe")],
-            [InlineKeyboardButton(text="🏨 Отель", callback_data="dialogue_topic:Hotel")],
-            [InlineKeyboardButton(text="🧑\u200d⚕️ У врача", callback_data="dialogue_topic:Doctor")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
-        await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
-        return
-
-    elif data == "learn_course":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
-            [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
-            [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
-            [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
-            [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
-        await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
-        return
 
 @dp.callback_query(F.data == "review_menu")
 async def show_review_mode(callback: CallbackQuery):
@@ -1187,6 +1174,20 @@ async def generate_dialogue(callback: CallbackQuery):
     except Exception as e:
         logging.exception(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
         await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
+
+@dp.callback_query(F.data == "learn_course")
+async def handle_learn_course(callback: CallbackQuery):
+    await callback.answer()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📘 A1", callback_data="learn_level:A1")],
+        [InlineKeyboardButton(text="📗 A2", callback_data="learn_level:A2")],
+        [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
+        [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
+        [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
+
 
 @dp.callback_query(F.data.startswith("learn_level:"))
 async def handle_learn_level(callback: CallbackQuery):
@@ -1510,15 +1511,15 @@ async def handle_quiz_answer(callback: CallbackQuery):
 async def handle_learn_progress(callback: CallbackQuery):
     await callback.answer()
     uid = callback.from_user.id
-    user_progress = user_progress.get(uid, {})
+    progress_data = user_progress.get(uid, {})
 
-    if not user_progress:
+    if not progress_data:
         await callback.message.edit_text("📊 У тебя пока нет прогресса. Пройди пару квизов и возвращайся!")
         return
+        text = "<b>📈 Твой прогресс по уровням:</b>\n"
+        for level, correct_count in progress_data.items():
+            text += f"• {level}: <b>{correct_count}</b> правильных ответов\n"
 
-    text = "<b>📈 Твой прогресс по уровням:</b>\n"
-    for level, correct_count in user_progress.items():
-        text += f"• {level}: <b>{correct_count}</b> правильных ответов\n"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
