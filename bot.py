@@ -1210,6 +1210,7 @@ async def handle_learn_level(callback: CallbackQuery):
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         text = format_gemini_response(response.text.strip())
+        text = unescape(text)
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
