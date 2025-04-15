@@ -2134,7 +2134,7 @@ async def handle_formula_image(message: Message):
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        print(f"[ERROR handle_formula_image]: {e}\n{tb}")
+        logging.exception("❌ Ошибка в handle_formula_image")
         await message.answer("❌ Произошла ошибка при обработке изображения.")
 
 @dp.message(lambda message: message.voice is not None)
