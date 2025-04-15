@@ -11,8 +11,7 @@ import pytz
 import requests
 from PIL import Image
 from PIL import ImageOps, ImageFilter
-from pix2tex.cli import LatexOCR
-ocr_model = LatexOCR()
+from latexocr_wrapper import latex_ocr
 from aiogram.types import BufferedInputFile
 from datetime import datetime
 from google.cloud import texttospeech
