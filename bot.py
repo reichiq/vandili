@@ -65,6 +65,16 @@ class VocabReview(StatesGroup):
     reviewing = State()
 
 
+def recognize_formula_from_image(image_path: str) -> str:
+    """
+    Распознаёт LaTeX-формулу с изображения.
+    """
+    try:
+        img = Image.open(image_path).convert("RGB")
+        return latex_ocr(img)
+    except Exception as e:
+        return f"Ошибка при распознавании формулы: {e}"
+
 def clean_for_tts(text: str) -> str:
     """
     Удаляет HTML-теги и заменяет спецсимволы (например, &nbsp; → пробел) для озвучки.
