@@ -122,6 +122,13 @@ PROGRESS_FILE = "progress.json"
 VOCAB_FILE = "vocab.json"
 WORD_OF_DAY_HISTORY_FILE = "word_of_day_per_user.json"
 REVIEW_STATS_FILE = "review_stats.json"
+ACHIEVEMENTS_FILE = "achievements.json"
+
+if os.path.exists(ACHIEVEMENTS_FILE):
+    with open(ACHIEVEMENTS_FILE, "r", encoding="utf-8") as f:
+        user_achievements = json.load(f)
+else:
+    user_achievements = {}
 
 if os.path.exists(REVIEW_STATS_FILE):
     with open(REVIEW_STATS_FILE, "r", encoding="utf-8") as f:
@@ -267,6 +274,38 @@ def save_progress(progress: dict):
             json.dump(progress, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.warning(f"[BOT] Не удалось сохранить progress.json: {e}")
+
+def save_achievements():
+    with open(ACHIEVEMENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_achievements, f, ensure_ascii=False, indent=2)
+
+async def check_achievements(user_id: int, message_target):
+    uid = str(user_id)
+    achieved = user_achievements.get(uid, [])
+    new_achievements = []
+
+    total_words = len(user_vocab.get(user_id, []))
+    reviewed_5 = sum(1 for e in user_vocab.get(user_id, []) if e.get("review_level", 0) >= 5)
+    correct = review_stats.get(uid, {}).get("correct", 0)
+    dialog_words = dialogue_stats.get(uid, 0)
+
+    if total_words >= 10 and "📘 10 слов добавлено" not in achieved:
+        new_achievements.append("📘 10 слов добавлено")
+    if reviewed_5 >= 3 and "🎓 3 слова выучено" not in achieved:
+        new_achievements.append("🎓 3 слова выучено")
+    if correct >= 10 and "🧠 10 правильных ответов" not in achieved:
+        new_achievements.append("🧠 10 правильных ответов")
+    if dialog_words >= 5 and "🗣 5 слов из диалогов" not in achieved:
+        new_achievements.append("🗣 5 слов из диалогов")
+
+    if new_achievements:
+        achieved.extend(new_achievements)
+        user_achievements[uid] = achieved
+        save_achievements()
+        await message_target.answer(
+            f"🏆 Новое достижение:\n" + "\n".join(f"• {a}" for a in new_achievements),
+            show_alert=True
+        )
 
 def load_vocab() -> dict[int, list[dict]]:
     if not os.path.exists(VOCAB_FILE):
@@ -1008,6 +1047,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="➕ Добавить слово", callback_data="learn_add_word")],
         [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="learn_review")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
+        [InlineKeyboardButton(text="🏆 Достижения", callback_data="learn_achievements")],
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="learn_close")]
     ])
@@ -1146,6 +1186,23 @@ async def handle_dialogue_voice(callback: CallbackQuery):
 
     await send_voice_message(callback.message.chat.id, clean_for_tts(text))
 
+@dp.callback_query(F.data == "learn_achievements")
+async def show_achievements(callback: CallbackQuery):
+    uid = str(callback.from_user.id)
+    await callback.answer()
+
+    achievements = user_achievements.get(uid, [])
+
+    if achievements:
+        text = "<b>🏆 Твои достижения:</b>\n\n" + "\n".join(f"• {a}" for a in achievements)
+    else:
+        text = "😶 Пока нет достижений. Всё впереди!"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
 @dp.callback_query(F.data == "dialogue_add_words")
 async def handle_dialogue_add_words(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -1204,6 +1261,7 @@ async def handle_dialogue_add_confirm(callback: CallbackQuery, state: FSMContext
         count += 1
 
     save_vocab(user_vocab)
+    await check_achievements(uid, callback)
     await callback.message.edit_text(f"✅ Добавлено слов: <b>{count}</b>", parse_mode="HTML")
     await state.clear()
 
@@ -1675,6 +1733,7 @@ async def review_remember(callback: CallbackQuery, state: FSMContext):
     user_stats["correct"] += 1
     review_stats[uid_str] = user_stats
     save_review_stats()
+    await check_achievements(uid, callback)
 
 
     data = await state.get_data()
@@ -1759,19 +1818,6 @@ async def handle_vocab_stats(callback: CallbackQuery):
         stats_text += f"\n⏰ Следующее повторение через <b>{in_minutes} мин</b>"
     else:
         stats_text += "\n✅ Все слова готовы к повторению!"
-        achievements = []
-        reviewed_5 = sum(1 for e in vocab if e.get("review_level", 0) >= 5)
-        avg_level = sum(e.get("review_level", 0) for e in vocab) / total
-        if total >= 5:
-            achievements.append("🏅 Добавлено 5+ слов")
-        if reviewed_5 >= 3:
-            achievements.append("🎓 3 слова выучено")
-        if avg_level >= 3:
-            achievements.append("📘 Средний уровень 3+")
-        if achievements:
-            stats_text += "\n\n🎖 <b>Достижения:</b>\n" + "\n".join(achievements)
-        else:
-            stats_text += "\n\n🕵️ Пока нет достижений... Всё впереди!"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
