@@ -56,6 +56,8 @@ class VocabEdit(StatesGroup):
     waiting_for_new_value = State()
 class GrammarExercise(StatesGroup):
     waiting_for_answer = State()
+class VocabReview(StatesGroup):
+    reviewing = State()
 
 
 def clean_for_tts(text: str) -> str:
@@ -119,6 +121,13 @@ TIMEZONES_FILE = "timezones.json"
 PROGRESS_FILE = "progress.json"
 VOCAB_FILE = "vocab.json"
 WORD_OF_DAY_HISTORY_FILE = "word_of_day_per_user.json"
+REVIEW_STATS_FILE = "review_stats.json"
+
+if os.path.exists(REVIEW_STATS_FILE):
+    with open(REVIEW_STATS_FILE, "r", encoding="utf-8") as f:
+        review_stats = json.load(f)
+else:
+    review_stats = {}
 
 def load_timezones() -> dict:
     if not os.path.exists(TIMEZONES_FILE):
@@ -276,6 +285,10 @@ def save_vocab(vocab: dict[int, list[dict]]):
             json.dump(vocab, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.warning(f"[BOT] Не удалось сохранить vocab: {e}")
+
+def save_review_stats():
+    with open(REVIEW_STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(review_stats, f, ensure_ascii=False, indent=2)
 
 def load_word_of_day_history() -> dict[int, list[str]]:
     if not os.path.exists(WORD_OF_DAY_HISTORY_FILE):
@@ -1355,29 +1368,30 @@ async def handle_add_word_input(message: Message, state: FSMContext):
         "Значение: ...\nПример: ..."
     )
 
-    await message.answer("🔄 Обрабатываю слово...")
+    await message.answer("🔄 Генерирую перевод и пример...")
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         raw = response.text.strip().split("\n")
         meaning = raw[0].replace("Значение:", "").strip()
         example = raw[1].replace("Пример:", "").strip()
 
-        entry = {
-            "word": word_raw,
-            "meaning": meaning,
-            "example": example,
-            "last_reviewed": datetime.utcnow().isoformat(),
-            "review_level": 0
-        }
+        await state.update_data(word=word_raw, meaning=meaning, example=example)
 
-        user_vocab.setdefault(uid, []).append(entry)
-        save_vocab(user_vocab)
-
-        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Добавить", callback_data="confirm_add_word"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_add_word"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add_word")
+            ]
+        ])
+        await message.answer(
+            f"<b>Слово:</b> {word_raw}\n<b>Значение:</b> {meaning}\n<b>Пример:</b> {example}",
+            reply_markup=keyboard
+        )
     except Exception as e:
         logging.warning(f"[VOCAB_ADD_INTERFACE] Ошибка: {e}")
         await message.answer("❌ Не удалось добавить слово.")
-    await state.clear()
+        await state.clear()
 
 @dp.callback_query(F.data == "progress_reset")
 async def handle_progress_reset(callback: CallbackQuery):
@@ -1482,11 +1496,12 @@ async def handle_vocab(callback: CallbackQuery):
 
         review_level = entry.get("review_level", 0)
         progress = "🔹" * review_level + "⚪" * (5 - review_level)
+        progress_percent = int((review_level / 5) * 100)
         text = (
             f"<b>{i+1}. {word}</b> — {meaning}\n"
             f"<i>{example}</i>\n"
             f"📅 Последнее повторение: <code>{date_str}</code>\n"
-            f"📊 Уровень: {progress}"
+            f"📊 Уровень: {progress_percent}% {progress}"
         )
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1513,50 +1528,123 @@ async def ask_add_vocab(callback: CallbackQuery):
     await bot.send_message(uid, "✍️ Введи английское слово, которое хочешь добавить в словарь.")
 
 @dp.callback_query(F.data == "learn_review")
-async def handle_vocab_review(callback: CallbackQuery):
+async def handle_vocab_review(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
-    # Проверяем, включены ли напоминания
+
     if not vocab_reminders_enabled.get(str(uid), True):
         await callback.message.edit_text("🔕 У тебя отключены напоминания для слов. Включи их, чтобы повторять слова.")
         return
+    
     await callback.answer()
+    await callback.message.delete()
 
     vocab = user_vocab.get(uid, [])
     if not vocab:
         await callback.message.edit_text("📓 В твоём словаре пока нет слов для повторения.")
         return
 
-    # Фильтруем слова, которые пора повторять
     now = datetime.utcnow()
     due_words = []
-    for entry in vocab:
+    for i, entry in enumerate(vocab):
         last = datetime.fromisoformat(entry.get("last_reviewed", now.isoformat()))
         level = entry.get("review_level", 0)
         interval_days = [0, 1, 2, 4, 7, 14, 30]
         interval = interval_days[min(level, len(interval_days) - 1)]
         if (now - last).days >= interval:
-            due_words.append(entry)
+            due_words.append((i, entry))
 
     if not due_words:
         await callback.message.edit_text("✅ У тебя нет слов, которые нужно повторить прямо сейчас.")
         return
 
-    # Берём первое слово на повтор
-    word = due_words[0]
-    user_vocab[uid].remove(word)
-    user_vocab[uid].insert(0, word)  # чтобы знать, какое сейчас в ревью
+    await state.update_data(queue=due_words, index=0)
+    await state.set_state(VocabReview.reviewing)
+    await send_next_review_word(callback.message.chat.id, state)
+
+async def send_next_review_word(uid: int, state: FSMContext):
+    data = await state.get_data()
+    queue = data.get("queue", [])
+    index = data.get("index", 0)
+
+    if index >= len(queue):
+        await bot.send_message(uid, "✅ Все слова повторены!")
+        await state.clear()
+        return
+
+    i, entry = queue[index]
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Помню", callback_data="review_remember"),
-            InlineKeyboardButton(text="❌ Не помню", callback_data="review_forget")
-        ]
-    ])
-    await callback.message.edit_text(
-        f"<b>{word['word']}</b> — {word['meaning']}\n\n"
-        f"<i>{word['example']}</i>",
-        reply_markup=keyboard
+    [
+        InlineKeyboardButton(text="✅ Помню", callback_data=f"review_remember:{i}"),
+        InlineKeyboardButton(text="❌ Не помню", callback_data=f"review_forget:{i}")
+    ],
+    [
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data="review_skip"),
+        InlineKeyboardButton(text="⏹ Стоп", callback_data="review_stop")
+    ]
+])
+
+    await bot.send_message(
+        uid,
+        f"<b>{entry['word']}</b> — {entry['meaning']}\n\n<i>{entry['example']}</i>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
     )
+
+@dp.callback_query(F.data.startswith("review_remember:"))
+async def review_remember(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    i = int(callback.data.split(":")[1])
+    user_vocab[uid][i]["review_level"] = min(user_vocab[uid][i].get("review_level", 0) + 1, 5)
+    user_vocab[uid][i]["last_reviewed"] = datetime.utcnow().isoformat()
+    save_vocab(user_vocab)
+
+    uid_str = str(uid)
+    user_stats = review_stats.get(uid_str, {"correct": 0, "wrong": 0})
+    user_stats["correct"] += 1
+    review_stats[uid_str] = user_stats
+    save_review_stats()
+
+
+    data = await state.get_data()
+    data["index"] += 1
+    await state.update_data(data)
+    await callback.answer("✅ Отлично!")
+    await send_next_review_word(uid, state)
+
+@dp.callback_query(F.data.startswith("review_forget:"))
+async def review_forget(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    i = int(callback.data.split(":")[1])
+    user_vocab[uid][i]["review_level"] = max(user_vocab[uid][i].get("review_level", 0) - 1, 0)
+    user_vocab[uid][i]["last_reviewed"] = datetime.utcnow().isoformat()
+    save_vocab(user_vocab)
+
+    uid_str = str(uid)
+    user_stats = review_stats.get(uid_str, {"correct": 0, "wrong": 0})
+    user_stats["wrong"] += 1
+    review_stats[uid_str] = user_stats
+    save_review_stats()
+
+    data = await state.get_data()
+    data["index"] += 1
+    await state.update_data(data)
+    await callback.answer("🔁 Запомнишь в следующий раз!")
+    await send_next_review_word(uid, state)
+
+@dp.callback_query(F.data == "review_skip")
+async def review_skip(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    data["index"] += 1
+    await state.update_data(data)
+    await callback.answer("⏭ Пропущено")
+    await send_next_review_word(callback.from_user.id, state)
+
+@dp.callback_query(F.data == "review_stop")
+async def review_stop(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("⏹ Повторение остановлено")
+    await callback.message.edit_text("🔕 Повторение остановлено.")
 
 @dp.callback_query(F.data == "learn_vocab_stats")
 async def handle_vocab_stats(callback: CallbackQuery):
@@ -1598,11 +1686,50 @@ async def handle_vocab_stats(callback: CallbackQuery):
         stats_text += f"\n⏰ Следующее повторение через <b>{in_minutes} мин</b>"
     else:
         stats_text += "\n✅ Все слова готовы к повторению!"
+        achievements = []
+        reviewed_5 = sum(1 for e in vocab if e.get("review_level", 0) >= 5)
+        avg_level = sum(e.get("review_level", 0) for e in vocab) / total
+        if total >= 5:
+            achievements.append("🏅 Добавлено 5+ слов")
+        if reviewed_5 >= 3:
+            achievements.append("🎓 3 слова выучено")
+        if avg_level >= 3:
+            achievements.append("📘 Средний уровень 3+")
+        if achievements:
+            stats_text += "\n\n🎖 <b>Достижения:</b>\n" + "\n".join(achievements)
+        else:
+            stats_text += "\n\n🕵️ Пока нет достижений... Всё впереди!"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await callback.message.edit_text(stats_text.strip(), reply_markup=keyboard, parse_mode="HTML")
+
+@dp.callback_query(F.data == "confirm_add_word")
+async def confirm_add_word(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    data = await state.get_data()
+    entry = {
+        "word": data["word"],
+        "meaning": data["meaning"],
+        "example": data["example"],
+        "last_reviewed": datetime.utcnow().isoformat(),
+        "review_level": 0
+    }
+    user_vocab.setdefault(uid, []).append(entry)
+    save_vocab(user_vocab)
+    await callback.message.edit_text(f"✅ Слово <b>{data['word']}</b> добавлено в твой словарь.")
+    await state.clear()
+
+@dp.callback_query(F.data == "edit_add_word")
+async def edit_add_word(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("✍️ Введи новое слово на английском:")
+    await state.set_state(VocabAdd.waiting_for_word)
+
+@dp.callback_query(F.data == "cancel_add_word")
+async def cancel_add_word(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("🚫 Добавление слова отменено.")
+    await state.clear()
 
  
 @dp.callback_query(F.data == "vocab_close")
