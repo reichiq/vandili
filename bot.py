@@ -11,7 +11,7 @@ import pytz
 import requests
 from PIL import Image
 from aiogram.types import BufferedInputFile
-from latex_ocr import LatexOCR
+from pix2tex.cli import LatexOCR
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
