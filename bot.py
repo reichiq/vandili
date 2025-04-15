@@ -853,16 +853,22 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
             return "\n".join(forecast_lines)
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str):
+async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
     client = texttospeech.TextToSpeechClient()
 
-    clean_text = clean_for_tts(text)  # 💥 вот эта строка — очищаем HTML
+    clean_text = clean_for_tts(text)  # 🧼 удаляем HTML и лишнее
 
     synthesis_input = texttospeech.SynthesisInput(text=clean_text)
 
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="ru-RU", name="ru-RU-Wavenet-C"
-    )
+    # 🔊 Подбираем голос под язык
+    if lang == "ru-RU":
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ru-RU", name="ru-RU-Wavenet-C"
+        )
+    else:
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=lang, name="en-US-Wavenet-D"  # 👈 можешь заменить на другой
+        )
 
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
@@ -879,6 +885,54 @@ async def send_voice_message(chat_id: int, text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename="voice.ogg"))
     os.remove(out_path)
 
+from pydub import AudioSegment
+import re
+
+VOICE_MAP = {
+    "en": {"lang": "en-US", "name": "en-US-Wavenet-D"},
+    "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
+}
+
+def detect_lang(text: str) -> str:
+    return "ru" if re.search(r'[а-яА-Я]', text) else "en"
+
+async def generate_voice_snippet(text: str, lang_code: str) -> str:
+    client = texttospeech.TextToSpeechClient()
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=VOICE_MAP[lang_code]["lang"],
+        name=VOICE_MAP[lang_code]["name"],
+    )
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.OGG_OPUS)
+
+    response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out_file:
+        out_file.write(response.audio_content)
+        return out_file.name
+
+async def send_bilingual_voice(chat_id: int, dialogue_text: str):
+    audio_segments = []
+
+    for line in dialogue_text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        lang = detect_lang(line)
+        ogg_path = await generate_voice_snippet(line, lang)
+
+        segment = AudioSegment.from_file(ogg_path, format="ogg")
+        audio_segments.append(segment)
+        os.remove(ogg_path)
+
+    final_audio = sum(audio_segments[1:], audio_segments[0])
+    final_path = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg").name
+    final_audio.export(final_path, format="ogg")
+
+    await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg"))
+    os.remove(final_path)
+
+    
 # ---------------------- Вспомогательная функция для thread ---------------------- #
 def thread(message: Message) -> dict:
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
@@ -1115,7 +1169,7 @@ async def handle_learn_close(callback: CallbackQuery):
     await callback.message.delete()
 
 @dp.callback_query(F.data == "learn_dialogues")
-async def handle_learn_dialogues(callback: CallbackQuery):
+async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👋 Small Talk", callback_data="dialogue_topic:Small Talk")],
@@ -1123,6 +1177,14 @@ async def handle_learn_dialogues(callback: CallbackQuery):
         [InlineKeyboardButton(text="☕ Кафе", callback_data="dialogue_topic:Cafe")],
         [InlineKeyboardButton(text="🏨 Отель", callback_data="dialogue_topic:Hotel")],
         [InlineKeyboardButton(text="🧑‍⚕️ У врача", callback_data="dialogue_topic:Doctor")],
+        [InlineKeyboardButton(text="🛍️ Покупки", callback_data="dialogue_topic:Shopping")],
+        [InlineKeyboardButton(text="🚕 Такси", callback_data="dialogue_topic:Taxi")],
+        [InlineKeyboardButton(text="📞 Телефонный звонок", callback_data="dialogue_topic:Phone Call")],
+        [InlineKeyboardButton(text="👨‍🏫 На уроке", callback_data="dialogue_topic:In Class")],
+        [InlineKeyboardButton(text="📅 Назначение встречи", callback_data="dialogue_topic:Making an Appointment")],
+        [InlineKeyboardButton(text="🧭 Спросить дорогу", callback_data="dialogue_topic:Asking for Directions")],
+        [InlineKeyboardButton(text="💼 Интервью", callback_data="dialogue_topic:Job Interview")],
+        [InlineKeyboardButton(text="🏦 В банке", callback_data="dialogue_topic:Bank")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
@@ -1139,15 +1201,21 @@ async def show_review_mode(callback: CallbackQuery):
     await callback.message.edit_text("🧠 Выбери режим повторения:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
-async def generate_dialogue(callback: CallbackQuery):
+async def generate_dialogue(callback: CallbackQuery, state: FSMContext):
     topic = callback.data.split(":")[1]
     await callback.answer(f"Генерирую диалог по теме: {topic}...")
 
     prompt = (
-        f"Сгенерируй диалог на английском языке по теме '{topic}'. "
-        "Сделай 4–6 реплик между двумя людьми (A и B). "
-        "После каждой реплики добавь её перевод на русский. Формат:\n\n"
-        "A: Hello!\nA (перевод): Привет!\nB: Hi!\nB (перевод): Привет!\n..."
+        f"Ты — профессиональный преподаватель английского языка. "
+        f"Сгенерируй короткий, но естественный диалог на английском языке по теме «{topic}».\n"
+        "Диалог должен содержать 4–6 реплик между двумя людьми (A и B).\n"
+        "После каждой реплики добавь строку с её переводом на русский (в формате: A (перевод): ...).\n"
+        "Используй естественные фразы, подходящие к ситуации. Не пиши лишнего текста вне диалога.\n"
+        "Пример формата:\n\n"
+        "A: Hi, where can I find the nearest ATM?\n"
+        "A (перевод): Привет, где я могу найти ближайший банкомат?\n"
+        "B: Just around the corner, next to the pharmacy.\n"
+        "B (перевод): Сразу за углом, рядом с аптекой.\n"
     )
 
     try:
@@ -1169,7 +1237,7 @@ async def generate_dialogue(callback: CallbackQuery):
         await callback.message.edit_text(f"<b>💬 Диалог по теме:</b> {topic}\n\n{text}", reply_markup=keyboard)
 
         # 🎙️ Добавляем озвучку
-        await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+        #await send_voice_message(callback.message.chat.id, clean_for_tts(text))
 
     except Exception as e:
         logging.exception(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
@@ -1224,16 +1292,17 @@ async def handle_learn_level(callback: CallbackQuery):
         logging.exception(f"[learn_level:{level}] Ошибка Gemini: {e}")
 
 @dp.callback_query(F.data == "dialogue_voice")
-async def handle_dialogue_voice(callback: CallbackQuery):
-    await callback.answer()
-    uid = callback.from_user.id
+async def handle_dialogue_voice(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("🎧 Озвучиваю диалог...")
 
-    text = chat_history.get(uid)
-    if not text:
-        await callback.message.answer("❌ Не удалось найти последний диалог.")
+    data = await state.get_data()
+    dialogue = data.get("last_dialogue")
+
+    if not dialogue:
+        await callback.message.answer("❌ Нет доступного диалога для озвучки.")
         return
 
-    await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+    await send_bilingual_voice(callback.message.chat.id, dialogue)
 
 @dp.callback_query(F.data == "learn_achievements")
 async def show_achievements(callback: CallbackQuery):
