@@ -1,6 +1,5 @@
 # ---------------------- Импорты ---------------------- #
 import logging
-import matplotlib.pyplot as plt
 import os
 import re
 from html import unescape, escape
@@ -11,7 +10,6 @@ import pytz
 import requests
 from PIL import Image
 from PIL import ImageOps, ImageFilter
-from latexocr_minimal import latex_ocr
 from aiogram.types import BufferedInputFile
 from datetime import datetime
 from google.cloud import texttospeech
@@ -64,15 +62,6 @@ class VocabReview(StatesGroup):
     reviewing = State()
 
 
-def recognize_formula_from_image(image_path: str) -> str:
-    try:
-        img = Image.open(image_path).convert("RGB")
-        result = latex_ocr(img)
-        if isinstance(result, dict) and "text" in result:
-            return result["text"]
-        return str(result)
-    except Exception as e:
-        return f"Ошибка при распознавании формулы: {e}"
 
 def clean_for_tts(text: str) -> str:
     """
@@ -2101,40 +2090,6 @@ async def handle_timezone_setting(message: Message):
                 "answer": message.answer
             })
         )
-
-@dp.message(F.photo)
-async def handle_formula_image(message: Message):
-    _register_message_stats(message)
-    try:
-        photo = message.photo[-1]
-        file = await bot.download(photo)
-        img = Image.open(file).convert("RGB")
-
-        # Вызываем вашу функцию распознавания
-        latex = latex_ocr(img).strip()
-        if not latex or len(latex) < 3:
-            await message.answer("❌ Не удалось распознать формулу.")
-            return
-
-        # Сохраняем распознанную формулу для использования при последующих вопросах
-        user_images_text[message.from_user.id] = latex
-
-        # Визуализируем результат – создаём изображение с формулой
-        fig, ax = plt.subplots(figsize=(5, 1.5))
-        ax.text(0.5, 0.5, f"${latex}$", fontsize=20, ha='center', va='center')
-        ax.axis('off')
-        buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches='tight')
-        buf.seek(0)
-
-        await message.answer_photo(
-            BufferedInputFile(buf.getvalue(), filename="formula.png"),
-            caption="📐 Формула считана. Задай вопрос по картинке."
-        )
-
-    except Exception as e:
-        logging.exception("[ERROR handle_formula_image]")
-        await message.answer("❌ Произошла ошибка при обработке изображения.")
 
 
 @dp.message(lambda message: message.voice is not None)
