@@ -1480,11 +1480,15 @@ async def handle_vocab(callback: CallbackQuery):
         except:
             date_str = "неизвестно"
 
+        review_level = entry.get("review_level", 0)
+        progress = "🔹" * review_level + "⚪" * (5 - review_level)
         text = (
             f"<b>{i+1}. {word}</b> — {meaning}\n"
             f"<i>{example}</i>\n"
-            f"📅 Последнее повторение: <code>{date_str}</code>"
+            f"📅 Последнее повторение: <code>{date_str}</code>\n"
+            f"📊 Уровень: {progress}"
         )
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"vocab_delete:{i}"),
@@ -1600,6 +1604,7 @@ async def handle_vocab_stats(callback: CallbackQuery):
     ])
     await callback.message.edit_text(stats_text.strip(), reply_markup=keyboard, parse_mode="HTML")
 
+ 
 @dp.callback_query(F.data == "vocab_close")
 async def close_vocab(callback: CallbackQuery):
     await callback.message.delete()
