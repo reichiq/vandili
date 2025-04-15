@@ -69,6 +69,29 @@ from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
 import json
+
+def remove_old_reminders():
+    try:
+        with open(REMINDERS_FILE, "r", encoding="utf-8") as f:
+            reminders = json.load(f)
+        now = datetime.now()
+        updated = {}
+        for uid, rems in reminders.items():
+            new_list = []
+            for rem in rems:
+                try:
+                    remind_time = datetime.fromisoformat(rem["time"])
+                    if remind_time >= now or rem.get("repeat") in ["daily", "weekly"]:
+                        new_list.append(rem)
+                except:
+                    continue
+            if new_list:
+                updated[uid] = new_list
+        with open(REMINDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(updated, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.exception(f"Ошибка очистки напоминаний: {e}")
+
 import speech_recognition as sr
 from pydub import AudioSegment
 from collections import defaultdict
