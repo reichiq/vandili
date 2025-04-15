@@ -12,7 +12,7 @@ import requests
 from PIL import Image
 from PIL import ImageOps, ImageFilter
 from aiogram.types import BufferedInputFile
-from pix2tex.cli import LatexOCR
+from pix2tex.cli.main import LatexOCR
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
@@ -2096,30 +2096,20 @@ async def handle_timezone_setting(message: Message):
 @dp.message(F.photo)
 async def handle_formula_image(message: Message):
     _register_message_stats(message)
-
     try:
         photo = message.photo[-1]
         file = await bot.download(photo)
         img = Image.open(file)
-        img = img.convert("L")  # ч/б
-        img = ImageOps.autocontrast(img)
-        img = ImageOps.invert(img)
-        img = img.filter(ImageFilter.SHARPEN)
 
-
-        try:
-            latex = latex_ocr(img).strip()
-        except Exception as e:
-            await message.answer("❌ Ошибка при распознавании формулы.")
-            logging.warning(f"[LaTeX OCR FAIL] {e}")
-            return
-
+        latex = latex_ocr(img).strip()
         if not latex or len(latex) < 3:
             await message.answer("❌ Не удалось распознать формулу.")
             return
 
+        # Сохраняем формулу для будущего вопроса
         user_images_text[message.from_user.id] = latex
 
+        # Визуализируем
         fig, ax = plt.subplots(figsize=(5, 1.5))
         ax.text(0.5, 0.5, f"${latex}$", fontsize=20, ha='center', va='center')
         ax.axis('off')
@@ -2133,10 +2123,9 @@ async def handle_formula_image(message: Message):
         )
 
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        logging.exception("❌ Ошибка в handle_formula_image")
+        logging.exception("[ERROR handle_formula_image]")
         await message.answer("❌ Произошла ошибка при обработке изображения.")
+
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
@@ -3189,7 +3178,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
 
     uid = message.from_user.id
     if uid in user_images_text:
-        latex = user_images_text.pop(uid)  # убираем сразу после использования
+        latex = user_images_text.pop(uid)  # убираем после использования
         prompt = f"Вот формула:\n\n\\[\n{latex}\n\\]\n\nТеперь задай вопрос:\n{user_input}\n\nОтветь на основе этой формулы."
 
         try:
@@ -3197,7 +3186,7 @@ async def handle_msg(message: Message, recognized_text: str = None, voice_respon
             await message.answer(response.text.strip())
         except Exception:
             await message.answer("❌ Ошибка при попытке ответа.")
-        return  # не продолжаем дальше, уже ответили
+        return  # не продолжаем дальше
 
     lower_inp = user_input.lower()
     if any(nc in lower_inp for nc in NAME_COMMANDS):
