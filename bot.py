@@ -1287,48 +1287,61 @@ async def show_review_mode(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text("🧠 Выбери режим повторения:", reply_markup=keyboard)
 
-@dp.callback_query(F.data.startswith("dialogue_topic:"))
-async def generate_dialogue(callback: CallbackQuery, state: FSMContext):
-    topic = callback.data.split(":")[1]
-    await callback.answer(f"Генерирую диалог по теме: {topic}...")
+@dp.callback_query(F.data.startswith("learn_quiz:"))
+async def handle_learn_quiz(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    await callback.answer(f"🧪 Генерирую тест для уровня {level}...")
 
     prompt = (
-        f"Ты — профессиональный преподаватель английского языка. "
-        f"Сгенерируй короткий, но естественный диалог на английском языке по теме «{topic}».\n"
-        "Диалог должен содержать 4–6 реплик между двумя людьми (A и B).\n"
-        "После каждой реплики добавь строку с её переводом на русский (в формате: A (перевод): ...).\n"
-        "Используй естественные фразы, подходящие к ситуации. Не пиши лишнего текста вне диалога.\n"
-        "Пример формата:\n\n"
-        "A: Hi, where can I find the nearest ATM?\n"
-        "A (перевод): Привет, где я могу найти ближайший банкомат?\n"
-        "B: Just around the corner, next to the pharmacy.\n"
-        "B (перевод): Сразу за углом, рядом с аптекой.\n"
+        f"Составь тест из 3 вопросов по английскому уровню {level}. "
+        "Каждый вопрос — с 4 вариантами ответа (A–D), один правильный. "
+        "Формат JSON:\n\n"
+        '[\n'
+        '  {\n'
+        '    "question": "What is ...?",\n'
+        '    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
+        '    "answer": "B"\n'
+        '  },\n'
+        '  ...\n'
+        ']'
     )
 
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        text = format_gemini_response(response.text.strip())
-        await state.update_data(last_dialogue=text)
+        raw_text = response.text.strip()
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить слова", callback_data="dialogue_add_words")],
-            [
-                InlineKeyboardButton(text="🔄 Новый диалог", callback_data=f"dialogue_topic:{topic}"),
-                InlineKeyboardButton(text="🔊 Озвучить", callback_data="dialogue_voice")
-            ],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_dialogues")]
-        ])
+        if not raw_text:
+            raise ValueError("Пустой ответ от Gemini")
 
-        chat_history[callback.from_user.id] = text
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
 
-        await callback.message.edit_text(f"<b>💬 Диалог по теме:</b> {topic}\n\n{text}", reply_markup=keyboard)
+        try:
+            questions = json.loads(raw_text)
+        except json.JSONDecodeError:
+            logging.error(f"[learn_quiz:{level}] Невозможно распарсить JSON:\n{raw_text}")
+            await callback.message.answer("❌ Ошибка разбора ответа. Gemini вернул некорректный формат.")
+            return
 
-        # 🎙️ Добавляем озвучку
-        #await send_voice_message(callback.message.chat.id, clean_for_tts(text))
+        quiz_storage[user_id] = {}
+        for i, q in enumerate(questions):
+            quiz_storage[user_id][i + 1] = q["answer"]
+            buttons = [
+                [InlineKeyboardButton(text=f"{k}) {v}", callback_data=f"quiz_answer:{level}:{i+1}:{k}")]
+                for k, v in q["options"].items()
+            ]
+            await callback.message.answer(
+                f"<b>Вопрос {i+1}:</b> {q['question']}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                parse_mode="HTML"
+            )
 
     except Exception as e:
-        logging.exception(f"[dialogue_topic:{topic}] Ошибка Gemini: {e}")
-        await callback.message.edit_text("❌ Не удалось сгенерировать диалог.")
+        logging.exception(f"[learn_quiz:{level}] Ошибка Gemini: {e}")
+        await callback.message.answer("❌ Не удалось сгенерировать тест.")
 
 @dp.callback_query(F.data == "learn_course")
 async def handle_learn_course(callback: CallbackQuery):
