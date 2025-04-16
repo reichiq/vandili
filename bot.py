@@ -68,6 +68,7 @@ from google.cloud import translate
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
+from langdetect import detect
 import json
 import speech_recognition as sr
 from pydub import AudioSegment
@@ -109,19 +110,22 @@ VOICE_MAP = {
 }
 
 def detect_lang(text: str) -> str:
-    return "ru" if re.search(r"[а-яА-Я]", text) else "en"
-
+    try:
+        lang = detect(text)
+        return "ru" if lang.startswith("ru") else "en"
+    except:
+        return "en"
 def strip_html(text: str) -> str:
     text = re.sub(r"</?[^>]+>", "", text)
     text = text.replace("•", "").strip()
     return text
 
 def clean_for_tts(text: str) -> str:
-    """
-    Удаляет HTML-теги и заменяет спецсимволы (например, &nbsp; → пробел) для озвучки.
-    """
-    text = re.sub(r"<[^>]+>", "", text)
-    return unescape(text).strip()
+    text = re.sub(r"<[^>]+>", "", text)  # Удаление HTML
+    text = unescape(text)
+    text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    text = re.sub(r"[«»„“”]", '"', text)  # кавычки
+    return text.strip()
 
 def load_dialogues():
     with open("learning/dialogues.json", "r", encoding="utf-8") as f:
@@ -927,40 +931,54 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
 
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
     client = texttospeech.TextToSpeechClient()
+
+    # ✅ Получаем параметры языка и голоса
+    lang_entry = VOICE_MAP.get(lang_code, VOICE_MAP["en"])
+
     voice = texttospeech.VoiceSelectionParams(
-        language_code=VOICE_MAP[lang_code]["lang"],
-        name=VOICE_MAP[lang_code]["name"],
+        language_code=lang_entry["lang"],
+        name=lang_entry["name"],
     )
+
+    # ✅ Текст уже должен быть очищен до этого через clean_for_tts()
     synthesis_input = texttospeech.SynthesisInput(text=text)
-    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.OGG_OPUS)
 
-    response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
+    )
 
+    # 🧠 Возможен exception — оборачиваем в try при вызове
+    response = client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config
+    )
+
+    # 📦 Сохраняем во временный файл
     with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out_file:
         out_file.write(response.audio_content)
         return out_file.name
-
+        
 async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     audio_segments = []
     lines = [l.strip() for l in dialogue_text.strip().splitlines() if l.strip()]
     total = len(lines)
 
-    progress_msg = await bot.send_message(chat_id, f"🔊 Всего фрагментов: {total}")
+    progress_msg = await bot.send_message(chat_id, f"🔊 Озвучка [░░░░░░░░░░░░░░░░░░░░] 0/{total}")
+
+    def progress_bar(current: int, total: int, size: int = 20) -> str:
+        filled = int(size * current / total)
+        return "█" * filled + "░" * (size - filled)
 
     for i, line in enumerate(lines, start=1):
-        # Удаляем HTML и пустые строки или мусор
         clean_line = strip_html(line)
         if not clean_line or re.match(r"^[#\-\*]+$", clean_line.strip()):
             continue
 
-        # Определяем язык
         lang = detect_lang(clean_line)
 
         try:
-            await progress_msg.delete()
-            progress_msg = await bot.send_message(chat_id, f"🎙️ Озвучка {i}/{total}")
-
-            ogg_path = await generate_voice_snippet(clean_line, lang)
+            ogg_path = await generate_voice_snippet(clean_for_tts(clean_line), lang)
             segment = AudioSegment.from_file(ogg_path, format="ogg")
             audio_segments.append(segment)
             os.remove(ogg_path)
@@ -968,8 +986,15 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
             logging.exception(f"[voice] Ошибка при озвучке строки: {clean_line}\n{e}")
             continue
 
+        # 📊 Обновляем прогресс
+        bar = progress_bar(i, total)
+        try:
+            await progress_msg.edit_text(f"🎙️ Озвучка [{bar}] {i}/{total}")
+        except Exception as e:
+            logging.warning(f"⚠️ Не удалось обновить сообщение прогресса: {e}")
+
     if not audio_segments:
-        await bot.send_message(chat_id, "❌ Ничего не удалось озвучить.")
+        await progress_msg.edit_text("❌ Ничего не удалось озвучить.")
         return
 
     final_audio = sum(audio_segments[1:], audio_segments[0])
@@ -978,6 +1003,9 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
 
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg"))
     os.remove(final_path)
+
+    # ✅ Финальное сообщение
+    await progress_msg.edit_text("✅ Озвучка завершена!")
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
 def thread(message: Message) -> dict:
