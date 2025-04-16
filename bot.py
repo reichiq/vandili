@@ -1417,29 +1417,43 @@ async def handle_learn_quiz(callback: CallbackQuery):
     await callback.answer(f"🧪 Генерирую тест для уровня {level}...")
 
     prompt = (
-        f"Составь тест из 3 вопросов по английскому уровню {level}. "
-        "Каждый вопрос — с 4 вариантами ответа (A–D), один правильный. "
-        "Формат JSON:\n\n"
+        f"Составь тест из 3 вопросов по английскому языку для уровня {level}.\n"
+        "Каждый вопрос должен иметь 4 варианта ответа (A, B, C, D), с указанием правильного.\n"
+        "Ответ строго в формате JSON-массива:\n\n"
         '[\n'
         '  {\n'
-        '    "question": "What is ...?",\n'
-        '    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
+        '    "question": "What is the capital of France?",\n'
+        '    "options": {\n'
+        '      "A": "London",\n'
+        '      "B": "Paris",\n'
+        '      "C": "Berlin",\n'
+        '      "D": "Madrid"\n'
+        '    },\n'
         '    "answer": "B"\n'
-        '  },\n'
-        '  ...\n'
+        '  }\n'
         ']'
     )
 
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        questions = json.loads(response.text)
+        raw_text = response.text.strip()
 
+        if not raw_text:
+            raise ValueError("Пустой ответ от Gemini")
+
+        # Пробуем распарсить JSON
+        try:
+            questions = json.loads(raw_text)
+        except json.JSONDecodeError:
+            logging.error(f"[learn_quiz:{level}] Невозможно распарсить JSON:\n{raw_text}")
+            await callback.message.answer("❌ Ошибка разбора ответа. Gemini вернул некорректный формат.")
+            return
+
+        # Сохраняем правильные ответы
         quiz_storage[user_id] = {}
         for i, q in enumerate(questions):
-            # Сохраняем правильный ответ
             quiz_storage[user_id][i + 1] = q["answer"]
 
-            # Создаём кнопки A–D
             buttons = [
                 [InlineKeyboardButton(text=f"{k}) {v}", callback_data=f"quiz_answer:{level}:{i+1}:{k}")]
                 for k, v in q["options"].items()
