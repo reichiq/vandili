@@ -965,10 +965,17 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
     client = texttospeech.TextToSpeechClient()
     lang_entry = VOICE_MAP.get(lang_code, VOICE_MAP["en"])
+    if lang == "ru-RU":
+        voice_name = "ru-RU-Wavenet-D"
+    elif lang == "en-US":
+        voice_name = "en-US-Wavenet-F"
+    else:
+        voice_name = lang
     voice = texttospeech.VoiceSelectionParams(
-        language_code=lang_entry["lang"],
-        name=lang_entry["name"],
+        language_code=lang,
+        name=voice_name
     )
+
     synthesis_input = texttospeech.SynthesisInput(text=text)
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
