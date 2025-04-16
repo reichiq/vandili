@@ -1807,18 +1807,26 @@ async def handle_learn_progress(callback: CallbackQuery):
     uid = callback.from_user.id
     progress_data = user_progress.get(uid, {})
 
-    if not progress_data:
-        await callback.message.edit_text("📊 У тебя пока нет прогресса. Пройди пару квизов и возвращайся!")
-        return
-        text = "<b>📈 Твой прогресс по уровням:</b>\n"
-        for level, correct_count in progress_data.items():
-            text += f"• {level}: <b>{correct_count}</b> правильных ответов\n"
-
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
-        [InlineKeyboardButton(text="🔄 Сбросить прогресс", callback_data="progress_reset")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
+
+    if not progress_data:
+        await callback.message.edit_text(
+            "📊 У тебя пока нет прогресса. Пройди пару квизов и возвращайся!",
+            reply_markup=keyboard
+        )
+        return
+
+    # Если прогресс есть — показать его + кнопку сброса
+    text = "<b>📈 Твой прогресс по уровням:</b>\n"
+    for level, correct_count in progress_data.items():
+        text += f"• {level}: <b>{correct_count}</b> правильных ответов\n"
+
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="🔄 Сбросить прогресс", callback_data="progress_reset")
+    ])
+
     await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
 
