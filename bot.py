@@ -3699,9 +3699,8 @@ async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
 
-from aiogram.filters import Text
 
-@dp.message(F.text.regexp(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", flags=re.IGNORECASE))
+@dp.message_handler(regexp=r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)")
 async def handle_read_aloud_request(message: Message):
     target_text = ""
 
