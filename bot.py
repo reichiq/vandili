@@ -1816,7 +1816,7 @@ async def handle_learn_progress(callback: CallbackQuery):
 
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
         [InlineKeyboardButton(text="🔄 Сбросить прогресс", callback_data="progress_reset")]
     ])
     await callback.message.edit_text(text.strip(), reply_markup=keyboard)
