@@ -114,10 +114,9 @@ def detect_lang(text: str) -> str:
 
 def detect_dominant_lang(text: str) -> str:
     """
-    Определяет, на каком языке написана строка.
-    Если 80%+ букв — латиница → английский.
-    Если 80%+ букв — кириллица → русский.
-    Иначе — по умолчанию русский.
+    Определяет язык по количеству букв. Если в строке больше 30% латиницы и не менее 5 символов — английский.
+    Если больше 30% кириллицы и не менее 5 символов — русский.
+    Иначе — по умолчанию 'ru'.
     """
     letters = [ch for ch in text if ch.isalpha()]
     if not letters:
@@ -125,20 +124,19 @@ def detect_dominant_lang(text: str) -> str:
 
     en_count = sum(1 for ch in letters if 'a' <= ch.lower() <= 'z')
     ru_count = sum(1 for ch in letters if 'а' <= ch.lower() <= 'я')
-
     total = en_count + ru_count
+
     if total == 0:
         return "ru"
 
     en_ratio = en_count / total
     ru_ratio = ru_count / total
 
-    if en_ratio >= 0.8:
+    if en_ratio >= 0.3 and en_count >= 5:
         return "en"
-    elif ru_ratio >= 0.8:
+    elif ru_ratio >= 0.3 and ru_count >= 5:
         return "ru"
-    else:
-        return "ru"
+    return "ru"
 
 def strip_html(text: str) -> str:
     text = re.sub(r"</?[^>]+>", "", text)
@@ -956,30 +954,20 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
 
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
     client = texttospeech.TextToSpeechClient()
-
-    # ✅ Получаем параметры языка и голоса
     lang_entry = VOICE_MAP.get(lang_code, VOICE_MAP["en"])
-
     voice = texttospeech.VoiceSelectionParams(
         language_code=lang_entry["lang"],
         name=lang_entry["name"],
     )
-
-    # ✅ Текст уже должен быть очищен до этого через clean_for_tts()
     synthesis_input = texttospeech.SynthesisInput(text=text)
-
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
     )
-
-    # 🧠 Возможен exception — оборачиваем в try при вызове
     response = client.synthesize_speech(
         input=synthesis_input,
         voice=voice,
         audio_config=audio_config
     )
-
-    # 📦 Сохраняем во временный файл
     with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out_file:
         out_file.write(response.audio_content)
         return out_file.name
@@ -996,19 +984,20 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
         return "█" * filled + "░" * (size - filled)
 
     for i, line in enumerate(lines, start=1):
-        clean_line = strip_html(line)
-        if not clean_line or re.match(r"^[#\-\*]+$", clean_line.strip()):
+        raw_line = strip_html(line)
+        if not raw_line or re.match(r"^[#\-\*]+$", raw_line.strip()):
             continue
 
-        lang = detect_dominant_lang(clean_line)
+        cleaned = clean_for_tts(raw_line)
+        lang = detect_dominant_lang(cleaned)
 
         try:
-            ogg_path = await generate_voice_snippet(clean_for_tts(clean_line), lang)
+            ogg_path = await generate_voice_snippet(cleaned, lang)
             segment = AudioSegment.from_file(ogg_path, format="ogg")
             audio_segments.append(segment)
             os.remove(ogg_path)
         except Exception as e:
-            logging.exception(f"[voice] Ошибка при озвучке строки: {clean_line}\n{e}")
+            logging.exception(f"[voice] Ошибка при озвучке строки: {cleaned}\n{e}")
             continue
 
         # 📊 Обновляем прогресс
@@ -1029,7 +1018,6 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg"))
     os.remove(final_path)
 
-    # ✅ Финальное сообщение
     await progress_msg.edit_text("✅ Озвучка завершена!")
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
