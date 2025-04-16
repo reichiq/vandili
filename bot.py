@@ -109,22 +109,44 @@ VOICE_MAP = {
     "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
 }
 
-def detect_lang(text: str) -> str:
-    try:
-        lang = detect(text)
-        return "ru" if lang.startswith("ru") else "en"
-    except:
+def detect_dominant_lang(text: str) -> str:
+    """
+    Определяет, на каком языке написана строка.
+    Если 80%+ букв — латиница → английский.
+    Если 80%+ букв — кириллица → русский.
+    Иначе — по умолчанию русский.
+    """
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return "ru"
+
+    en_count = sum(1 for ch in letters if 'a' <= ch.lower() <= 'z')
+    ru_count = sum(1 for ch in letters if 'а' <= ch.lower() <= 'я')
+
+    total = en_count + ru_count
+    if total == 0:
+        return "ru"
+
+    en_ratio = en_count / total
+    ru_ratio = ru_count / total
+
+    if en_ratio >= 0.8:
         return "en"
+    elif ru_ratio >= 0.8:
+        return "ru"
+    else:
+        return "ru"
+
 def strip_html(text: str) -> str:
     text = re.sub(r"</?[^>]+>", "", text)
     text = text.replace("•", "").strip()
     return text
 
 def clean_for_tts(text: str) -> str:
-    text = re.sub(r"<[^>]+>", "", text)  # Удаление HTML
+    text = re.sub(r"<[^>]+>", "", text)  # удаление HTML
     text = unescape(text)
-    text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-    text = re.sub(r"[«»„“”]", '"', text)  # кавычки
+    text = re.sub(r"[«»„“”\"']", '', text)  # удалить все типы кавычек
+    text = text.replace("—", "-")
     return text.strip()
 
 def load_dialogues():
@@ -975,7 +997,7 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
         if not clean_line or re.match(r"^[#\-\*]+$", clean_line.strip()):
             continue
 
-        lang = detect_lang(clean_line)
+        lang = detect_dominant_lang(clean_line)
 
         try:
             ogg_path = await generate_voice_snippet(clean_for_tts(clean_line), lang)
