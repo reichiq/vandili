@@ -111,14 +111,16 @@ VOICE_MAP = {
 def detect_lang(text: str) -> str:
     return "ru" if re.search(r"[а-яА-Я]", text) else "en"
 
-def clean_for_tts(text: str) -> str:
-    return unescape(re.sub(r"<[^>]+>", "", text)).strip()
+def strip_html(text: str) -> str:
+    text = re.sub(r"</?[^>]+>", "", text)
+    text = text.replace("•", "").strip()
+    return text
 
 def clean_for_tts(text: str) -> str:
     """
     Удаляет HTML-теги и заменяет спецсимволы (например, &nbsp; → пробел) для озвучки.
     """
-    text = re.sub(r"<[^>]+>", "", text)   # удаляем HTML-теги
+    text = re.sub(r"<[^>]+>", "", text)
     return unescape(text).strip()
 
 def load_dialogues():
@@ -941,16 +943,30 @@ async def generate_voice_snippet(text: str, lang_code: str) -> str:
 async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     audio_segments = []
 
-    for line in dialogue_text.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        lang = detect_lang(line)
-        ogg_path = await generate_voice_snippet(line, lang)
+    lines = [l.strip() for l in dialogue_text.strip().splitlines() if l.strip()]
+    total = len(lines)
 
-        segment = AudioSegment.from_file(ogg_path, format="ogg")
-        audio_segments.append(segment)
-        os.remove(ogg_path)
+    await bot.send_message(chat_id, f"🔊 Всего фрагментов для озвучки: {total}")
+
+    for i, line in enumerate(lines, start=1):
+        await bot.send_message(chat_id, f"🎙️ Озвучка {i}/{total}")
+
+        # 🧼 Удаляем HTML и символы перед озвучкой
+        clean_line = strip_html(line)
+        lang = detect_lang(clean_line)
+
+        try:
+            ogg_path = await generate_voice_snippet(clean_line, lang)
+            segment = AudioSegment.from_file(ogg_path, format="ogg")
+            audio_segments.append(segment)
+            os.remove(ogg_path)
+        except Exception as e:
+            logging.exception(f"[voice] Ошибка при озвучке строки: {clean_line}\n{e}")
+            continue
+
+    if not audio_segments:
+        await bot.send_message(chat_id, "❌ Ничего не удалось озвучить.")
+        return
 
     final_audio = sum(audio_segments[1:], audio_segments[0])
     final_path = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg").name
@@ -1343,11 +1359,9 @@ async def handle_learn_voice(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Нет данных для озвучки.")
         return
 
-    # Очищаем от HTML и объединяем в озвучиваемый текст
-    text = clean_for_tts(course_text)
-
     try:
-        await send_voice_message(callback.message.chat.id, text)
+        # ✨ Используем билингвальную озвучку (строка за строкой, auto-detect языка)
+        await send_bilingual_voice(callback.message.chat.id, course_text)
     except Exception as e:
         logging.exception(f"[learn_voice] Ошибка при озвучке: {e}")
         await callback.message.answer("❌ Не удалось озвучить темы.")
