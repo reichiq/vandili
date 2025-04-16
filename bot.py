@@ -964,15 +964,16 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
 
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
     client = texttospeech.TextToSpeechClient()
-    lang_entry = VOICE_MAP.get(lang_code, VOICE_MAP["en"])
-    if lang == "ru-RU":
+
+    if lang_code == "ru-RU":
         voice_name = "ru-RU-Wavenet-D"
-    elif lang == "en-US":
+    elif lang_code == "en-US":
         voice_name = "en-US-Wavenet-F"
     else:
-        voice_name = lang
+        voice_name = lang_code  # fallback
+
     voice = texttospeech.VoiceSelectionParams(
-        language_code=lang,
+        language_code=lang_code,
         name=voice_name
     )
 
@@ -3726,8 +3727,10 @@ async def handle_read_aloud_request(message: Message):
         await message.reply("❌ Не удалось найти текст для озвучки. Напиши команду в ответ на сообщение.")
         return
 
-    lang = detect_dominant_lang(target_text)
-    voice_lang = "ru-RU" if lang == "ru" else "en-US"
+    if detect_lang(target_text) == "ru":
+        voice_lang = "ru-RU"
+    else:
+        voice_lang = "en-US"
 
     await message.reply("🎧 Озвучиваю...")
     await send_voice_message(chat_id=message.chat.id, text=target_text, lang=voice_lang)
