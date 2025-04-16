@@ -1314,11 +1314,13 @@ async def handle_learn_quiz(callback: CallbackQuery):
         if not raw_text:
             raise ValueError("Пустой ответ от Gemini")
 
+        # Убираем обёртки ```json ... ```
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         if raw_text.endswith("```"):
             raw_text = raw_text[:-3]
 
+        # Парсим JSON
         try:
             questions = json.loads(raw_text)
         except json.JSONDecodeError:
@@ -1326,6 +1328,7 @@ async def handle_learn_quiz(callback: CallbackQuery):
             await callback.message.answer("❌ Ошибка разбора ответа. Gemini вернул некорректный формат.")
             return
 
+        # Сохраняем и отправляем
         quiz_storage[user_id] = {}
         for i, q in enumerate(questions):
             quiz_storage[user_id][i + 1] = q["answer"]
