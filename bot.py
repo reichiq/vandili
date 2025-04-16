@@ -1449,9 +1449,9 @@ async def handle_learn_quiz(callback: CallbackQuery):
         ']'
     )
 
-        try:
-            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-            raw_text = response.text.strip()
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        raw_text = response.text.strip()
 
         if not raw_text:
             raise ValueError("Пустой ответ от Gemini")
