@@ -103,6 +103,16 @@ class QuizStates(StatesGroup):
     level = State()
 
 
+VOICE_MAP = {
+    "en": {"lang": "en-US", "name": "en-US-Wavenet-D"},
+    "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
+}
+
+def detect_lang(text: str) -> str:
+    return "ru" if re.search(r"[а-яА-Я]", text) else "en"
+
+def clean_for_tts(text: str) -> str:
+    return unescape(re.sub(r"<[^>]+>", "", text)).strip()
 
 def clean_for_tts(text: str) -> str:
     """
@@ -864,17 +874,19 @@ async def send_voice_message(chat_id: int, text: str, lang: str = None):
 
     clean_text = clean_for_tts(text)
 
-    # 🧠 Автоопределение языка, если не передан
+    # Если язык не задан, определяем автоматически
     if not lang:
         lang = detect_lang(clean_text)
 
     lang_config = VOICE_MAP.get(lang, VOICE_MAP["en"])
+
+    synthesis_input = texttospeech.SynthesisInput(text=clean_text)
+
     voice = texttospeech.VoiceSelectionParams(
         language_code=lang_config["lang"],
         name=lang_config["name"]
     )
 
-    synthesis_input = texttospeech.SynthesisInput(text=clean_text)
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
     )
@@ -1260,21 +1272,29 @@ async def handle_learn_level(callback: CallbackQuery, state: FSMContext):
     prompt = (
         f"Ты — профессиональный преподаватель английского языка. "
         f"Составь краткий учебный план для уровня {level}.\n"
-        "Перечисли 3–5 тем, для каждой дай короткое описание и задание.\n"
-        "Ответ в формате:\n\n"
-        "<b>📘 Уровень {level}</b>\n"
-        "• Тема 1: Название\n"
+        "Перечисли 3–5 тем. Для каждой:\n"
+        "- Название (на русском и в скобках на английском)\n"
+        "- Краткое описание\n"
+        "- Задание\n\n"
+        "Не используй HTML, верни обычный текст. Пример:\n\n"
+        "Уровень: A2 (Pre-Intermediate)\n\n"
+        "Тема 1: Название (Title)\n"
         "Описание: ...\n"
         "Задание: ...\n\n"
-        "• Тема 2: ..."
+        "Тема 2: ..."
     )
 
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        text = format_gemini_response(response.text.strip())
+        raw_text = response.text.strip()
+        text = format_gemini_response(raw_text)
 
-        # Сохраняем текст для озвучки или тестов
-        await state.update_data(last_course=text)
+        # 💡 Добавим HTML-разметку вручную
+        formatted = f"<b>📘 Уровень {level}</b>\n\n"
+        formatted += text.replace("Тема ", "<b>• Тема ").replace("\nОписание:", "</b>\n  <b>Описание:</b>").replace("\nЗадание:", "\n  <b>Задание:</b>")
+
+        # Сохраняем для озвучки и квиза
+        await state.update_data(last_course=formatted)
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
@@ -1285,8 +1305,7 @@ async def handle_learn_level(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
         ])
 
-
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(formatted, reply_markup=keyboard, parse_mode="HTML")
 
     except Exception as e:
         await callback.message.edit_text("❌ Ошибка при генерации курса.")
@@ -1307,7 +1326,7 @@ async def handle_learn_voice(callback: CallbackQuery, state: FSMContext):
     text = clean_for_tts(course_text)
 
     try:
-        await send_voice_message(callback.message.chat.id, text, lang="en-US")
+        await send_voice_message(callback.message.chat.id, text)
     except Exception as e:
         logging.exception(f"[learn_voice] Ошибка при озвучке: {e}")
         await callback.message.answer("❌ Не удалось озвучить темы.")
