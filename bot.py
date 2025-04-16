@@ -1314,11 +1314,13 @@ async def handle_learn_quiz(callback: CallbackQuery):
         if not raw_text:
             raise ValueError("Пустой ответ от Gemini")
 
+        # 🧹 Убираем обёртку ```json ... ```
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         if raw_text.endswith("```"):
             raw_text = raw_text[:-3]
 
+        # ✅ Пробуем распарсить JSON
         try:
             questions = json.loads(raw_text)
         except json.JSONDecodeError:
