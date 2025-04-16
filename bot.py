@@ -517,6 +517,7 @@ reminders = []  # Список кортежей: (user_id, event_utc: datetime, 
 reminders = load_reminders()
 quiz_storage = {}
 user_progress = load_progress()
+reminder_status = {}
 user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
 user_images_text = {}
@@ -1249,6 +1250,30 @@ async def handle_toggle_reminders(callback: CallbackQuery):
     await callback.answer(f"Напоминания теперь {status}", show_alert=True)
     await callback.message.delete()
     await cmd_learn_en(callback.message)
+
+@dp.callback_query(F.data == "learn_reminders")
+async def handle_learn_reminders(callback: CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    enabled = vocab_reminders_enabled.get(str(uid), True)
+
+    text = (
+        "🔔 <b>Напоминания о повторении слов</b>\n\n"
+        "Бот может автоматически напоминать тебе повторить слова из словаря.\n"
+        f"Сейчас: <b>{'включены ✅' if enabled else 'отключены ❌'}</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🚫 Выключить" if enabled else "✅ Включить",
+                callback_data="learn_toggle_reminders"
+            )
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 @dp.callback_query(F.data == "learn_close")
 async def handle_learn_close(callback: CallbackQuery):
