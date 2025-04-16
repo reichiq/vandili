@@ -1314,13 +1314,12 @@ async def handle_learn_quiz(callback: CallbackQuery):
         if not raw_text:
             raise ValueError("Пустой ответ от Gemini")
 
-        # Убираем ```json и ```
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         if raw_text.endswith("```"):
             raw_text = raw_text[:-3]
 
-        # Парсим JSON
+        # 🛠 Без отступов! ⬇️
         try:
             questions = json.loads(raw_text)
         except json.JSONDecodeError:
@@ -1344,7 +1343,6 @@ async def handle_learn_quiz(callback: CallbackQuery):
     except Exception as e:
         logging.exception(f"[learn_quiz:{level}] Ошибка Gemini: {e}")
         await callback.message.answer("❌ Не удалось сгенерировать тест.")
-
 
 @dp.callback_query(F.data == "learn_course")
 async def handle_learn_course(callback: CallbackQuery):
