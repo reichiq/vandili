@@ -109,6 +109,9 @@ VOICE_MAP = {
     "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
 }
 
+def detect_lang(text: str) -> str:
+    return "ru" if re.search(r"[а-яА-Я]", text) else "en"
+
 def detect_dominant_lang(text: str) -> str:
     """
     Определяет, на каком языке написана строка.
