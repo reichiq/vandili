@@ -1228,7 +1228,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🔁 Повторить слова", callback_data="review_menu")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="learn_progress")],
         [InlineKeyboardButton(text="🏆 Достижения", callback_data="learn_achievements")],
-        [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_toggle_reminders")],
+        [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_reminders")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="learn_close")]
     ])
     await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
