@@ -3708,6 +3708,30 @@ async def reminder_loop():
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
 
 @dp.message()
+async def handle_voice_commands(message: Message):
+    text = (message.text or "").strip()
+
+    if re.search(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", text, re.IGNORECASE):
+        # Если это ответ на сообщение — озвучим его
+        if message.reply_to_message and message.reply_to_message.text:
+            target = message.reply_to_message.text
+        else:
+            # Убираем саму команду из текста
+            pattern = re.compile(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", re.IGNORECASE)
+            target = pattern.sub("", text).strip()
+
+        if not target:
+            await message.reply("❌ Не удалось найти текст для озвучки.")
+            return
+
+        lang = detect_lang(target)
+        voice_lang = "ru-RU" if lang == "ru" else "en-US"
+
+        await message.reply("🎧 Озвучиваю...")
+        await send_voice_message(message.chat.id, target, voice_lang)
+        return  # ⚠️ Важно: прерываем, чтобы основной обработчик не сработал
+
+@dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
