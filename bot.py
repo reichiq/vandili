@@ -1319,7 +1319,6 @@ async def handle_learn_quiz(callback: CallbackQuery):
         if raw_text.endswith("```"):
             raw_text = raw_text[:-3]
 
-        # 🛠 Без отступов! ⬇️
         try:
             questions = json.loads(raw_text)
         except json.JSONDecodeError:
