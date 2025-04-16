@@ -927,9 +927,17 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
     for i, chunk in enumerate(chunks):
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
 
+        if lang == "en-US":
+            voice_name = "en-US-Wavenet-F"
+        elif lang == "ru-RU":
+            voice_name = "ru-RU-Wavenet-B"  
+        else:
+            voice_name = lang
+
         voice = texttospeech.VoiceSelectionParams(
             language_code=lang,
-            name="ru-RU-Wavenet-C" if lang == "ru-RU" else "en-US-Wavenet-D"
+            name=voice_name
+
         )
 
         audio_config = texttospeech.AudioConfig(
@@ -3690,6 +3698,29 @@ async def reminder_loop():
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     await handle_all_messages_impl(message, user_input)
+
+from aiogram.filters import Text
+
+@dp.message(F.text.regexp(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", flags=re.IGNORECASE))
+async def handle_read_aloud_request(message: Message):
+    target_text = ""
+
+    if message.reply_to_message and message.reply_to_message.text:
+        target_text = message.reply_to_message.text
+    else:
+        # Удалим фразу-триггер, оставим остальное
+        pattern = re.compile(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", re.IGNORECASE)
+        target_text = pattern.sub("", message.text).strip()
+
+    if not target_text:
+        await message.reply("❌ Не удалось найти текст для озвучки. Напиши команду в ответ на сообщение.")
+        return
+
+    lang = detect_dominant_lang(target_text)
+    voice_lang = "ru-RU" if lang == "ru" else "en-US"
+
+    await message.reply("🎧 Озвучиваю...")
+    await send_voice_message(chat_id=message.chat.id, text=target_text, lang=voice_lang)
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
