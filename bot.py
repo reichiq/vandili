@@ -999,7 +999,11 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
             continue
 
         cleaned = clean_for_tts(raw_line)
-        lang = detect_dominant_lang(cleaned)
+        # если запрос на русском — используем ru-RU
+        if detect_lang(cleaned) == "ru":
+            lang = "ru-RU"
+        else:
+            lang = detect_dominant_lang(cleaned)
 
         try:
             ogg_path = await generate_voice_snippet(cleaned, lang)
