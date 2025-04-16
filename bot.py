@@ -159,7 +159,7 @@ dialogues = load_dialogues()
 
 # ---------------------- Загрузка переменных окружения ---------------------- #
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/vandili/key2.json"
 credentials = service_account.Credentials.from_service_account_file("/root/vandili/key.json")
 translate_client = translate.TranslationServiceClient(credentials=credentials)
 
