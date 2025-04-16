@@ -859,23 +859,22 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
             return "\n".join(forecast_lines)
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
+async def send_voice_message(chat_id: int, text: str, lang: str = None):
     client = texttospeech.TextToSpeechClient()
 
-    clean_text = clean_for_tts(text)  # 🧼 удаляем HTML и лишнее
+    clean_text = clean_for_tts(text)
+
+    # 🧠 Автоопределение языка, если не передан
+    if not lang:
+        lang = detect_lang(clean_text)
+
+    lang_config = VOICE_MAP.get(lang, VOICE_MAP["en"])
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=lang_config["lang"],
+        name=lang_config["name"]
+    )
 
     synthesis_input = texttospeech.SynthesisInput(text=clean_text)
-
-    # 🔊 Подбираем голос под язык
-    if lang == "ru-RU":
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="ru-RU", name="ru-RU-Wavenet-C"
-        )
-    else:
-        voice = texttospeech.VoiceSelectionParams(
-            language_code=lang, name="en-US-Wavenet-D"  # 👈 можешь заменить на другой
-        )
-
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.OGG_OPUS
     )
@@ -890,17 +889,6 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
 
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename="voice.ogg"))
     os.remove(out_path)
-
-from pydub import AudioSegment
-import re
-
-VOICE_MAP = {
-    "en": {"lang": "en-US", "name": "en-US-Wavenet-D"},
-    "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
-}
-
-def detect_lang(text: str) -> str:
-    return "ru" if re.search(r'[а-яА-Я]', text) else "en"
 
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
     client = texttospeech.TextToSpeechClient()
