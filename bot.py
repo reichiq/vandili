@@ -95,6 +95,12 @@ class GrammarExercise(StatesGroup):
     waiting_for_answer = State()
 class VocabReview(StatesGroup):
     reviewing = State()
+class QuizStates(StatesGroup):
+    quiz = State()
+    score = State()
+    current_question = State()
+    questions = State()
+    level = State()
 
 
 
@@ -1258,7 +1264,7 @@ async def handle_learn_course(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("learn_level:"))
-async def handle_learn_level(callback: CallbackQuery):
+async def handle_learn_level(callback: CallbackQuery, state: FSMContext):
     level = callback.data.split(":")[1]
     await callback.answer()
     await callback.message.edit_text(f"📚 Генерирую материалы для уровня {level}, подожди немного...")
@@ -1278,18 +1284,115 @@ async def handle_learn_level(callback: CallbackQuery):
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         text = format_gemini_response(response.text.strip())
-        text = unescape(text)
+
+        # Сохраняем текст для озвучки или тестов
+        await state.update_data(last_course=text)
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Ещё темы", callback_data=f"learn_more:{level}")],
+            [
+                InlineKeyboardButton(text="🧪 Тест по теме", callback_data=f"learn_quiz:{level}"),
+                InlineKeyboardButton(text="🔊 Озвучить темы", callback_data=f"learn_voice:{level}")
+            ],
             [InlineKeyboardButton(text="🔙 Назад к уровням", callback_data="learn_course")]
         ])
+
 
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
     except Exception as e:
-        await callback.message.edit_text("❌ Ошибка при генерации курса.", parse_mode="HTML")
+        await callback.message.edit_text("❌ Ошибка при генерации курса.")
         logging.exception(f"[learn_level:{level}] Ошибка Gemini: {e}")
+
+@dp.callback_query(F.data.startswith("learn_voice:"))
+async def handle_learn_voice(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("🎧 Озвучиваю темы...")
+
+    data = await state.get_data()
+    course_text = data.get("last_course")
+
+    if not course_text:
+        await callback.message.answer("❌ Нет данных для озвучки.")
+        return
+
+    # Очищаем от HTML и объединяем в озвучиваемый текст
+    text = clean_for_tts(course_text)
+
+    try:
+        await send_voice_message(callback.message.chat.id, text, lang="en-US")
+    except Exception as e:
+        logging.exception(f"[learn_voice] Ошибка при озвучке: {e}")
+        await callback.message.answer("❌ Не удалось озвучить темы.")
+
+@dp.callback_query(F.data.startswith("learn_quiz:"))
+async def handle_learn_quiz(callback: CallbackQuery):
+    level = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    await callback.answer(f"🧪 Генерирую тест для уровня {level}...")
+
+    prompt = (
+        f"Составь тест из 3 вопросов по английскому уровню {level}. "
+        "Каждый вопрос — с 4 вариантами ответа (A–D), один правильный. "
+        "Формат JSON:\n\n"
+        '[\n'
+        '  {\n'
+        '    "question": "What is ...?",\n'
+        '    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
+        '    "answer": "B"\n'
+        '  },\n'
+        '  ...\n'
+        ']'
+    )
+
+    try:
+        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        questions = json.loads(response.text)
+
+        quiz_storage[user_id] = {}
+        for i, q in enumerate(questions):
+            # Сохраняем правильный ответ
+            quiz_storage[user_id][i + 1] = q["answer"]
+
+            # Создаём кнопки A–D
+            buttons = [
+                [InlineKeyboardButton(text=f"{k}) {v}", callback_data=f"quiz_answer:{level}:{i+1}:{k}")]
+                for k, v in q["options"].items()
+            ]
+
+            await callback.message.answer(
+                f"<b>Вопрос {i+1}:</b> {q['question']}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logging.exception(f"[learn_quiz:{level}] Ошибка Gemini: {e}")
+        await callback.message.answer("❌ Не удалось сгенерировать тест.")
+
+async def send_quiz_question(message: Message, state: FSMContext):
+    data = await state.get_data()
+    questions = data["questions"]
+    index = data["current_question"]
+
+    if index >= len(questions):
+        score = data["score"]
+        level = data["level"]
+        await message.answer(
+            f"🏁 Тест завершён!\nТы ответил правильно на {score} из {len(questions)}.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад к темам", callback_data=f"learn_level:{level}")]
+            ])
+        )
+        await state.clear()
+        return
+
+    question = questions[index]
+    text = f"<b>Вопрос {index + 1}:</b> {question['question']}"
+    buttons = [
+        [InlineKeyboardButton(text=f"{key}) {val}", callback_data=f"quiz_answer:{key}")]
+        for key, val in question["options"].items()
+    ]
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
 
 @dp.callback_query(F.data == "dialogue_voice")
 async def handle_dialogue_voice(callback: CallbackQuery, state: FSMContext):
