@@ -8,6 +8,7 @@ import aiohttp
 import dateparser
 import pytz
 import requests
+from aiogram import F
 from PIL import Image
 from PIL import ImageOps, ImageFilter
 from datetime import datetime
@@ -3700,14 +3701,13 @@ async def handle_all_messages(message: Message):
     await handle_all_messages_impl(message, user_input)
 
 
-@dp.message_handler(regexp=r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)")
+@dp.message(F.text.regexp(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", flags=re.IGNORECASE))
 async def handle_read_aloud_request(message: Message):
     target_text = ""
 
     if message.reply_to_message and message.reply_to_message.text:
         target_text = message.reply_to_message.text
     else:
-        # Удалим фразу-триггер, оставим остальное
         pattern = re.compile(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", re.IGNORECASE)
         target_text = pattern.sub("", message.text).strip()
 
