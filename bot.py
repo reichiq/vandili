@@ -149,6 +149,9 @@ def clean_for_tts(text: str) -> str:
     text = unescape(text)
     text = re.sub(r"[«»„“”\"']", '', text)  # удалить все типы кавычек
     text = text.replace("—", "-")
+    
+    # (ИЗМЕНЕНО) убираем markdown
+    text = re.sub(r"[*_`]+", "", text)
     return text.strip()
 
 def load_dialogues():
@@ -3733,6 +3736,12 @@ async def handle_all_messages(message: Message):
         try:
             response = await model.generate_content_async([{"role": "user", "parts": [cleaned]}])
             reply_text = response.text.strip()
+
+            # --------------- (ИЗМЕНЕНО) Очистим лишние символы. ---------------
+            # Хочешь, можешь поместить это внутрь send_voice_message, 
+            # но проще отфильтровать прямо здесь:
+            reply_text = re.sub(r"[*_`]+", "", reply_text)
+
             lang = detect_lang(reply_text)
             voice_lang = "ru-RU" if lang == "ru" else "en-US"
             await send_voice_message(message.chat.id, reply_text, voice_lang)
