@@ -942,20 +942,24 @@ async def generate_voice_snippet(text: str, lang_code: str) -> str:
 
 async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     audio_segments = []
-
     lines = [l.strip() for l in dialogue_text.strip().splitlines() if l.strip()]
     total = len(lines)
 
-    await bot.send_message(chat_id, f"🔊 Всего фрагментов для озвучки: {total}")
+    progress_msg = await bot.send_message(chat_id, f"🔊 Всего фрагментов: {total}")
 
     for i, line in enumerate(lines, start=1):
-        await bot.send_message(chat_id, f"🎙️ Озвучка {i}/{total}")
-
-        # 🧼 Удаляем HTML и символы перед озвучкой
+        # Удаляем HTML и пустые строки или мусор
         clean_line = strip_html(line)
+        if not clean_line or re.match(r"^[#\-\*]+$", clean_line.strip()):
+            continue
+
+        # Определяем язык
         lang = detect_lang(clean_line)
 
         try:
+            await progress_msg.delete()
+            progress_msg = await bot.send_message(chat_id, f"🎙️ Озвучка {i}/{total}")
+
             ogg_path = await generate_voice_snippet(clean_line, lang)
             segment = AudioSegment.from_file(ogg_path, format="ogg")
             audio_segments.append(segment)
@@ -975,7 +979,6 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg"))
     os.remove(final_path)
 
-    
 # ---------------------- Вспомогательная функция для thread ---------------------- #
 def thread(message: Message) -> dict:
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
