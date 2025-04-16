@@ -1434,14 +1434,20 @@ async def handle_learn_quiz(callback: CallbackQuery):
         ']'
     )
 
-    try:
-        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        raw_text = response.text.strip()
+        try:
+            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            raw_text = response.text.strip()
 
         if not raw_text:
             raise ValueError("Пустой ответ от Gemini")
 
-        # Пробуем распарсить JSON
+        # 🔧 Удаляем Markdown-обёртку типа ```json ... ```
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]  # удаляем ```json\n
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]  # удаляем ```
+
+        # 🧪 Пробуем распарсить JSON
         try:
             questions = json.loads(raw_text)
         except json.JSONDecodeError:
