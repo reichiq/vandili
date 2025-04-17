@@ -3721,41 +3721,49 @@ async def handle_msg(
 
             # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
-                # рендерим шаг в картинку и сохраняем путь
+                # 1) Рендерим формулу
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
-                # очищаем и форматируем пояснение
+                # 2) Отбрасываем строку «4) Итоговый ответ: …», если она есть
     
-                explain = _clean_explain(explain_raw)
-                # убираем любые ведущие/хвостовые звездочки и пробелы
+                lines = explain_raw.splitlines()
+                lines = [
+                    line for line in lines
+                    if not re.match(r'^\s*\d+\)\s*Итоговый ответ:', line)
+                ]
+                cleaned = "\n".join(lines)
+             # 3) Превращаем формулу в читабельный текст
+                explain = _clean_explain(cleaned)
+             # 4) Удаляем звёздочки и маркеры «•» по краям
                 explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
-                # убираем маркер «• » в начале, если он остался
                 explain = re.sub(r'^[\u2022]\s*', '', explain)
-                # делаем слово "Пояснение:" жирным
+
+             # 5) Делаем «Пояснение:» жирным
                 if explain.startswith('Пояснение:'):
                     explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
                 else:
                     explain = escape(explain)
+
                 caption = f"<b>Шаг {idx}.</b>\n{explain}"
 
-                # отправляем картинку шага + подпись
-                if len(caption) > 1024:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png"),
-                        caption=f"<b>Шаг {idx}</b>",
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
-                    await safe_send(cid, explain, reply_to=message.message_id)
-                else:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png"),
-                        caption=caption,
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
+             # 6) Отправляем
+               if len(caption) > 1024:
+                   await bot.send_photo(
+                       cid,
+                       FSInputFile(img_path, "step.png"),
+                       caption=f"<b>Шаг {idx}</b>",
+                       parse_mode="HTML",
+                       reply_to_message_id=message.message_id
+                   )
+                   await safe_send(cid, explain, reply_to=message.message_id)
+               else:
+                   await bot.send_photo(
+                       cid,
+                       FSInputFile(img_path, "step.png"),
+                       caption=caption,
+                       parse_mode="HTML",
+                       reply_to_message_id=message.message_id
+                   )
 
             # ---------- итоговая формула ----------
             try:
