@@ -1442,8 +1442,14 @@ async def handle_learn_reminders(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "learn_close")
 async def handle_learn_close(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.delete()
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        pass
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
 
 @dp.callback_query(F.data == "learn_dialogues")
 async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
@@ -2549,22 +2555,23 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
     raw = resp.text.strip()
 
-    # Находим строку "Ответ:"
+    # ищем блок "Ответ"
     m = re.search(r"Ответ\s*[:\-]\s*(.+)", raw, flags=re.IGNORECASE)
     if not m:
         logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
-        await callback.message.edit_text(
-            "❌ Не удалось распознать ответ. Попробуй ещё раз.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
-                    [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
-                ]
-            )
-        )
+        kb_retry = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+        ])
+        await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.", reply_markup=kb_retry)
         return
 
-    question = raw.split("Ответ")[0].strip()
+    # отделяем вопрос до "Ответ"
+    raw_q = raw.split("Ответ", 1)[0].strip()
+    # убираем любые '*' и метку "Вопрос:"
+    question = re.sub(r"\*+", "", raw_q)
+    question = re.sub(r"(?i)^Вопрос[:\-\s]*", "", question).strip()
+
     correct = m.group(1).strip()
 
     await state.set_state(GrammarExercise.waiting_for_answer)
@@ -2578,7 +2585,7 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         (
             f"<b>📘 Упражнение ({level})</b>\n\n"
-            f"{escape(question)}\n\n"
+            f"Вопрос: {escape(question)}\n\n"
             "✍️ Введите пропущенную форму глагола на английском "
             "(например: had left), без кавычек и лишних слов."
         ),
