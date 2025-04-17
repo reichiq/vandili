@@ -167,6 +167,20 @@ def strip_html(text: str) -> str:
     text = text.replace("•", "").strip()
     return text
 
+def _clean_explain(text: str) -> str:
+    """
+    • убирает приставку «Подробное пояснение:»
+    • выбрасывает оставшийся LaTeX ($$ … $$)
+    • превращает \frac{a}{b} → «дробь a / b»
+    • удаляет прочие управляющие \\команды (\sin, \implies …)
+    """
+    text = text.replace("Подробное пояснение:", "").strip()
+    text = re.sub(r"\$\$.*?\$\$", "", text, flags=re.S)
+    text = re.sub(r"\\frac\{([^}]+)\}\{([^}]+)\}", r"дробь \1 / \2", text)
+    text = re.sub(r"\\[a-zA-Z]+", "", text)     # убираем \sin, \alpha и т.п.
+    text = text.replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", text).strip()
+
 def clean_for_tts(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)  # удаление HTML
     text = unescape(text)
@@ -3707,24 +3721,25 @@ async def handle_msg(
             step_imgs    = []                # список PNG шагов
             voice_chunks = []                # реплики для TTS
 
-            # ---------- отправляем каждый шаг ----------
+            # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
-                step_imgs.append(img_path)
-
-                explain = re.sub(r"\$\$.*?\$\$", "", explain_raw, flags=re.S).strip()
+                step_imgs.append(img_path)                    # для «общей доски»
+                explain = _clean_explain(explain_raw)
                 voice_chunks.append(f"Шаг {idx}. {explain}")
-
-                caption = f"<b>Шаг {idx}</b>\n{explain}"
-                if len(caption) > 1024:
-                    # длинное пояснение отдельным сообщением
+                
+                caption = f"<b>{idx}:</b> $$ {latex_step} $$"  # короткий caption вида «1: $…$»
+                
+                if len(caption) > 1024:                       # Telegram‑лимит caption
+                    # 1) присылаем картинку + короткий заголовок
                     await bot.send_photo(
                         cid,
                         FSInputFile(img_path, "step.png"),
-                        caption=f"<b>Шаг {idx}</b>",
+                        caption=f"<b>{idx}</b>",
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
+                    
                     await safe_send(cid, explain)
                 else:
                     await bot.send_photo(
@@ -3734,7 +3749,6 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-            # ---------- конец цикла ----------
 
             # ---------- итоговая формула ----------
             try:
