@@ -3636,6 +3636,7 @@ def parse_russian_show_request(user_text: str):
 
 
 #------------------Основная функция----------------№
+# ------------------Основная функция----------------№
 async def handle_msg(
     message: Message,
     recognized_text: str | None = None,
@@ -3645,9 +3646,9 @@ async def handle_msg(
     user_input = recognized_text or (message.text or "").strip()
     uid        = message.from_user.id
 
-    # ───────────────────────────────────────────────────────────────
-    # 1) в кэше есть формула → пользователь задаёт вопрос
-    # ───────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────
+    # 1) В кэше есть формула → ждём вопрос
+    # ───────────────────────────────────────────────
     if uid in user_images_text:
         latex = user_images_text.pop(uid)
 
@@ -3678,62 +3679,68 @@ async def handle_msg(
             await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
             return
 
-        # парсим «Шаг …»
-        steps = split_steps(raw_answer)          # list[tuple]
+        # ── парсим шаги ────────────────────────────
+        steps = split_steps(raw_answer)          # [(latex, short_cap, explain), ...]
 
-        if steps:                                # формат «Шаг …» корректный
-            board_parts   = []                   # формулы для «общей доски»
-            voice_chunks  = []                   # пояснения для озвучки
+        if steps:                                # ✅ формат корректный
+            from PIL import Image, ImageOps
 
-            for idx, step in enumerate(steps, 1):
-                # step может быть (latex, explain) или (latex, _, explain) и т.п.
-                latex_step = step[0]             # всегда первый элемент – LaTeX
-                explain    = step[-1]            # последний – пояснение
+            step_imgs    = []                    # пути PNG шагов
+            voice_chunks = []                    # пояснения
 
-                board_parts.append(latex_step)
+            for idx, (latex_step, short_cap, explain) in enumerate(steps, 1):
+                img_path = latex_to_png(latex_step)
+                step_imgs.append(img_path)
                 voice_chunks.append(f"Шаг {idx}. {explain}")
 
-                png = latex_to_png(latex_step)
-                try:
-                    caption = f"Шаг {idx}: {explain}"
-                    if len(caption) > 1024:      # Telegram‑лимит на caption
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(png, "step.png"),
-                            caption=f"Шаг {idx}",
-                            parse_mode="HTML",
-                            reply_to_message_id=message.message_id
-                        )
-                        await safe_send(cid, explain)
-                    else:
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(png, "step.png"),
-                            caption=caption,
-                            parse_mode="HTML",
-                            reply_to_message_id=message.message_id
-                        )
-                finally:
-                    os.remove(png)
+                full_caption = f"Шаг {idx}: {explain}"
+                if len(full_caption) > 1024:     # caption > Telegram‑лимит
+                    await bot.send_photo(
+                        cid, FSInputFile(img_path, "step.png"),
+                        caption=f"Шаг {idx}",
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
+                    await safe_send(cid, explain)
+                else:
+                    await bot.send_photo(
+                        cid, FSInputFile(img_path, "step.png"),
+                        caption=full_caption,
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
 
-            # ── «Общая доска» ──────────────────────────────────
-            board_ltx = r" \\[10pt] ".join(board_parts)
-            board_png = latex_to_png(board_ltx)
+            # ── «общая доска»: склеиваем PNG вертикально ──
             try:
-                await bot.send_photo(
-                    cid,
-                    FSInputFile(board_png, "board.png"),
-                    caption="🟩 Общая картинка решения",
-                    parse_mode="HTML"
-                )
+                imgs = [Image.open(p) for p in step_imgs]
+                max_w  = max(im.width for im in imgs)
+                total_h = sum(im.height for im in imgs) + 20 * (len(imgs)-1)
+
+                board = Image.new("RGB", (max_w, total_h), "white")
+                y = 0
+                for im in imgs:
+                    board.paste(ImageOps.expand(im, border=10, fill="white"), (0, y))
+                    y += im.height + 20
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    board.save(tmp.name)
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(tmp.name, "board.png"),
+                        caption="🟢 Общий вид решения",
+                        parse_mode="HTML"
+                    )
             finally:
-                os.remove(board_png)
+                for p in step_imgs:
+                    os.remove(p)
+                if 'tmp' in locals():
+                    os.remove(tmp.name)
 
             if voice_response_requested:
                 await send_voice_message(cid, " ".join(voice_chunks))
-            return                               # ✅ задача выполнена
+            return                               # 🎉 done
 
-        # fallback: Gemini вернул что‑то не по шаблону
+        # ── fallback: Gemini выдал свободный текст ──
         text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
         if voice_response_requested:
             await send_voice_message(cid, text)
@@ -3744,11 +3751,11 @@ async def handle_msg(
                     await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
                 finally:
                     os.remove(p)
-        return                                   # ⬅
+        return                                   # ⬅  больше не идём
 
-    # ───────────────────────────────────────────────────────────────
-    # 2) остальная логика (имя, Unsplash, погода и т.д.)
-    # ───────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────
+    # 2) Остальная логика (имя, Unsplash и т.д.)
+    # ───────────────────────────────────────────────
     lower_inp = user_input.lower()
 
     if any(nc in lower_inp for nc in NAME_COMMANDS):
@@ -3784,7 +3791,7 @@ async def handle_msg(
         await send_voice_message(cid, gemini_text or "Нет ответа.")
         return
 
-    # ── отправляем результат ─────────────────────────────────────
+    # ── отправляем результат ──────────────────────
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
