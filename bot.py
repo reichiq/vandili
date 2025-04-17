@@ -1477,13 +1477,16 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
 
     if not topic_list:
         # на случай, если тема вдруг не найдена
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]
+            ]
+        )
         await callback.message.edit_text(
             f"Диалоги на тему «{topic}» не найдены.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]
-                ]
-            )
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
         return
 
     # 3) формируем текст диалога
@@ -1497,13 +1500,19 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
     await state.update_data(last_dialogue=text)
 
     # 5) предложим кнопки «Озвучить» и «Добавить в словарь» (эти колбеки у вас уже есть)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [ InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice") ],
-        [ InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words") ],
-        [ InlineKeyboardButton("🔙 Назад", callback_data="learn_back") ],
-    ])
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice")],
+            [InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")],
+        ]
+    )
 
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
 
 
 @dp.callback_query(F.data == "review_menu")
