@@ -552,7 +552,7 @@ reminder_status = {}
 user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
 user_images_text = {}
-_p2t = Pix2Text()
+_p2t = Pix2Text(use_fast=True)
 
 async def recognize_formula(image_bytes: bytes) -> str | None:
     """
