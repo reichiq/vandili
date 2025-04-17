@@ -155,15 +155,30 @@ def strip_html(text: str) -> str:
 
 def _clean_explain(text: str) -> str:
     """
-    • убирает приставку «Подробное пояснение:»
-    • выбрасывает оставшийся LaTeX ($$ … $$)
-    • превращает \frac{a}{b} → «дробь a / b»
-    • удаляет прочие управляющие \\команды (\sin, \implies …)
+    Превращает LaTeX‑формулы в «читаемый» русский текст.
+    Избавляемся от того, что Telegram не умеет рендерить.
     """
+    # убираем заголовок‑заглушку Gemini
     text = text.replace("Подробное пояснение:", "").strip()
+
+    # выкидываем всё, что в $$ … $$
     text = re.sub(r"\$\$.*?\$\$", "", text, flags=re.S)
+
+    # \frac{a}{b} → «дробь a / b»
     text = re.sub(r"\\frac\{([^}]+)\}\{([^}]+)\}", r"дробь \1 / \2", text)
-    text = re.sub(r"\\[a-zA-Z]+", "", text)     # убираем \sin, \alpha и т.п.
+
+    # \sqrt{x} или \sqrt{a^2+b^2} → «корень из ( … )»
+    text = re.sub(r"\\sqrt\{([^}]+)\}", r"корень из (\1)", text)
+
+    # x^{2} → «x в степени 2»
+    text = re.sub(r"([a-zA-Z\d]+)\^\{([^}]+)\}", r"\1 в степени \2", text)
+
+    # x_1 → «x внизу 1»  (можно подобрать другое слово, если хочется)
+    text = re.sub(r"([a-zA-Z\d]+)_\{([^}]+)\}", r"\1 внизу \2", text)
+
+    # убираем остальные управляющие команды (\sin, \alpha …),
+    # фигурные скобки и лишние пробелы
+    text = re.sub(r"\\[a-zA-Z]+", "", text)
     text = text.replace("{", "").replace("}", "")
     return re.sub(r"\s+", " ", text).strip()
 
@@ -3694,23 +3709,19 @@ async def handle_msg(
             # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
-                step_imgs.append(img_path)                    # для «общей доски»
                 explain = _clean_explain(explain_raw)
-                voice_chunks.append(f"Шаг {idx}. {explain}")
                 
-                caption = f"<b>{idx}:</b> $$ {latex_step} $$"  # короткий caption вида «1: $…$»
+                caption = f"<b>Шаг {idx}.</b>\n{escape(explain)}"
                 
-                if len(caption) > 1024:                       # Telegram‑лимит caption
-                    # 1) присылаем картинку + короткий заголовок
+                if len(caption) > 1024:
                     await bot.send_photo(
                         cid,
                         FSInputFile(img_path, "step.png"),
-                        caption=f"<b>{idx}</b>",
+                        caption=f"<b>Шаг {idx}</b>",
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-                    
-                    await safe_send(cid, explain)
+                    await safe_send(cid, explain)           # текст отдельным сообщением
                 else:
                     await bot.send_photo(
                         cid,
@@ -3719,6 +3730,7 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
+
 
             # ---------- итоговая формула ----------
             try:
