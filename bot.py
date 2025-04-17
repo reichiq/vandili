@@ -1160,7 +1160,7 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
             lang_code = "en-US"
 
         try:
-            ogg_path = await generate_voice_snippet(cleaned, lang)
+            ogg_path = await generate_voice_snippet(cleaned, lang_code)
             segment = AudioSegment.from_file(ogg_path, format="ogg")
             audio_segments.append(segment)
             os.remove(ogg_path)
@@ -1786,14 +1786,18 @@ async def handle_dialogue_add_words(callback: CallbackQuery, state: FSMContext):
 
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        words = response.text.strip()
-        await state.update_data(dialogue_words=words)
-
+        raw = response.text.strip()
+        # быстро конвертим **жирный** и *курсив* в HTML‑теги
+        html = format_gemini_response(raw)
+        await state.update_data(dialogue_words=html)
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить в словарь", callback_data="dialogue_add_confirm")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="dialogue_add_cancel")]
         ])
-        await callback.message.answer(f"<b>📘 Найденные слова:</b>\n\n{words}", reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.answer(f"<b>📘 Найденные слова:</b>\n\n{html}",
+                                      reply_markup=keyboard,
+                                      parse_mode="HTML")
     except Exception as e:
         logging.exception(f"[dialogue_add_words] Ошибка: {e}")
         await callback.message.answer("❌ Не удалось обработать диалог.")
