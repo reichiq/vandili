@@ -194,7 +194,13 @@ def clean_for_tts(text: str) -> str:
 
 def load_dialogues():
     with open("learning/dialogues.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    # Если это dict, то делаем нормализацию ключей
+    if isinstance(raw, dict):
+        return {k.lower(): v for k, v in raw.items()}
+    else:
+        # если список словарей с полем "topic"
+        return raw
 
 dialogues = load_dialogues()
 
@@ -1462,26 +1468,22 @@ async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
 # ─── Обработчик выбора конкретной темы диалога ───#
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()  # «закрываем» spinning indicator
+    await callback.answer()
+    # приводим topic к нижнему регистру
+    topic = callback.data.split(":", 1)[1].lower()  # теперь "in class", "taxi" и т.п.
 
-    # 1) достаём тему
-    topic = callback.data.split(":", 1)[1]  # например "Airport"
-
-    # 2) фильтруем ваш список `dialogues` по выбранной теме
-    #    структура dialogues может быть либо словарём {topic: [..]}, 
-    #    либо списком dict'ов с ключом "topic".
     if isinstance(dialogues, dict):
         topic_list = dialogues.get(topic, [])
     else:
-        topic_list = [d for d in dialogues if d.get("topic") == topic]
+        # если у вас список словарей с ключом "topic"
+        topic_list = [d for d in dialogues if d.get("topic", "").lower() == topic]
 
     if not topic_list:
-        # на случай, если тема вдруг не найдена
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]]
+        )
         await callback.message.edit_text(
-            f"Диалоги на тему «{topic}» не найдены.",
+            f"Диалоги на тему «{topic.title()}» не найдены.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
