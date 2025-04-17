@@ -1574,6 +1574,7 @@ async def handle_learn_course(callback: CallbackQuery):
         [InlineKeyboardButton(text="📙 B1", callback_data="learn_level:B1")],
         [InlineKeyboardButton(text="📕 B2", callback_data="learn_level:B2")],
         [InlineKeyboardButton(text="📓 C1", callback_data="learn_level:C1")],
+        [InlineKeyboardButton(text="📔 C2", callback_data="learn_level:C2")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await callback.message.edit_text("Выбери уровень английского для изучения:", reply_markup=keyboard)
@@ -1937,6 +1938,7 @@ async def handle_quiz_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="🟨 B1", callback_data="quiz_level:B1")],
         [InlineKeyboardButton(text="🟥 B2", callback_data="quiz_level:B2")],
         [InlineKeyboardButton(text="⬛ C1", callback_data="quiz_level:C1")],
+        [InlineKeyboardButton(text="🟫 C2", callback_data="quiz_level:C2")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await callback.message.edit_text("🎯 <b>Выбери уровень квиза по английскому:</b>", reply_markup=keyboard)
@@ -2523,7 +2525,8 @@ async def handle_grammar(callback: CallbackQuery):
         [InlineKeyboardButton(text="📗 A2", callback_data="grammar_level:A2")],
         [InlineKeyboardButton(text="📙 B1", callback_data="grammar_level:B1")],
         [InlineKeyboardButton(text="📕 B2", callback_data="grammar_level:B2")],
-        [InlineKeyboardButton(text="📓 C1", callback_data="grammar_level:C1")],
+        [InlineKeyboardButton(text="📒 C1", callback_data="grammar_level:C1")],
+        [InlineKeyboardButton(text="📓 C2", callback_data="grammar_level:C2")],
         [InlineKeyboardButton(text="❌ Назад", callback_data="learn_back")],
     ])
     await callback.message.edit_text("Выбери уровень грамматики:", reply_markup=keyboard)
