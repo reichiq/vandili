@@ -1478,13 +1478,13 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
     topic_raw = callback.data.split(":", 1)[1]
     topic_title = topic_raw.replace("_", " ").title()
 
-    # 2) Меняем текст кнопки на индикатор
+    # 2) Индикатор загрузки
     await callback.message.edit_text(
         f"📖 Генерирую 3–5 примеров диалогов на тему «{topic_title}»…",
         parse_mode="HTML"
     )
 
-    # 3) Новый промпт: просим JSON‑массив для удобного разбора
+    # 3) Промпт, просим JSON
     prompt = (
         f"Ты — опытный преподаватель английского. "
         f"Составь 3–5 коротких диалогов на тему «{topic_title}». "
@@ -1500,45 +1500,51 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
         ']\n'
         "Никаких комментариев — только JSON."
     )
-
-    # 4) Генерируем контент
     response = await model.generate_content_async([
         {"role": "user", "parts": [prompt]}
     ])
     raw = response.text.strip()
 
-    # 5) Парсим JSON
+    # 4) Парсим JSON
     try:
         dialogs = json.loads(raw)
     except json.JSONDecodeError:
-        # fallback: если не JSON — просто показываем текст
+        # fallback: если не JSON — просто показываем сырое
         await callback.message.edit_text(
-            f"<b>💬 Тема: {topic_title}</b>\n\n<code>Не удалось распознать JSON, вот что вернуло Gemini:</code>\n{escape(raw)}",
+            f"<b>💬 Тема: {topic_title}</b>\n\n"
+            f"<code>Не удалось распознать JSON, вот что вернуло Gemini:</code>\n"
+            f"{escape(raw)}",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
             ])
         )
         return
 
-    # 6) Строим HTML‑текст
-    text = [f"<b>💬 Тема: {topic_title}</b>\n"]
-    for idx, dlg in enumerate(dialogs, 1):
-        text.append(f"<u>Диалог {idx}:</u>")
-        text.append(f"• <b>You:</b> {dlg['you']}")
-        text.append(f"• <b>VAI:</b> {dlg['vai']}")
-        text.append(f"• <b>Ты:</b> {dlg['ты']}")
-        text.append(f"• <b>VAI:</b> {dlg['vai_ru']}\n")
-    full_text = "\n".join(text)
+    # 5) Очищаем возможные Markdown‑звёздочки внутри самих фраз
+    for dlg in dialogs:
+        for key in ("you", "vai", "ты", "vai_ru"):
+            if key in dlg:
+                dlg[key] = re.sub(r"\*+", "", dlg[key]).strip()
 
-    # 7) Сохраняем для озвучки
+    # 6) Формируем HTML
+    lines: list[str] = [f"<b>💬 Тема: {topic_title}</b>\n"]
+    for idx, dlg in enumerate(dialogs, 1):
+        lines.append(f"<u>Диалог {idx}:</u>")
+        lines.append(f"• <b>You:</b> {dlg['you']}")
+        lines.append(f"• <b>VAI:</b> {dlg['vai']}")
+        lines.append(f"• <b>Ты:</b> {dlg['ты']}")
+        lines.append(f"• <b>VAI:</b> {dlg['vai_ru']}\n")
+    full_text = "\n".join(lines)
+
+    # 7) Сохраняем в FSM для озвучки
     await state.update_data(last_dialogue_json=dialogs)
 
-    # 8) Рисуем кнопки
+    # 8) Кнопки
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice")],
-        [InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")],
+        [InlineKeyboardButton(text="🔊 Озвучить диалог", callback_data="dialogue_voice")],
+        [InlineKeyboardButton(text="📘 Ключевые слова", callback_data="dialogue_add_words")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
     # 9) Отправляем готовый HTML
