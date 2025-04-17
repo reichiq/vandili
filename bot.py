@@ -622,21 +622,10 @@ import tempfile, os
 
 def latex_to_png(latex: str) -> str:
     """
-    Рисует формулу и возвращает путь к временному .png.
-    Сначала чистит \displaystyle и некорректные вложенные \sqrt{}.
-    Затем прогоняет через _sanitize_for_png.
+    Рисует формулу и возвращает путь к временному .png
     """
-    # Убираем \displaystyle
-    latex = latex.replace(r'\displaystyle', '')
-    
-    # Исправляем ошибки вида \sqrt{D {2a}} -> \sqrt{D} {2a}
-    latex = re.sub(r'\\sqrt\{([^{}]+)\s*\{([^{}]+)\}\}', r'\\sqrt{\1} \2', latex)
-    
-    # Проходим через санитайзер
-    clean_latex = _sanitize_for_png(latex)
-
     fig = plt.figure()
-    fig.text(0.1, 0.5, f"${clean_latex}$", fontsize=24)
+    fig.text(0.1, 0.5, f"${latex}$", fontsize=24)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp.name, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
@@ -666,34 +655,18 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
 # --- «чинить» LaTeX, который не понимает matplotlib.mathtext ----------
 def _sanitize_for_png(lx: str) -> str:
     """
-    Заменяем неподдерживаемые команды и array → substack внутри круглых скобок.
+    Заменяем команды, которых нет в mathtext.
+    Добавляй сюда по мере необходимости.
     """
-    # 1) Переводим array-окружение в многострочное substack
-    def _array_to_substack(m):
-        inner = m.group(1)
-        # {{…}} → {…}
-        inner = re.sub(r"\{\{(.+?)\}\}", r"\1", inner, flags=re.S)
-        # substack поддерживается в mathtext, оборачиваем в \left( … \right)
-        return r"\left(\substack{" + inner + r"}\right>"
-
-    lx = re.sub(
-        r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}",
-        _array_to_substack,
-        lx,
-        flags=re.S
-    )
-
-    # 2) Остальные «коктейльные» замены команд
     replacements = {
-        r"\implies":       r"\Rightarrow",
-        r"\iff":           r"\Leftrightarrow",
-        r"\Longrightarrow":r"\Rightarrow",
-        r"\longrightarrow":r"\rightarrow",
+        r"\implies": r"\Rightarrow",
+        r"\iff": r"\Leftrightarrow",
+        r"\Longrightarrow": r"\Rightarrow",
+        r"\longrightarrow": r"\rightarrow",
         r"\longleftarrow": r"\leftarrow",
     }
     for bad, good in replacements.items():
         lx = lx.replace(bad, good)
-
     return lx
 
 STEP_RE = re.compile(
