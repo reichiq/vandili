@@ -5,12 +5,9 @@ import re
 from html import unescape, escape
 import random
 import aiohttp
-import dateparser
 import pytz
-import requests
-from aiogram import F
+from pix2text import Pix2Text
 from PIL import Image
-from PIL import ImageOps, ImageFilter
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
@@ -45,7 +42,6 @@ UNIQUE_USERS_FILE = DATA_DIR / "unique_users.json"
 UNIQUE_GROUPS_FILE = DATA_DIR / "unique_groups.json"
 
 # Пути к JSON-файлам
-STATS_FILE = DATA_DIR / STATS_FILE
 NOTES_FILE = DATA_DIR / NOTES_FILE
 SUPPORT_MAP_FILE = DATA_DIR / SUPPORT_MAP_FILE
 TIMEZONES_FILE = DATA_DIR / TIMEZONES_FILE
@@ -69,7 +65,6 @@ from google.cloud import translate
 from google.oauth2 import service_account
 from docx import Document
 from PyPDF2 import PdfReader
-from langdetect import detect
 import json
 import speech_recognition as sr
 from pydub import AudioSegment
@@ -525,6 +520,33 @@ reminder_status = {}
 user_vocab: dict[int, list[dict]] = load_vocab()
 user_word_of_day_history = load_word_of_day_history()
 user_images_text = {}
+_p2t = Pix2Text()
+
+async def recognize_formula(image_bytes: bytes) -> str | None:
+    """Возвращает распознанный LaTeX или None."""
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    preds = _p2t(img)
+    if preds:
+        # preds — список dict'ов; берём самое уверенное
+        return preds[0]["formula"]
+    return None
+
+# --- Рендер LaTeX в PNG (для превью) ---
+import matplotlib
+matplotlib.use("Agg")          # отключаем GUI‑бэкэнд
+import matplotlib.pyplot as plt
+import tempfile, os
+
+def latex_to_png(latex: str) -> str:
+    """
+    Рисует формулу и возвращает путь к временному .png
+    """
+    fig = plt.figure()
+    fig.text(0.1, 0.5, f"${latex}$", fontsize=24)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmp.name, bbox_inches="tight", pad_inches=0.3)
+    plt.close(fig)
+    return tmp.name
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = DISABLED_CHATS_FILE
 
@@ -1334,63 +1356,6 @@ async def show_review_mode(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text("🧠 Выбери режим повторения:", reply_markup=keyboard)
 
-@dp.callback_query(F.data.startswith("learn_quiz:"))
-async def handle_learn_quiz(callback: CallbackQuery):
-    level = callback.data.split(":")[1]
-    user_id = callback.from_user.id
-    await callback.answer(f"🧪 Генерирую тест для уровня {level}...")
-
-    prompt = (
-        f"Составь тест из 3 вопросов по английскому уровню {level}. "
-        "Каждый вопрос — с 4 вариантами ответа (A–D), один правильный. "
-        "Формат JSON:\n\n"
-        '[\n'
-        '  {\n'
-        '    "question": "What is ...?",\n'
-        '    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},\n'
-        '    "answer": "B"\n'
-        '  },\n'
-        '  ...\n'
-        ']'
-    )
-
-    try:
-        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        raw_text = response.text.strip()
-
-        if not raw_text:
-            raise ValueError("Пустой ответ от Gemini")
-
-        # 🧹 Убираем обёртку ```json ... ```
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-
-        # ✅ Пробуем распарсить JSON
-        try:
-            questions = json.loads(raw_text)
-        except json.JSONDecodeError:
-            logging.error(f"[learn_quiz:{level}] Невозможно распарсить JSON:\n{raw_text}")
-            await callback.message.answer("❌ Ошибка разбора ответа. Gemini вернул некорректный формат.")
-            return
-
-        quiz_storage[user_id] = {}
-        for i, q in enumerate(questions):
-            quiz_storage[user_id][i + 1] = q["answer"]
-            buttons = [
-                [InlineKeyboardButton(text=f"{k}) {v}", callback_data=f"quiz_answer:{level}:{i+1}:{k}")]
-                for k, v in q["options"].items()
-            ]
-            await callback.message.answer(
-                f"<b>Вопрос {i+1}:</b> {q['question']}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-                parse_mode="HTML"
-            )
-
-    except Exception as e:
-        logging.exception(f"[learn_quiz:{level}] Ошибка Gemini: {e}")
-        await callback.message.answer("❌ Не удалось сгенерировать тест.")
 
 @dp.callback_query(F.data == "learn_course")
 async def handle_learn_course(callback: CallbackQuery):
@@ -2476,6 +2441,62 @@ async def handle_timezone_setting(message: Message):
             })
         )
 
+
+@dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
+async def handle_formula_image(message: Message):
+    """
+    1. Скачиваем файл; 2. вытаскиваем LaTeX; 3. даём ответ.
+    """
+    # ----- 1. байты картинки -----
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    file = await bot.get_file(file_id)
+    url  = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(url) as resp:
+            img_bytes = await resp.read()
+
+    # --- 2. распознаём -----
+    latex = await recognize_formula(img_bytes)
+    if not latex:
+        await message.answer("❌ Не смог распознать формулу.")
+        return
+
+    # 2‑a) кладём в кэш, чтобы следующий текстовый вопрос «про формулу» сработал
+    user_images_text[message.from_user.id] = latex
+
+    # 2‑b) делаем картинку‑превью
+    png_path = latex_to_png(latex)
+    try:
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo=FSInputFile(png_path, filename="formula.png"),
+            caption=(f"Я вижу формулу 👇\n<code>{latex}</code>\n\n"
+                     "Спроси что‑нибудь о ней!"),
+            parse_mode="HTML"
+        )
+    finally:
+        os.remove(png_path)
+
+    
+    # ----- 3. формируем ответ -----
+    # 3‑a) быстрый «синтаксис LaTeX + перевод» через Gemini
+    prompt = (f"Ниже формула/уравнение в LaTeX:\n\n$$ {latex} $$\n\n"
+              "1. Скажи, как она читается словами.\n"
+              "2. Если можно, реши/упрости её.\n"
+              "3. Укажи область применения (математика, физика, химия и т.д.).")
+    answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
+
+    # 3‑b) (опционально) продемонстрировать SymPy‑решение
+    try:
+        from sympy import sympify, solve, latex as to_latex
+        expr = sympify(latex)
+        sol  = solve(expr)
+        answer += f"\n\n<b>SymPy:</b> решение {sol}"
+    except Exception:
+        pass
+
+    await message.answer(answer)
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
@@ -3641,11 +3662,6 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
     return gemini_text
 
-# ---------------------- Новый блок для обработки запроса курса валют ---------------------- #
-# Используем универсальное регулярное выражение, чтобы поддержать варианты типа "1 доллар сум" или "1 долар в сум".
-EXCHANGE_PATTERN = re.compile(
-    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
-)
 
 async def vocab_reminder_loop():
     while True:
