@@ -2537,12 +2537,11 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     level = callback.data.split(":", 1)[1]
     await callback.answer(f"Генерирую упражнение для уровня {level}…")
 
-    # Принудительно просим только два поля: Вопрос и Ответ
     prompt = (
-        f"Составь одно небольшое грамматическое упражнение уровня {level}: одно предложение с одним пропуском.\n"
-        "В ответе строго два блока, без лишнего текста:\n"
-        "Вопрос: <предложение с пропуском ____>\n"
-        "Ответ: <только форма глагола>\n\n"
+        f"Составь одно небольшое грамматическое упражнение уровня {level}. "
+        "Нужно ровно два поля (без лишнего текста):\n"
+        "1) Вопрос (на английском): предложение с одним пропуском ____ и глагол в скобках.\n"
+        "2) Ответ: только нужная форма глагола.\n\n"
         "Пример:\n"
         "Вопрос: By the time we arrived, the train ____ (leave).\n"
         "Ответ: had left"
@@ -2550,24 +2549,24 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
     raw = resp.text.strip()
 
-    # Ищем ровно "Ответ: <что‑то>"
+    # Находим строку "Ответ:"
     m = re.search(r"Ответ\s*[:\-]\s*(.+)", raw, flags=re.IGNORECASE)
     if not m:
         logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
         await callback.message.edit_text(
             "❌ Не удалось распознать ответ. Попробуй ещё раз.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+                ]
+            )
         )
         return
 
-    # Вопрос — всё до "Ответ:"
     question = raw.split("Ответ")[0].strip()
-    correct = m.group(1).strip()  # ровно форма глагола
+    correct = m.group(1).strip()
 
-    # Сохраняем для проверки
     await state.set_state(GrammarExercise.waiting_for_answer)
     await state.update_data(correct_answer=correct)
 
@@ -2576,13 +2575,17 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
-    # Показываем вопрос и инструкцию к вводу
-    text = (
-        f"<b>📘 Упражнение ({level})</b>\n\n"
-        f"{escape(question)}\n\n"
-        "✍️ Введите пропущенную форму глагола (например: had left), без кавычек и лишних слов."
+    await callback.message.edit_text(
+        (
+            f"<b>📘 Упражнение ({level})</b>\n\n"
+            f"{escape(question)}\n\n"
+            "✍️ Введите пропущенную форму глагола на английском "
+            "(например: had left), без кавычек и лишних слов."
+        ),
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
 
 @dp.message(GrammarExercise.waiting_for_answer)
 async def check_grammar_answer(message: Message, state: FSMContext):
@@ -2593,12 +2596,19 @@ async def check_grammar_answer(message: Message, state: FSMContext):
     if user_input == correct:
         await message.answer(
             "✅ Верно! Хотите ещё одно упражнение?",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar")]])
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar")]
+                ]
+            )
         )
     else:
         await message.answer(
-            f"❌ Неверно.\nПравильный ответ: <b>{data['correct_answer']}</b>\n"
-            f"Попробуйте ввести именно «{data['correct_answer']}» без дополнительных слов.",
+            (
+                f"❌ Неверно.\n"
+                f"Правильный ответ: <b>{data['correct_answer']}</b>\n\n"
+                "Пожалуйста, введите именно эту форму, без дополнительных слов."
+            ),
             parse_mode="HTML"
         )
 
