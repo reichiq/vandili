@@ -45,6 +45,7 @@ UNIQUE_GROUPS_FILE = DATA_DIR / "unique_groups.json"
 import asyncio
 import google.generativeai as genai
 import tempfile
+import requests
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 from pymorphy3 import MorphAnalyzer
@@ -87,7 +88,7 @@ class QuizStates(StatesGroup):
     questions = State()
     level = State()
 
-
+BOT_ID: int = None
 VOICE_MAP = {
     "en": {"lang": "en-US", "name": "en-US-Wavenet-D"},
     "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
@@ -118,6 +119,25 @@ async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None):
                                    text=_html.escape(text),
                                    parse_mode=None,
                                    reply_to_message_id=reply_to)
+
+def web_search(query: str, num_results: int = 5) -> str:
+    """
+    Делает запрос в Google Custom Search JSON API и возвращает
+    конкатенированные сниппеты результатов.
+    """
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": GOOGLE_SEARCH_API_KEY,
+        "cx": GOOGLE_CX,
+        "q": query,
+        "num": num_results,
+    }
+    resp = requests.get(url, params=params)
+    data = resp.json()
+    snippets = []
+    for item in data.get("items", []):
+        snippets.append(f"- {item['snippet']}")
+    return "\n".join(snippets)
 
 def detect_lang(text: str) -> str:
     return "ru" if re.search(r"[а-яА-Я]", text) else "en"
@@ -214,6 +234,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
+GOOGLE_SEARCH_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY")
+GOOGLE_CX = os.getenv("GOOGLE_CX")
 # Приводим к строке для гарантии, что тип правильный (если вдруг значение None)
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 
@@ -3446,10 +3468,11 @@ async def handle_all_messages_impl(message: Message, user_input: str):
         # Новое условие: бот отвечает в группах только при упоминании его имени или при reply на его сообщение
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
-        reply_to_bot = (message.reply_to_message and 
-                        message.reply_to_message.from_user and 
-                        message.reply_to_message.from_user.username and 
-                        message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower())
+        reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == BOT_ID
+        )
         if not (mentioned or reply_to_bot):
             return
 
@@ -4080,36 +4103,74 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         "почему", "зачем", "на кого", "кто", "что такое", "влияние",
         "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
     ]
+    # если в запросе встречаются «аналитические» ключевые слова — чуть расширяем prompt
     needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
     if needs_expansion:
-        smart_prompt = ("Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
-                        "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n")
+        smart_prompt = (
+            "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
+            "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
+        )
         full_prompt = smart_prompt + full_prompt
 
+    # короткий путь для генерации подписей к картинкам
     if show_image and rus_word and not leftover:
-        gemini_text = await generate_short_caption(rus_word)
-        return gemini_text
+        return await generate_short_caption(rus_word)
 
+    # строим историю диалога (context window)
     conversation = chat_history.setdefault(cid, [])
     conversation.append({"role": "user", "parts": [full_prompt]})
     if len(conversation) > 8:
         conversation.pop(0)
+
     try:
+        # показываем «печатаю…»
         await bot.send_chat_action(chat_id=cid, action="typing")
+
+        # первый прогон Gemini
         resp = await model.generate_content_async(conversation)
+        # raw текст
+        raw_model_text = resp.text.strip()
+
+        # если модель «признаётся» в нехватке знаний или выдаёт слишком короткий ответ
+        if (
+            "обрезаны по состоянию на" in raw_model_text.lower()
+            or "не обладаю информацией" in raw_model_text.lower()
+            or len(raw_model_text) < 100
+        ):
+            # делаем веб‑поиск по полному запросу
+            snippets = web_search(full_prompt)
+            # формируем новый prompt с фактами из поиска
+            fallback_prompt = (
+                "У меня есть результаты веб-поиска по запросу:\n"
+                f"{snippets}\n\n"
+                f"На их основе дай полный развёрнутый ответ на вопрос:\n{full_prompt}"
+            )
+            # повторный прогон Gemini
+            resp2 = await model.generate_content_async([
+                {"role": "user", "parts": [fallback_prompt]}
+            ])
+            raw_model_text = resp2.text.strip()
+
+        # если Gemini не вернул кандидатов — значит запрос заблокировали
         if not resp.candidates:
             reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
             logging.exception(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-            gemini_text = f"⚠️ Запрос отклонён. Возможная причина: <b>{reason}</b>.\nПопробуйте переформулировать запрос."
+            gemini_text = (
+                f"⚠️ Запрос отклонён. Возможная причина: <b>{reason}</b>.\n"
+                "Попробуйте переформулировать запрос."
+            )
         else:
-            raw_model_text = resp.text
+            # форматируем ответ
             gemini_text = format_gemini_response(raw_model_text)
+            # сохраняем в историю для контекста
             conversation.append({"role": "model", "parts": [raw_model_text]})
             if len(conversation) > 8:
                 conversation.pop(0)
+
     except Exception as e:
         logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-        gemini_text = ("⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже.")
+        gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+
     return gemini_text
 
 
@@ -4220,6 +4281,10 @@ async def handle_all_messages(message: Message):
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
+    global BOT_ID
+    me = await bot.get_me()
+    BOT_ID = me.id
+    
     asyncio.create_task(reminder_loop())
     asyncio.create_task(vocab_reminder_loop())
     
