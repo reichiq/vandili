@@ -621,12 +621,20 @@ import matplotlib.pyplot as plt
 import tempfile, os
 
 def latex_to_png(latex: str) -> str:
-    latex = latex.replace(r'\displaystyle', '')
     """
     Рисует формулу и возвращает путь к временному .png.
-    Сначала прогоняет через _sanitize_for_png.
+    Сначала чистит \displaystyle и некорректные вложенные \sqrt{}.
+    Затем прогоняет через _sanitize_for_png.
     """
+    # Убираем \displaystyle
+    latex = latex.replace(r'\displaystyle', '')
+    
+    # Исправляем ошибки вида \sqrt{D {2a}} -> \sqrt{D} {2a}
+    latex = re.sub(r'\\sqrt\{([^{}]+)\s*\{([^{}]+)\}\}', r'\\sqrt{\1} \2', latex)
+    
+    # Проходим через санитайзер
     clean_latex = _sanitize_for_png(latex)
+
     fig = plt.figure()
     fig.text(0.1, 0.5, f"${clean_latex}$", fontsize=24)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
