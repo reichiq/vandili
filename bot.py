@@ -3679,28 +3679,40 @@ async def handle_msg(
             return
 
         # парсим «Шаг …»
-        steps = split_steps(raw_answer)          # → [(latex, explain), …]
+        steps = split_steps(raw_answer)          # list[tuple]
 
-        if steps:                                # корректно распарсилось
+        if steps:                                # формат «Шаг …» корректный
             board_parts   = []                   # формулы для «общей доски»
             voice_chunks  = []                   # пояснения для озвучки
 
-            for idx, (latex_step, explain) in enumerate(steps, 1):
+            for idx, step in enumerate(steps, 1):
+                # step может быть (latex, explain) или (latex, _, explain) и т.п.
+                latex_step = step[0]             # всегда первый элемент – LaTeX
+                explain    = step[-1]            # последний – пояснение
+
                 board_parts.append(latex_step)
                 voice_chunks.append(f"Шаг {idx}. {explain}")
 
                 png = latex_to_png(latex_step)
                 try:
-                    cap = f"Шаг {idx}: {explain}"
-                    if len(cap) > 1024:          # Telegram caption limit
-                        await bot.send_photo(cid, FSInputFile(png, "step.png"),
-                                             caption=f"Шаг {idx}", parse_mode="HTML",
-                                             reply_to_message_id=message.message_id)
+                    caption = f"Шаг {idx}: {explain}"
+                    if len(caption) > 1024:      # Telegram‑лимит на caption
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(png, "step.png"),
+                            caption=f"Шаг {idx}",
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
+                        )
                         await safe_send(cid, explain)
                     else:
-                        await bot.send_photo(cid, FSInputFile(png, "step.png"),
-                                             caption=cap, parse_mode="HTML",
-                                             reply_to_message_id=message.message_id)
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(png, "step.png"),
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
+                        )
                 finally:
                     os.remove(png)
 
@@ -3719,7 +3731,7 @@ async def handle_msg(
 
             if voice_response_requested:
                 await send_voice_message(cid, " ".join(voice_chunks))
-            return                               # ✅
+            return                               # ✅ задача выполнена
 
         # fallback: Gemini вернул что‑то не по шаблону
         text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
