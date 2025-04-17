@@ -2598,7 +2598,7 @@ async def handle_formula_image(message: Message):
         await bot.send_photo(
             chat_id = message.chat.id,
             photo   = FSInputFile(png_path, "formula.png"),
-            caption = (f"Я вижу это 👇\n<code>{latex}</code>\n\n"
+            caption = (f"Я вижу это 👆\n<code>{latex}</code>\n\n"
                        "Спроси что‑нибудь об этом!"),
             parse_mode = "HTML"
         )
