@@ -523,12 +523,35 @@ user_images_text = {}
 _p2t = Pix2Text()
 
 async def recognize_formula(image_bytes: bytes) -> str | None:
-    """Возвращает распознанный LaTeX или None."""
+    """
+    Извлекает LaTeX из картинки с формулой.
+    Работает как с новыми (Page), так и со старыми (list[dict]) ответами pix2text.
+    """
     img = Image.open(BytesIO(image_bytes)).convert("RGB")
-    preds = _p2t(img)
-    if preds:
-        # preds — список dict'ов; берём самое уверенное
-        return preds[0]["formula"]
+
+    # ⚠️   В новых версиях лучше пользоваться готовой обёрткой:
+    try:
+        latex = _p2t.recognize_formula(img)          # >=1.1 возвращает str
+        return latex.strip() if latex else None
+    except AttributeError:
+        # fallback на старое API
+        pass
+
+    #  ---- старый формат (<1.1)  -----------------
+    preds = _p2t(img, return_text=False)             # отдаёт list
+    if not preds:
+        return None
+
+    block = preds[0]
+
+    # Page/Block  (>=1.1)  -------------------------
+    if hasattr(block, "formula"):
+        return getattr(block, "formula", None)
+
+    # dict (<1.1) ---------------------------------
+    if isinstance(block, dict):
+        return block.get("formula") or block.get("text")
+
     return None
 
 # --- Рендер LaTeX в PNG (для превью) ---
