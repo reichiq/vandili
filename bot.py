@@ -620,6 +620,23 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
     new_text = re.sub(r"\$\$(.+?)\$\$", _repl, text, flags=re.S)
     return new_text, images
 
+# --- «чинить» LaTeX, который не понимает matplotlib.mathtext ----------
+def _sanitize_for_png(lx: str) -> str:
+    """
+    Заменяем команды, которых нет в mathtext.
+    Добавляй сюда по мере необходимости.
+    """
+    replacements = {
+        r"\implies": r"\Rightarrow",
+        r"\iff": r"\Leftrightarrow",
+        r"\Longrightarrow": r"\Rightarrow",
+        r"\longrightarrow": r"\rightarrow",
+        r"\longleftarrow": r"\leftarrow",
+    }
+    for bad, good in replacements.items():
+        lx = lx.replace(bad, good)
+    return lx
+
 STEP_RE = re.compile(
     r"(Шаг\s+\d+:[^\n]*?)\s*"        # «Шаг 3: …»
     r"(?:\n+|$)"
@@ -3630,10 +3647,8 @@ def parse_russian_show_request(user_text: str):
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
 
-#------------------Основная функция----------------№
-# ------------------Основная функция----------------№
 # ──────────────────────────────────────────────────────────────────────
-#  >>>  ПОЛНОСТЬЮ ОБНОВЛЁННАЯ handle_msg  <<<
+#  >>>  handle_msg – версия с фиксацией LaTeX и итоговой формулой  <<<
 # ──────────────────────────────────────────────────────────────────────
 async def handle_msg(
     message: Message,
@@ -3650,12 +3665,12 @@ async def handle_msg(
     if uid in user_images_text:
         latex = user_images_text.pop(uid)
 
-        # если вопрос не задан — просим сформулировать
+        # нет вопроса → просим сформулировать
         if not user_input:
             await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
             return
 
-        # --- новый prompt ------------------------------------------------------
+        # prompt для Gemini
         prompt = (
             "Ниже формула в LaTeX (между $$):\n\n"
             f"$$ {latex} $$\n\n"
@@ -3664,11 +3679,12 @@ async def handle_msg(
             "Ответь ПОШАГОВО. Для КАЖДОГО шага строго используй формат:\n"
             "Шаг 1:\n"
             "$$ … $$\n"
-            "Подробное пояснение (несколько предложений, чтобы было понятно, как именно получен шаг).\n"
+            "Подробное пояснение (желательно не более 5 предложений, чтобы было понятно, как именно получен шаг).\n"
             "...\n\n"
             "В самом конце приведи итоговую формулу в $$ … $$ (без лишнего текста)."
         )
 
+        # запрашиваем модель
         try:
             resp        = await model.generate_content_async(
                 [{"role": "user", "parts": [prompt]}]
@@ -3679,25 +3695,29 @@ async def handle_msg(
             await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
             return
 
-        # ── парсим шаги ────────────────────────────
-        steps = split_steps(raw_answer)          # [(latex, header, explain), …]
+        # разбиваем ответ на шаги
+        steps = split_steps(raw_answer)      # [(latex, header, explain), …]
 
-        if steps:                                # ✅ формат корректный
+        # ───────────────────────────────────────────
+        # A. формат корректный → отрисовываем шаги
+        # ───────────────────────────────────────────
+        if steps:
             from PIL import Image, ImageOps
 
-            step_imgs    = []                    # PNG‑файлы со всеми шагами
-            voice_chunks = []                    # для озвучки
+            step_imgs    = []                # список PNG шагов
+            voice_chunks = []                # реплики для TTS
 
-            # ---------- НОВЫЙ ЦИКЛ ОТПРАВКИ ШАГОВ ----------
-            for idx, (latex_step, _header_from_ai, explain_raw) in enumerate(steps, 1):
-                img_path = latex_to_png(latex_step)
-                step_imgs.append(img_path)                       # для «общей доски»
-                # убираем все $$ … $$ из пояснения
+            # ---------- отправляем каждый шаг ----------
+            for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
+                img_path = latex_to_png(_sanitize_for_png(latex_step))
+                step_imgs.append(img_path)
+
                 explain = re.sub(r"\$\$.*?\$\$", "", explain_raw, flags=re.S).strip()
                 voice_chunks.append(f"Шаг {idx}. {explain}")
 
                 caption = f"<b>Шаг {idx}</b>\n{explain}"
-                if len(caption) > 1024:                         # caption слишком длинный
+                if len(caption) > 1024:
+                    # длинное пояснение отдельным сообщением
                     await bot.send_photo(
                         cid,
                         FSInputFile(img_path, "step.png"),
@@ -3714,9 +3734,28 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-                    # ---------- конец цикла ----------
+            # ---------- конец цикла ----------
 
-            # ── «общая доска»: склеиваем PNG вертикально ──
+            # ---------- итоговая формула ----------
+            try:
+                all_latex = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
+                if all_latex:
+                    final_latex = all_latex[-1].strip()
+                    if final_latex not in {l for l, _, _ in steps}:
+                        final_img = latex_to_png(_sanitize_for_png(final_latex))
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(final_img, "result.png"),
+                            caption="🏁 <b>Итог</b>",
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
+                        )
+            finally:
+                if 'final_img' in locals():
+                    os.remove(final_img)
+            # ---------- конец итоговой формулы ----------
+
+            # ---------- «общая доска» ----------
             try:
                 imgs    = [Image.open(p) for p in step_imgs]
                 max_w   = max(im.width for im in imgs)
@@ -3739,7 +3778,7 @@ async def handle_msg(
             finally:
                 for p in step_imgs:
                     os.remove(p)
-                if "tmp" in locals():
+                if 'tmp' in locals():
                     os.remove(tmp.name)
 
             # озвучка (если просили «голосом»)
@@ -3747,7 +3786,9 @@ async def handle_msg(
                 await send_voice_message(cid, " ".join(voice_chunks))
             return                               # 🎉 done
 
-        # ── fallback: Gemini выдал свободный текст ──
+        # ───────────────────────────────────────────
+        # B. формат не распознан → плоский текст
+        # ───────────────────────────────────────────
         text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
         if voice_response_requested:
             await send_voice_message(cid, text)
@@ -3758,10 +3799,10 @@ async def handle_msg(
                     await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
                 finally:
                     os.remove(p)
-        return                                   # ⬅ дальнейшая обработка не нужна
+        return                                   # дальше не идём
 
     # ───────────────────────────────────────────────
-    # 2) Остальная логика (имя, Unsplash, диалоги …)
+    # 2) Остальная логика (имя, Unsplash, и т.д.)
     # ───────────────────────────────────────────────
     lower_inp = user_input.lower()
 
@@ -3789,28 +3830,26 @@ async def handle_msg(
     leftover    = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    image_url   = await get_unsplash_image_url(
+    image_url = await get_unsplash_image_url(
         image_en, UNSPLASH_ACCESS_KEY
     ) if show_image else None
 
-    # Текстовый ответ Gemini
+    # ответ Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover
     )
 
-    # --- если просили ответ «голосом» -----------------------------------
+    # --- если нужен voice‑ответ ----------------------------------------
     if voice_response_requested:
         await send_voice_message(cid, gemini_text or "Нет ответа.")
         return
 
-    # --- отправка результата -------------------------------------------
+    # --- отправляем результат ------------------------------------------
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
                 if r.status == 200:
-                    tmp_path = tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".jpg"
-                    ).name
+                    tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
                     with open(tmp_path, "wb") as f:
                         f.write(await r.read())
                     try:
@@ -3832,6 +3871,7 @@ async def handle_msg(
     else:
         await message.answer("❌ Я не смог сгенерировать ответ.")
 # ──────────────────────────────────────────────────────────────────────
+
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
