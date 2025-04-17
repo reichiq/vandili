@@ -3724,12 +3724,11 @@ async def handle_msg(
                 # 1) Рендерим формулу
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
-
                 # 2) Отбрасываем строку «4) Итоговый ответ: …», если она есть
                 lines = explain_raw.splitlines()
                 lines = [
                     line for line in lines
-                    if not re.match(r'^\s*\d+\)\s*Итоговый ответ:', line)
+                    if not re.match(r'^\s*\d+\)\s*\**\s*Итоговый ответ:', line)
                 ]
                 cleaned = "\n".join(lines)
 
@@ -3743,6 +3742,7 @@ async def handle_msg(
                 # 5) Делаем «Пояснение:» жирным
                 if explain.startswith('Пояснение:'):
                     explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
+                    explain = re.sub(r'^<b>Пояснение:</b>[\*\s]*', '<b>Пояснение:</b> ', explain)
                 else:
                     explain = escape(explain)
 
