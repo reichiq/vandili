@@ -3747,23 +3747,23 @@ async def handle_msg(
                 caption = f"<b>Шаг {idx}.</b>\n{explain}"
 
              # 6) Отправляем
-               if len(caption) > 1024:
-                   await bot.send_photo(
-                       cid,
-                       FSInputFile(img_path, "step.png"),
-                       caption=f"<b>Шаг {idx}</b>",
-                       parse_mode="HTML",
-                       reply_to_message_id=message.message_id
-                   )
-                   await safe_send(cid, explain, reply_to=message.message_id)
-               else:
-                   await bot.send_photo(
-                       cid,
-                       FSInputFile(img_path, "step.png"),
-                       caption=caption,
-                       parse_mode="HTML",
-                       reply_to_message_id=message.message_id
-                   )
+                if len(caption) > 1024:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png"),
+                        caption=f"<b>Шаг {idx}</b>",
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
+                    await safe_send(cid, explain, reply_to=message.message_id)
+                else:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png"),
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
 
             # ---------- итоговая формула ----------
             try:
