@@ -659,23 +659,27 @@ def _sanitize_for_png(lx: str) -> str:
     """
     Заменяем неподдерживаемые команды и array → pmatrix.
     """
-    # 1) Array‑окружение сразу в \pmatrix{…}
+    # 1) Переводим array-окружение в полноценный pmatrix
+    def _array_to_pmatrix(m):
+        inner = m.group(1)
+        # Убираем двойные фигурные скобки {{…}} → {…}
+        inner = re.sub(r"\{\{(.+?)\}\}", r"\1", inner, flags=re.S)
+        return r"\begin{pmatrix}" + inner + r"\end{pmatrix}"
+
     lx = re.sub(
         r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}",
-        lambda m: r"\pmatrix{" + re.sub(r"\{\{(.+?)\}\}", r"\1", m.group(1)) + "}",
+        _array_to_pmatrix,
         lx,
         flags=re.S
     )
 
     # 2) Остальные замены команд
     replacements = {
-        r"\implies":      r"\Rightarrow",
-        r"\iff":          r"\Leftrightarrow",
+        r"\implies":       r"\Rightarrow",
+        r"\iff":           r"\Leftrightarrow",
         r"\Longrightarrow": r"\Rightarrow",
         r"\longrightarrow": r"\rightarrow",
         r"\longleftarrow":  r"\leftarrow",
-        # если где‑то осталось \matrix — переведём в поддерживаемый вариант
-        r"\matrix":       r"\pmatrix",
     }
     for bad, good in replacements.items():
         lx = lx.replace(bad, good)
