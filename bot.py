@@ -3689,23 +3689,22 @@ async def handle_msg(
             voice_chunks = []                    # для озвучки
 
             # ---------- НОВЫЙ ЦИКЛ ОТПРАВКИ ШАГОВ ----------
-            for idx, (latex_step, header, explain) in enumerate(steps, 1):
+            for idx, (latex_step, _header_from_ai, explain_raw) in enumerate(steps, 1):
                 img_path = latex_to_png(latex_step)
-                step_imgs.append(img_path)
-                voice_chunks.append(f"{header}. {explain}")
+                step_imgs.append(img_path)                       # для «общей доски»
+                # убираем все $$ … $$ из пояснения
+                explain = re.sub(r"\$\$.*?\$\$", "", explain_raw, flags=re.S).strip()
+                voice_chunks.append(f"Шаг {idx}. {explain}")
 
-                caption = f"<b>{header}</b>\n{explain}"
-
-                if len(caption) > 1024:
-                    # 1️⃣ картинка + только заголовок
+                caption = f"<b>Шаг {idx}</b>\n{explain}"
+                if len(caption) > 1024:                         # caption слишком длинный
                     await bot.send_photo(
                         cid,
                         FSInputFile(img_path, "step.png"),
-                        caption=f"<b>{header}</b>",
+                        caption=f"<b>Шаг {idx}</b>",
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-                    # 2️⃣ длинное пояснение отдельным сообщением
                     await safe_send(cid, explain)
                 else:
                     await bot.send_photo(
@@ -3715,7 +3714,7 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-            # ---------- конец цикла ----------
+                    # ---------- конец цикла ----------
 
             # ── «общая доска»: склеиваем PNG вертикально ──
             try:
