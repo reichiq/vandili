@@ -4128,14 +4128,12 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
         # первый прогон Gemini
         resp = await model.generate_content_async(conversation)
-        # raw текст
         raw_model_text = resp.text.strip()
 
-        # если модель «признаётся» в нехватке знаний или выдаёт слишком короткий ответ
+        # fallback только когда Gemini прямо говорит о нехватке знаний
         if (
             "обрезаны по состоянию на" in raw_model_text.lower()
             or "не обладаю информацией" in raw_model_text.lower()
-            or len(raw_model_text) < 100
         ):
             # делаем веб‑поиск по полному запросу
             snippets = web_search(full_prompt)
