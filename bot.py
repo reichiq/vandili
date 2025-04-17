@@ -2523,14 +2523,17 @@ async def handle_grammar(callback: CallbackQuery):
         [InlineKeyboardButton(text="📗 A2", callback_data="grammar_level:A2")],
         [InlineKeyboardButton(text="📙 B1", callback_data="grammar_level:B1")],
         [InlineKeyboardButton(text="📕 B2", callback_data="grammar_level:B2")],
+        [InlineKeyboardButton(text="📒 C1", callback_data="grammar_level:C1")],  # ← добавили
+        [InlineKeyboardButton(text="📓 C2", callback_data="grammar_level:C2")],  # ← и это
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
     await callback.message.edit_text("Выбери уровень грамматики:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("grammar_level:"))
 async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
-    level = callback.data.split(":",1)[1]
+    level = callback.data.split(":", 1)[1]
     await callback.answer(f"Генерирую упражнение для уровня {level}…")
+    
     prompt = (
         f"Составь одно небольшое грамматическое упражнение уровня {level}.\n"
         "Формат:\n"
@@ -2539,23 +2542,32 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
         "1. He ____ (go) to school every day.\n"
         "Ответ: goes"
     )
-    resp = await model.generate_content_async([{"role":"user","parts":[prompt]}])
+    resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
     raw = resp.text.strip()
-    # более надёжный парсинг:
+
+    # надёжный парсинг ответа
     m = re.search(r"Ответ\s*[:\-]\s*(.+)", raw, flags=re.IGNORECASE)
     if not m:
         logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
         await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.")
         return
+
     question = raw[:m.start()].strip()
-    correct  = m.group(1).strip()
+    correct = m.group(1).strip()
+
     await state.set_state(GrammarExercise.waiting_for_answer)
     await state.update_data(correct_answer=correct)
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔁 Новое", callback_data="learn_grammar")],
+        # при повторном нажатии "Новое" снова вызываем тот же уровень
+        [InlineKeyboardButton(text="🔁 Новое", callback_data=f"grammar_level:{level}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
-    await callback.message.edit_text(f"<b>📘 Упражнение ({level}):</b>\n\n{question}", reply_markup=kb)
+
+    await callback.message.edit_text(
+        f"<b>📘 Упражнение ({level}):</b>\n\n{question}",
+        reply_markup=kb
+    )
 
 
 @dp.message(GrammarExercise.waiting_for_answer)
