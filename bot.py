@@ -621,6 +621,7 @@ import matplotlib.pyplot as plt
 import tempfile, os
 
 def latex_to_png(latex: str) -> str:
+    latex = latex.replace(r'\displaystyle', '')
     """
     Рисует формулу и возвращает путь к временному .png.
     Сначала прогоняет через _sanitize_for_png.
