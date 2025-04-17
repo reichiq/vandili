@@ -3729,6 +3729,7 @@ async def handle_msg(
                 explain = _clean_explain(explain_raw)
                 # убираем ведущие маркеры "* " или "• "
                 explain = re.sub(r'^[\*\u2022]\s*', '', explain)
+                explain = explain.strip('* ').strip()
                 # делаем слово "Пояснение:" жирным
                 if explain.startswith('Пояснение:'):
                     explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
