@@ -2516,43 +2516,47 @@ async def handle_review_response(callback: CallbackQuery):
     await handle_vocab_review(callback)  # повторяем следующий
 
 @dp.callback_query(F.data == "learn_grammar")
-async def handle_grammar(callback: CallbackQuery, state: FSMContext):
-    await callback.answer("Генерирую грамматическое упражнение...")
+async def handle_grammar(callback: CallbackQuery):
+    await callback.answer()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📘 A1", callback_data="grammar_level:A1")],
+        [InlineKeyboardButton(text="📗 A2", callback_data="grammar_level:A2")],
+        [InlineKeyboardButton(text="📙 B1", callback_data="grammar_level:B1")],
+        [InlineKeyboardButton(text="📕 B2", callback_data="grammar_level:B2")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+    ])
+    await callback.message.edit_text("Выбери уровень грамматики:", reply_markup=keyboard)
 
+@dp.callback_query(F.data.startswith("grammar_level:"))
+async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
+    level = callback.data.split(":",1)[1]
+    await callback.answer(f"Генерирую упражнение для уровня {level}…")
     prompt = (
-        "Составь одно небольшое грамматическое упражнение (A1–B2).\n"
+        f"Составь одно небольшое грамматическое упражнение уровня {level}.\n"
         "Формат:\n"
         "Тема: Present Simple\n"
         "Задание: Поставь глагол в правильной форме\n"
         "1. He ____ (go) to school every day.\n"
         "Ответ: goes"
     )
+    resp = await model.generate_content_async([{"role":"user","parts":[prompt]}])
+    raw = resp.text.strip()
+    # более надёжный парсинг:
+    m = re.search(r"Ответ\s*[:\-]\s*(.+)", raw, flags=re.IGNORECASE)
+    if not m:
+        logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
+        await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.")
+        return
+    question = raw[:m.start()].strip()
+    correct  = m.group(1).strip()
+    await state.set_state(GrammarExercise.waiting_for_answer)
+    await state.update_data(correct_answer=correct)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Новое", callback_data="learn_grammar")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+    ])
+    await callback.message.edit_text(f"<b>📘 Упражнение ({level}):</b>\n\n{question}", reply_markup=kb)
 
-    try:
-        response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-        raw_text = response.text.strip()
-
-        # Парсим ответ
-        parts = raw_text.split("Ответ:")
-        question = parts[0].strip()
-        correct = parts[1].strip() if len(parts) > 1 else ""
-
-        if not correct:
-            raise ValueError("Gemini не дал ответа.")
-
-        await state.set_state(GrammarExercise.waiting_for_answer)
-        await state.update_data(correct_answer=correct)
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔁 Новое упражнение", callback_data="learn_grammar")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
-        ])
-
-        await callback.message.edit_text(f"<b>📘 Упражнение:</b>\n\n{question}", reply_markup=keyboard)
-
-    except Exception as e:
-        await callback.message.edit_text("❌ Не удалось сгенерировать упражнение.")
-        logging.exception(f"[GRAMMAR FSM] Ошибка: {e}")
 
 @dp.message(GrammarExercise.waiting_for_answer)
 async def check_grammar_answer(message: Message, state: FSMContext):
