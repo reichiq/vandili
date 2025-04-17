@@ -6,6 +6,7 @@ from html import unescape, escape
 import random
 import aiohttp
 import pytz
+import html as _html
 from pix2text import Pix2Text
 from PIL import Image
 from datetime import datetime
@@ -105,6 +106,32 @@ VOICE_MAP = {
     "en": {"lang": "en-US", "name": "en-US-Wavenet-D"},
     "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
 }
+
+async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None):
+    """
+    Пытается отправить text c parse_mode=HTML.
+    Если Telegram ругается — пробуем более «безопасные» варианты.
+    """
+    try:
+        # 1‑я попытка — как есть (красивый HTML)
+        await bot.send_message(chat_id,
+                               text=text,
+                               parse_mode="HTML",
+                               reply_to_message_id=reply_to)
+    except TelegramBadRequest:
+        # 2‑я попытка — вырезаем все теги, кроме <code>/<pre>
+        no_tags = re.sub(r'</?(?!code|pre)[a-zA-Z][^>]*>', '', text)
+        try:
+            await bot.send_message(chat_id,
+                                   text=no_tags,
+                                   parse_mode="HTML",
+                                   reply_to_message_id=reply_to)
+        except TelegramBadRequest:
+            # 3‑я попытка — полностью экранируем, отключаем parse_mode
+            await bot.send_message(chat_id,
+                                   text=_html.escape(text),
+                                   parse_mode=None,
+                                   reply_to_message_id=reply_to)
 
 def detect_lang(text: str) -> str:
     return "ru" if re.search(r"[а-яА-Я]", text) else "en"
@@ -2465,9 +2492,6 @@ async def handle_timezone_setting(message: Message):
             })
         )
 
-
-from aiogram.exceptions import TelegramBadRequest    # ← добавь вместе с импортами
-
 # -------------------------------------------------------------------
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
@@ -2525,12 +2549,7 @@ async def handle_formula_image(message: Message):
         pass
 
     # ----- 4. отправляем пользователю, защищаемся от «Unmatched end tag» -----
-    try:
-        await message.answer(answer)                        # обычная HTML‑версия
-    except TelegramBadRequest:
-        import html as _html
-        await message.answer(_html.escape(answer),          # без тегов
-                             parse_mode=None)               # ⬅️ выключаем HTML
+    await safe_send(message.chat.id, answer, reply_to=message.message_id)
 
 
 @dp.message(lambda message: message.voice is not None)
