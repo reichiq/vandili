@@ -2514,74 +2514,51 @@ async def handle_timezone_setting(message: Message):
             })
         )
 
-# -------------------------------------------------------------------
+
+#  обработчик приходящей КАРТИНКИ с формулой
+# ------------------------------------------------------------------
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
     """
-    1. Скачиваем файл → 2. распознаём LaTeX → 3. генерируем ответ →
-    4. конвертируем все $$…$$ в PNG → 5. безопасно отправляем.
+    1. скачиваем файл
+    2. распознаём LaTeX
+    3. кладём формулу в кэш + показываем превью
+    (ответ от Gemini НЕ генерируем – ждём вопрос пользователя)
     """
-    # ----- 1. получаем байты картинки -------------------------------
+    # 1️⃣  — получаем байты картинки
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
-    file    = await bot.get_file(file_id)
-    url     = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+    tg_file = await bot.get_file(file_id)
+    url     = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
 
     async with aiohttp.ClientSession() as sess:
-        async with sess.get(url) as resp:
-            img_bytes = await resp.read()
+        async with sess.get(url) as r:
+            img_bytes = await r.read()
 
-    # ----- 2. распознаём формулу ------------------------------------
+    # 2️⃣  — распознаём формулу
     latex = await recognize_formula(img_bytes)
     if not latex:
         await message.answer("❌ Не смог распознать формулу.")
         return
 
-    # кладём в кэш → можно будет задавать вопросы «про формулу»
+    # 3️⃣  — кладём в кэш → в следующем сообщении пользователь сможет
+    #      спросить «реши её», «упрости» и т.д.
     user_images_text[message.from_user.id] = latex
 
-    # превью‑картинка исходной формулы
+    #     делаем маленькое превью, чтобы человек видел, что именно распознано
     png_path = latex_to_png(latex)
     try:
         await bot.send_photo(
-            message.chat.id,
-            FSInputFile(png_path, filename="formula.png"),
-            caption=(f"Я вижу формулу 👇\n<code>{latex}</code>\n\n"
-                     "Спроси что‑нибудь о ней!"),
-            parse_mode="HTML"
+            chat_id = message.chat.id,
+            photo   = FSInputFile(png_path, "formula.png"),
+            caption = (f"Я вижу формулу 👇\n<code>{latex}</code>\n\n"
+                       "Спроси что‑нибудь о ней!"),
+            parse_mode = "HTML"
         )
     finally:
         os.remove(png_path)
 
-    # ----- 3. спрашиваем Gemini -------------------------------------
-    prompt = (f"Ниже формула/уравнение в LaTeX:\n\n$$ {latex} $$\n\n"
-              "1. Скажи, как она читается словами.\n"
-              "2. Если можно, реши/упрости её.\n"
-              "3. Укажи область применения (математика, физика, химия и т.д.).")
-    answer = await generate_and_send_gemini_response(
-        message.chat.id, prompt,
-        show_image=False, rus_word="", leftover=""
-    )
-
-    # ----- 4. заменяем все $$…$$ на PNG‑файлы ------------------------
-    answer, extra_imgs = replace_latex_with_png(answer)
-
-    # (необязательный) SymPy‑чек
-    try:
-        from sympy import sympify, solve
-        sol = solve(sympify(latex))
-        answer += f"\n\n<b>SymPy:</b> решение {sol}"
-    except Exception:
-        pass
-
-    # ----- 5. безопасно отправляем текст ----------------------------
-    await safe_send(message.chat.id, answer, reply_to=message.message_id)
-
-    # ----- 6. досылаем изображения‑фрагменты ------------------------
-    for p in extra_imgs:
-        try:
-            await bot.send_photo(message.chat.id, FSInputFile(p, filename="latex_part.png"))
-        finally:
-            os.remove(p)
+    # 🔚  больше ничего не делаем – ждём дальнейший вопрос пользователя
+    return
 
 
 @dp.message(lambda message: message.voice is not None)
@@ -3629,79 +3606,110 @@ def parse_russian_show_request(user_text: str):
     return (True, rus_word, en_word, leftover) if rus_word else (False, "", "", user_text)
 
 # ---------------------- Основная функция handle_msg ---------------------- #
-async def handle_msg(message: Message, recognized_text: str = None, voice_response_requested: bool = False):
-    cid = message.chat.id
-    user_input = recognized_text or (message.text or "").strip()
+# ------------------------------------------------------------------
+#  главный обработчик любого текста / распознанного голоса
+# ------------------------------------------------------------------
+async def handle_msg(message: Message,
+                     recognized_text: str | None = None,
+                     voice_response_requested: bool = False):
 
-    uid = message.from_user.id
+    cid        = message.chat.id
+    user_input = recognized_text or (message.text or "").strip()
+    uid        = message.from_user.id
+
+    # ────────────────────────────────────────────────────────────────
+    #  ▶ 1. ЕСТЬ формула в кеше → пользователь наконец задал вопрос
+    # ────────────────────────────────────────────────────────────────
     if uid in user_images_text:
-        latex = user_images_text.pop(uid)  # убираем после использования
-        prompt = f"Вот формула:\n\n\\[\n{latex}\n\\]\n\nТеперь задай вопрос:\n{user_input}\n\nОтветь на основе этой формулы."
+        latex = user_images_text.pop(uid)        # вытаскиваем и удаляем из кэша
+
+        if not user_input:                       # человек ничего не спросил
+            await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
+            return
+
+        prompt = (
+            f"Ниже записана формула в LaTeX:\n\n$$ {latex} $$\n\n"
+            f"Вопрос пользователя:\n{user_input}\n\n"
+            "Ответь максимально понятно, можешь показывать поэтапное решение."
+        )
 
         try:
-            response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-            await message.answer(response.text.strip())
-        except Exception:
-            await message.answer("❌ Ошибка при попытке ответа.")
-        return  # не продолжаем дальше
+            resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            gemini_text = format_gemini_response(resp.text.strip())
+        except Exception as e:
+            logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
+            await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
+            return
+
+        #  конвертируем все $$…$$ в PNG‑файлы
+        gemini_text, extra_imgs = replace_latex_with_png(gemini_text)
+
+        #  если попросили ответ «голосом» – сразу озвучиваем и выходим
+        if voice_response_requested:
+            await send_voice_message(cid, gemini_text)
+            return
+
+        #  безопасно отправляем текст + картинки
+        await safe_send(cid, gemini_text, reply_to=message.message_id)
+
+        for p in extra_imgs:
+            try:
+                await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
+            finally:
+                os.remove(p)
+        return                                       # ⚠ дальше не идём
+    # ────────────────────────────────────────────────────────────────
+    #  ▶ 2. Дальше – прежняя логика бота (имя, Unsplash, Gemini и т.д.)
+    # ────────────────────────────────────────────────────────────────
 
     lower_inp = user_input.lower()
+
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
-        if voice_response_requested:
-            await send_voice_message(cid, answer)
-        else:
-            await message.answer(answer)
-        return
+        return await (send_voice_message(cid, answer) if voice_response_requested
+                      else message.answer(answer))
 
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
-        if voice_response_requested:
-            await send_voice_message(cid, reply_text)
-        else:
-            await message.answer(reply_text)
-        return
+        return await (send_voice_message(cid, reply_text) if voice_response_requested
+                      else message.answer(reply_text))
 
+    # — показать картинку с Unsplash (пары «покажи …»)
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
 
-    leftover = leftover.strip()
+    leftover    = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    image_url = None
-    if show_image:
-        image_url = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY)
-
+    image_url   = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
     gemini_text = await generate_and_send_gemini_response(cid, full_prompt, show_image, rus_word, leftover)
 
-    if voice_response_requested:
-        if not gemini_text:
-            gemini_text = "Нет ответа для голосового сообщения."
-        await send_voice_message(cid, gemini_text)
+    if voice_response_requested:                         # ответ «голосом»
+        await send_voice_message(cid, gemini_text or "Нет ответа.")
         return
 
+    # ── отправляем текст/картинку, как было раньше ────────────────
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
                 if r.status == 200:
-                    photo_bytes = await r.read()
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpf:
-                        tmpf.write(photo_bytes)
-                        tmp_path = tmpf.name
+                    tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
+                    with open(tmp_path, "wb") as f:
+                        f.write(await r.read())
+
                     try:
-                        await bot.send_chat_action(chat_id=cid, action="upload_photo")
-                        file = FSInputFile(tmp_path, filename="image.jpg")
-                        caption, rest = split_caption_and_text(gemini_text or "...")
-                        await bot.send_photo(chat_id=cid, photo=file, caption=caption if caption else "...", **thread(message))
+                        await bot.send_chat_action(cid, "upload_photo")
+                        caption, rest = split_caption_and_text(gemini_text or "…")
+                        await bot.send_photo(cid, FSInputFile(tmp_path, "image.jpg"),
+                                             caption=caption or "…", **thread(message))
                         for c in rest:
-                            await bot.send_message(chat_id=cid, text=c, **thread(message))
+                            await bot.send_message(cid, c, **thread(message))
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
-        chunks = split_smart(gemini_text, TELEGRAM_MSG_LIMIT)
-        for c in chunks:
-            await message.answer(c)
+        for chunk in split_smart(gemini_text, TELEGRAM_MSG_LIMIT):
+            await message.answer(chunk)
     else:
         await message.answer("❌ Я не смог сгенерировать ответ.")
 
