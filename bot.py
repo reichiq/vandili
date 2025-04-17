@@ -621,40 +621,34 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
     return new_text, images
 
 STEP_RE = re.compile(
-    r"(Шаг\s+\d+:[^\n]*?)\s*"        # «Шаг 1: …»  ─ заголовок
-    r"(?:\n+|$)"                     # перевод строки
+    r"(Шаг\s+\d+:[^\n]*?)\s*"        # «Шаг 3: …»
+    r"(?:\n+|$)"
     r"(?:```.*?```|\s*)?"            # возможный code‑block
-    r"\$\$(.+?)\$\$"                 # LaTeX‑формула
-    r"(.*?)"                         # пояснение до след. шага
-    r"(?=Шаг\s+\d+:|$)",             # стоп: новый «Шаг …» или конец
+    r"\$\$(.+?)\$\$"                 # LaTeX
+    r"(.*?)"                         # пояснение
+    r"(?=Шаг\s+\d+:|$)",             # до следующего шага
     flags=re.S
 )
 
-def split_steps(raw: str) -> list[tuple[str, str]]:
+def split_steps(raw: str) -> list[tuple[str, str, str]]:
     """
-    Из Gemini‑ответа вида
-
-        Шаг 1:
-        $$ … $$
-        текст …
-
-        Шаг 2:
-        $$ … $$
-        …
-
-    вырезает список [(latex, caption), …].  
-    caption = «Шаг N: …» + пояснение, укорочено до 1024 симв.
+    -> [(latex, short_caption, full_explain), …]
+    short_caption = «Шаг N …» + первая фраза (≤300 симв.)
     """
     out = []
     for m in STEP_RE.finditer(raw):
         header  = m.group(1).strip()
         latex   = m.group(2).strip()
-        comment = m.group(3).strip()
-        cap = "\n".join(filter(None, [header, comment]))
-        cap = textwrap.shorten(cap, width=1024, placeholder="…")
-        out.append((latex, cap))
-    return out
+        explain = m.group(3).strip()
 
+        # берём первую фразу для подписи
+        first_sent = re.split(r'(?<=\.)\s', explain, 1)[0]
+        cap = textwrap.shorten(
+            f"{header} {first_sent}", width=300, placeholder="…"
+        )
+        out.append((latex, cap, explain))
+    return out
+    
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = DISABLED_CHATS_FILE
 
@@ -3642,10 +3636,11 @@ def parse_russian_show_request(user_text: str):
 
 
 #------------------Основная функция----------------№
-async def handle_msg(message: Message,
-                     recognized_text: str | None = None,
-                     voice_response_requested: bool = False):
-
+async def handle_msg(
+    message: Message,
+    recognized_text: str | None = None,
+    voice_response_requested: bool = False
+):
     cid        = message.chat.id
     user_input = recognized_text or (message.text or "").strip()
     uid        = message.from_user.id
@@ -3668,15 +3663,17 @@ async def handle_msg(message: Message,
             "Ответь пошагово. Для КАЖДОГО шага строго придерживайся формата:\n"
             "Шаг 1:\n"
             "$$ …latex… $$\n"
-            "Короткое пояснение.\n\n"
+            "Короткое пояснение (1‑2 предложения).\n\n"
             "Шаг 2:\n"
             "$$ … $$\n"
             "…\n\n"
-            "Никакого лишнего текста вне этих блоков."
+            "В самом конце приведи итоговую формулу в $$ … $$, без лишнего текста."
         )
 
         try:
-            resp        = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            resp        = await model.generate_content_async(
+                [{"role": "user", "parts": [prompt]}]
+            )
             raw_answer  = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
@@ -3684,13 +3681,15 @@ async def handle_msg(message: Message,
             return
 
         # ── разрезаем на шаги ──────────────────────────────────────
-        steps = split_steps(raw_answer)
+        steps = split_steps(raw_answer)      # -> [(latex, short_caption, explain), …]
 
-        # ── если Gemini послал правильный формат ──────────────────
-        if steps:
-            for latex_step, caption in steps:
+        if steps:  # корректный «шаговый» ответ
+            full_plain_text = []             # собираем для озвучки
+
+            for latex_step, caption, explain in steps:
                 png = latex_to_png(latex_step)
                 try:
+                    # картинка + короткая подпись
                     await bot.send_photo(
                         cid,
                         FSInputFile(png, "step.png"),
@@ -3701,15 +3700,35 @@ async def handle_msg(message: Message,
                 finally:
                     os.remove(png)
 
-            if voice_response_requested:
-                # озвучиваем весь текст без LaTeX
-                plain = re.sub(r"\$\$.+?\$\$", "", raw_answer, flags=re.S)
-                await send_voice_message(cid, plain)
-            return  # ✅ задача выполнена
+                # длинное пояснение отдельным сообщением
+                if explain:
+                    await safe_send(cid, explain)
+                    full_plain_text.append(explain)
 
-        # ── fallback: старый режим, если нет «Шаг …» ───────────────
-        gemini_text = format_gemini_response(raw_answer)
-        gemini_text, extra_imgs = replace_latex_with_png(gemini_text)
+            # ── итоговая формула (последний $$ … $$) ──────────────
+            finals = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
+            if finals:
+                res_png = latex_to_png(finals[-1].strip())
+                try:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(res_png, "result.png"),
+                        caption="Итоговое выражение",
+                        parse_mode="HTML"
+                    )
+                finally:
+                    os.remove(res_png)
+
+            # ── голосовой ответ, если просили ────────────────────
+            if voice_response_requested:
+                speech_text = " ".join(full_plain_text)
+                await send_voice_message(cid, speech_text or "Готово!")
+            return  # ✅
+
+        # ── fallback: Gemini не дал шагов – старый режим ──────────
+        gemini_text, extra_imgs = replace_latex_with_png(
+            format_gemini_response(raw_answer)
+        )
 
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
@@ -3730,15 +3749,19 @@ async def handle_msg(message: Message,
 
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
-        return await (send_voice_message(cid, answer) if voice_response_requested
-                      else message.answer(answer))
+        return await (
+            send_voice_message(cid, answer) if voice_response_requested
+            else message.answer(answer)
+        )
 
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
-        return await (send_voice_message(cid, reply_text) if voice_response_requested
-                      else message.answer(reply_text))
+        return await (
+            send_voice_message(cid, reply_text) if voice_response_requested
+            else message.answer(reply_text)
+        )
 
-    # — картинки Unsplash («покажи …»)
+    # — картинки Unsplash («покажи …»)
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -3746,9 +3769,12 @@ async def handle_msg(message: Message,
     leftover    = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
-    image_url   = await get_unsplash_image_url(image_en, UNSPLASH_ACCESS_KEY) if show_image else None
-    gemini_text = await generate_and_send_gemini_response(cid, full_prompt,
-                                                          show_image, rus_word, leftover)
+    image_url   = await get_unsplash_image_url(
+        image_en, UNSPLASH_ACCESS_KEY
+    ) if show_image else None
+    gemini_text = await generate_and_send_gemini_response(
+        cid, full_prompt, show_image, rus_word, leftover
+    )
 
     if voice_response_requested:
         await send_voice_message(cid, gemini_text or "Нет ответа.")
@@ -3759,14 +3785,20 @@ async def handle_msg(message: Message,
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
                 if r.status == 200:
-                    tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
+                    tmp_path = tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".jpg"
+                    ).name
                     with open(tmp_path, "wb") as f:
                         f.write(await r.read())
                     try:
                         await bot.send_chat_action(cid, "upload_photo")
                         caption, rest = split_caption_and_text(gemini_text or "…")
-                        await bot.send_photo(cid, FSInputFile(tmp_path, "image.jpg"),
-                                             caption=caption or "…", **thread(message))
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(tmp_path, "image.jpg"),
+                            caption=caption or "…",
+                            **thread(message)
+                        )
                         for c in rest:
                             await bot.send_message(cid, c, **thread(message))
                     finally:
