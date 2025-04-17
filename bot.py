@@ -657,29 +657,30 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
 # --- «чинить» LaTeX, который не понимает matplotlib.mathtext ----------
 def _sanitize_for_png(lx: str) -> str:
     """
-    Заменяем неподдерживаемые команды и array → pmatrix.
+    Заменяем неподдерживаемые команды и array → substack внутри круглых скобок.
     """
-    # 1) Переводим array-окружение в полноценный pmatrix
-    def _array_to_pmatrix(m):
+    # 1) Переводим array-окружение в многострочное substack
+    def _array_to_substack(m):
         inner = m.group(1)
-        # Убираем двойные фигурные скобки {{…}} → {…}
+        # {{…}} → {…}
         inner = re.sub(r"\{\{(.+?)\}\}", r"\1", inner, flags=re.S)
-        return r"\begin{pmatrix}" + inner + r"\end{pmatrix}"
+        # substack поддерживается в mathtext, оборачиваем в \left( … \right)
+        return r"\left(\substack{" + inner + r"}\right>"
 
     lx = re.sub(
         r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}",
-        _array_to_pmatrix,
+        _array_to_substack,
         lx,
         flags=re.S
     )
 
-    # 2) Остальные замены команд
+    # 2) Остальные «коктейльные» замены команд
     replacements = {
         r"\implies":       r"\Rightarrow",
         r"\iff":           r"\Leftrightarrow",
-        r"\Longrightarrow": r"\Rightarrow",
-        r"\longrightarrow": r"\rightarrow",
-        r"\longleftarrow":  r"\leftarrow",
+        r"\Longrightarrow":r"\Rightarrow",
+        r"\longrightarrow":r"\rightarrow",
+        r"\longleftarrow": r"\leftarrow",
     }
     for bad, good in replacements.items():
         lx = lx.replace(bad, good)
