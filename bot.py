@@ -864,41 +864,64 @@ CURRENCY_SYNONYMS = {
     "¥": "JPY",
 }
 
+EXCHANGE_PATTERN = re.compile(
+    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+)
+
+@dp.message(F.text.regexp(EXCHANGE_PATTERN))
+async def handle_exchange_request(message: Message):
+    match = EXCHANGE_PATTERN.search(message.text)
+    if not match:
+        await message.answer("Не удалось распознать запрос на обмен валют 😔")
+        return
+
+    amount, from_curr, to_curr = match.groups()
+
+    # Исправляем запятую на точку для правильного преобразования в float
+    amount = float(amount.replace(",", "."))
+
+    result_text = await get_exchange_rate(amount, from_curr, to_curr)
+    await message.answer(result_text)
+
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
+
+    # Сначала заменяем на стандартные коды валют
+    from_curr = CURRENCY_SYNONYMS.get(from_curr, from_curr).lower()
+    to_curr = CURRENCY_SYNONYMS.get(to_curr, to_curr).lower()
+
     url = f"https://www.floatrates.com/daily/{from_curr}.json"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    logging.exception(f"Floatrates вернул статус {resp.status} для {url}")
+                    logging.error(f"Floatrates вернул статус {resp.status} для {url}")
                     return None
                 data = await resp.json()
     except Exception as e:
         logging.error(f"Ошибка при запросе к Floatrates: {e}")
         return None
+
     if to_curr not in data:
         return None
+
     rate = data[to_curr].get("rate")
     if rate is None:
         return None
     return float(rate)
 
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
+    # Пробуем получить курс
     rate = await get_floatrates_rate(from_curr, to_curr)
     if rate is None:
-        return None
+        # Возвращаем в случае ошибки более красивое сообщение
+        return "Извините, не смог найти курс валют для такого запроса 😔"
+
     result = amount * rate
     today = datetime.now().strftime("%Y-%m-%d")
     return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
             "Курс в банках и на биржах может отличаться.")
-
-# Новый универсальный шаблон для запроса курса валют
-# Он обрабатывает запросы вида: "1 доллар сум" и "1 доллар в сум", а также с английскими обозначениями.
-EXCHANGE_PATTERN = re.compile(
-    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
-)
 
 # ---------------------- Функции для погоды ---------------------- #
 async def do_geocoding_request(name: str) -> dict:
