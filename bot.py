@@ -865,7 +865,7 @@ CURRENCY_SYNONYMS = {
 }
 
 EXCHANGE_PATTERN = re.compile(
-    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+    r"(?i)(?:(\d+(?:[.,]\d+)?)[ \t]+)?([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
 )
 
 @dp.message(F.text.regexp(EXCHANGE_PATTERN))
@@ -877,12 +877,16 @@ async def handle_exchange_request(message: Message):
 
     amount, from_curr, to_curr = match.groups()
 
-    # Исправляем запятую на точку для правильного преобразования в float
-    amount = float(amount.replace(",", "."))
+    # Если количество не указано, ставим 1
+    if amount is None:
+        amount = 1.0
+    else:
+        # Исправляем запятую на точку
+        amount = float(amount.replace(",", "."))
 
     result_text = await get_exchange_rate(amount, from_curr, to_curr)
     await message.answer(result_text)
-
+    
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
@@ -912,15 +916,18 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     return float(rate)
 
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
+    # Нормализуем валюты сразу
+    from_curr_code = CURRENCY_SYNONYMS.get(from_curr.lower(), from_curr.upper())
+    to_curr_code = CURRENCY_SYNONYMS.get(to_curr.lower(), to_curr.upper())
+
     # Пробуем получить курс
     rate = await get_floatrates_rate(from_curr, to_curr)
     if rate is None:
-        # Возвращаем в случае ошибки более красивое сообщение
         return "Извините, не смог найти курс валют для такого запроса 😔"
 
     result = amount * rate
     today = datetime.now().strftime("%Y-%m-%d")
-    return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
+    return (f"Курс {amount:.0f} {from_curr_code} – {result:.2f} {to_curr_code} на {today} 😊\n"
             "Курс в банках и на биржах может отличаться.")
 
 # ---------------------- Функции для погоды ---------------------- #
