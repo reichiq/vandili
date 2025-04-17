@@ -42,20 +42,6 @@ DISABLED_CHATS_FILE = DATA_DIR / "disabled_chats.json"
 UNIQUE_USERS_FILE = DATA_DIR / "unique_users.json"
 UNIQUE_GROUPS_FILE = DATA_DIR / "unique_groups.json"
 
-# Пути к JSON-файлам
-NOTES_FILE = DATA_DIR / NOTES_FILE
-SUPPORT_MAP_FILE = DATA_DIR / SUPPORT_MAP_FILE
-TIMEZONES_FILE = DATA_DIR / TIMEZONES_FILE
-PROGRESS_FILE = DATA_DIR / PROGRESS_FILE
-VOCAB_FILE = DATA_DIR / VOCAB_FILE
-WORD_OF_DAY_HISTORY_FILE = DATA_DIR / WORD_OF_DAY_HISTORY_FILE
-REVIEW_STATS_FILE = DATA_DIR / REVIEW_STATS_FILE
-ACHIEVEMENTS_FILE = DATA_DIR / ACHIEVEMENTS_FILE
-VOCAB_REMINDERS_FILE = DATA_DIR / VOCAB_REMINDERS_FILE
-DISABLED_CHATS_FILE = DATA_DIR / DISABLED_CHATS_FILE
-UNIQUE_USERS_FILE = DATA_DIR / UNIQUE_USERS_FILE
-UNIQUE_GROUPS_FILE = DATA_DIR / UNIQUE_GROUPS_FILE
-
 import asyncio
 import google.generativeai as genai
 import tempfile
@@ -236,17 +222,6 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Изменение модели на Gemini 2.5 Pro Experimental
 model = genai.GenerativeModel(model_name="models/gemini-2.5-pro-preview-03-25")
 
-# ---------------------- Загрузка и сохранение статистики ---------------------- #
-STATS_FILE = STATS_FILE
-SUPPORT_MAP_FILE = SUPPORT_MAP_FILE
-NOTES_FILE = NOTES_FILE
-REMINDERS_FILE = REMINDERS_FILE
-TIMEZONES_FILE = TIMEZONES_FILE
-PROGRESS_FILE = PROGRESS_FILE
-VOCAB_FILE = VOCAB_FILE
-WORD_OF_DAY_HISTORY_FILE = WORD_OF_DAY_HISTORY_FILE
-REVIEW_STATS_FILE = REVIEW_STATS_FILE
-ACHIEVEMENTS_FILE = ACHIEVEMENTS_FILE
 
 if os.path.exists(ACHIEVEMENTS_FILE):
     with open(ACHIEVEMENTS_FILE, "r", encoding="utf-8") as f:
@@ -652,13 +627,10 @@ def _sanitize_for_png(lx: str) -> str:
     return lx
 
 STEP_RE = re.compile(
-    r"(Шаг\s+\d+\s*[:.\-–—]?[^\n]*?)\s*"   # допускаем «:», «.», «-», «–», «—»
-    r"(?:\n+|$)"
-    r"(?:```.*?```|\s*)?"
-    r"\$\$(.+?)\$\$"
-    r"(.*?)"
-    r"(?=Шаг\s+\d+\s*[:.\-–—]?|$)",
-    flags=re.S
+    r"(?:Шаг|Step)\s*[\.\:№]?\s*(\d+)[\.\:]*\s*.*?"  # «Шаг 1», «Step 1:»
+    r"\$\$(.+?)\$\$"                                # сам LaTeX
+    r"(.*?)(?=(?:Шаг|Step)\s*\d+|$)",               # пояснение до следующего шага
+    flags=re.S | re.I
 )
 
 def split_steps(raw: str) -> list[tuple[str, str, str]]:
@@ -3686,16 +3658,14 @@ async def handle_msg(
 
         # prompt для Gemini
         prompt = (
-            "Ниже формула в LaTeX (между $$):\n\n"
-            f"$$ {latex} $$\n\n"
-            "Вопрос пользователя:\n"
-            f"{user_input}\n\n"
-            "Ответь ПОШАГОВО. Для КАЖДОГО шага строго используй формат:\n"
-            "Шаг 1:\n"
-            "$$ … $$\n"
-            "Подробное пояснение (желательно не более 5 предложений, чтобы было понятно, как именно получен шаг).\n"
-            "...\n\n"
-            "В самом конце приведи итоговую формулу в $$ … $$ (без лишнего текста)."
+            "Ниже формула (LaTeX между $$). Реши его ПОШАГОВО.\n"
+            "Для каждого шага укажи название шага (Шаг N, Step N …), сам LaTeX и пояснение.\n"
+            "Пример:\n"
+            "Шаг 1. Преобразуем дробь\n"
+            "$$ ... $$\n"
+            "Пояснение: …\n"
+            "...\n"
+            "В конце – итоговая формула в $$ $$."
         )
 
         # запрашиваем модель
