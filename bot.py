@@ -3517,33 +3517,34 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
-        amount_str, from_curr_raw, to_curr_raw = exchange_match.groups()
-        # лемматизируем и приводим к нормальной форме
-        from_lemma = normalize_currency_rus(from_curr_raw)
-        to_lemma   = normalize_currency_rus(to_curr_raw)
-        # если ни одна из «валют» не в списке — это не обмен, пропускаем дальше
-        if from_lemma not in CURRENCY_SYNONYMS and to_lemma not in CURRENCY_SYNONYMS:
-            pass
-        else:
-            if amount_str is None:
+        amount_str, raw_from, raw_to = exchange_match.groups()
+        
+        if amount_str:
+            try:
+                amount = float(amount_str.replace(',', '.'))
+            except ValueError:
                 amount = 1.0
             else:
-                try:
-                    amount = float(amount_str.replace(',', '.'))
-                except ValueError:
-                    amount = 0.0
+                amount = 1.0
+                
+        from_lemma = normalize_currency_rus(raw_from)
+        to_lemma   = normalize_currency_rus(raw_to)
 
-        # получаем коды валют
-        from_code = CURRENCY_SYNONYMS.get(from_lemma, from_lemma.upper())
-        to_code   = CURRENCY_SYNONYMS.get(to_lemma, to_lemma.upper())
+    # 4) Проверяем, что это действительно валюта, а не любой текст
+        if from_lemma in CURRENCY_SYNONYMS or to_lemma in CURRENCY_SYNONYMS:
+        # 5) Получаем ISO‑коды
+            from_code = CURRENCY_SYNONYMS.get(from_lemma, from_lemma.upper())
+            to_code   = CURRENCY_SYNONYMS.get(to_lemma,   to_lemma.upper())
 
-        exchange_text = await get_exchange_rate(amount, from_code, to_code)
-        if exchange_text:
-            if voice_response_requested:
-                await send_voice_message(cid, exchange_text)
-            else:
-                await message.answer(exchange_text)
-            return
+        # 6) Делаем запрос курса
+            exchange_text = await get_exchange_rate(amount, from_code, to_code)
+            if exchange_text:
+                if voice_response_requested:
+                    await send_voice_message(cid, exchange_text)
+                else:
+                    await message.answer(exchange_text)
+                return
+
     
     # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
