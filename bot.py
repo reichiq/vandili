@@ -3461,6 +3461,7 @@ def format_gemini_response(text: str) -> str:
         text = text.replace(escape(placeholder), block_html)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'(?m)^[\*]+\s*', '', text)
     text = re.sub(r'`([^`]+?)`', r'<code>\1</code>', text)
     text = re.sub(r"\[.*?(изображение|рисунок).+?\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(Я являюсь текстовым ассистентом.*выводить графику\.)", "", text, flags=re.IGNORECASE)
