@@ -3670,8 +3670,7 @@ async def handle_msg(
         if not user_input:
             await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
             return
-
-        # prompt для Gemini
+            
         prompt = (
             # 0) Исходный LaTeX (любой области) между $$ … $$
             "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
