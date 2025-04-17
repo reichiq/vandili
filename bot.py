@@ -3662,85 +3662,77 @@ async def handle_msg(
             f"{user_input}\n\n"
             "Ответь пошагово. Для КАЖДОГО шага строго придерживайся формата:\n"
             "Шаг 1:\n"
-            "$$ …latex… $$\n"
-            "Короткое пояснение (1‑2 предложения).\n\n"
-            "Шаг 2:\n"
             "$$ … $$\n"
-            "…\n\n"
-            "В самом конце приведи итоговую формулу в $$ … $$, без лишнего текста."
+            "Пояснение (1‑2 предложения).\n"
+            "...\n\n"
+            "В самом конце дай итоговую формулу в $$ … $$ без лишнего текста."
         )
 
         try:
-            resp        = await model.generate_content_async(
+            resp       = await model.generate_content_async(
                 [{"role": "user", "parts": [prompt]}]
             )
-            raw_answer  = resp.text.strip()
+            raw_answer = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
             await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
             return
 
-        # ── разрезаем на шаги ──────────────────────────────────────
-        steps = split_steps(raw_answer)      # -> [(latex, short_caption, explain), …]
+        # парсим «Шаг …»
+        steps = split_steps(raw_answer)          # → [(latex, explain), …]
 
-        if steps:  # корректный «шаговый» ответ
-            full_plain_text = []             # собираем для озвучки
+        if steps:                                # корректно распарсилось
+            board_parts   = []                   # формулы для «общей доски»
+            voice_chunks  = []                   # пояснения для озвучки
 
-            for latex_step, caption, explain in steps:
+            for idx, (latex_step, explain) in enumerate(steps, 1):
+                board_parts.append(latex_step)
+                voice_chunks.append(f"Шаг {idx}. {explain}")
+
                 png = latex_to_png(latex_step)
                 try:
-                    # картинка + короткая подпись
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(png, "step.png"),
-                        caption=caption,
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
+                    cap = f"Шаг {idx}: {explain}"
+                    if len(cap) > 1024:          # Telegram caption limit
+                        await bot.send_photo(cid, FSInputFile(png, "step.png"),
+                                             caption=f"Шаг {idx}", parse_mode="HTML",
+                                             reply_to_message_id=message.message_id)
+                        await safe_send(cid, explain)
+                    else:
+                        await bot.send_photo(cid, FSInputFile(png, "step.png"),
+                                             caption=cap, parse_mode="HTML",
+                                             reply_to_message_id=message.message_id)
                 finally:
                     os.remove(png)
 
-                # длинное пояснение отдельным сообщением
-                if explain:
-                    await safe_send(cid, explain)
-                    full_plain_text.append(explain)
-
-            # ── итоговая формула (последний $$ … $$) ──────────────
-            finals = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
-            if finals:
-                res_png = latex_to_png(finals[-1].strip())
-                try:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(res_png, "result.png"),
-                        caption="Итоговое выражение",
-                        parse_mode="HTML"
-                    )
-                finally:
-                    os.remove(res_png)
-
-            # ── голосовой ответ, если просили ────────────────────
-            if voice_response_requested:
-                speech_text = " ".join(full_plain_text)
-                await send_voice_message(cid, speech_text or "Готово!")
-            return  # ✅
-
-        # ── fallback: Gemini не дал шагов – старый режим ──────────
-        gemini_text, extra_imgs = replace_latex_with_png(
-            format_gemini_response(raw_answer)
-        )
-
-        if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
-            return
-
-        await safe_send(cid, gemini_text, reply_to=message.message_id)
-        for p in extra_imgs:
+            # ── «Общая доска» ──────────────────────────────────
+            board_ltx = r" \\[10pt] ".join(board_parts)
+            board_png = latex_to_png(board_ltx)
             try:
-                await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
+                await bot.send_photo(
+                    cid,
+                    FSInputFile(board_png, "board.png"),
+                    caption="🟩 Общая картинка решения",
+                    parse_mode="HTML"
+                )
             finally:
-                os.remove(p)
-        return  # ➜ дальше не идём
+                os.remove(board_png)
+
+            if voice_response_requested:
+                await send_voice_message(cid, " ".join(voice_chunks))
+            return                               # ✅
+
+        # fallback: Gemini вернул что‑то не по шаблону
+        text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
+        if voice_response_requested:
+            await send_voice_message(cid, text)
+        else:
+            await safe_send(cid, text, reply_to=message.message_id)
+            for p in imgs:
+                try:
+                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
+                finally:
+                    os.remove(p)
+        return                                   # ⬅
 
     # ───────────────────────────────────────────────────────────────
     # 2) остальная логика (имя, Unsplash, погода и т.д.)
@@ -3780,7 +3772,7 @@ async def handle_msg(
         await send_voice_message(cid, gemini_text or "Нет ответа.")
         return
 
-    # ── отправляем результат (картинка или текст) ─────────────────
+    # ── отправляем результат ─────────────────────────────────────
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
