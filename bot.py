@@ -3733,12 +3733,13 @@ async def handle_msg(
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
                 # 2) Отбрасываем строку «4) Итоговый ответ: …», если она есть
-                lines = explain_raw.splitlines()
-                lines = [
-                    line for line in lines
-                    if not re.match(r'^\s*\d+\)\s*\**\s*Итоговый ответ:', line)
-                ]
-                cleaned = "\n".join(lines)
+                cleaned_lines = []
+                for line in explain_raw.splitlines():
+                    # удаляем строки, начинающиеся с цифры+')' (возможно с обрамлением **)
+                    if re.match(r'^\s*\**\s*\d+\)\s*', line):
+                        continue
+                    cleaned_lines.append(line)
+                cleaned = "\n".join(cleaned_lines)
 
                 # 3) Превращаем формулу в читабельный текст
                 explain = _clean_explain(cleaned)
