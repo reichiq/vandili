@@ -1540,9 +1540,9 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
     await state.update_data(last_dialogue_json=dialogs)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice")],
-        [InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")],
+        [InlineKeyboardButton(text="🔊 Озвучить диалог", callback_data="dialogue_voice")],
+        [InlineKeyboardButton(text="📘 Ключевые слова", callback_data="dialogue_add_words")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
     await callback.message.edit_text(
