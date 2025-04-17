@@ -3517,25 +3517,28 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
-        amount_str = exchange_match.group(1)
-        from_curr_raw = exchange_match.group(2)
-        to_curr_raw = exchange_match.group(3)
-        if amount_str is None:
-            amount = 1.0  # Если нет числа (например "доллар в сум"), ставим 1
+        amount_str, from_curr_raw, to_curr_raw = exchange_match.groups()
+        # лемматизируем и приводим к нормальной форме
+        from_lemma = normalize_currency_rus(from_curr_raw)
+        to_lemma   = normalize_currency_rus(to_curr_raw)
+        # если ни одна из «валют» не в списке — это не обмен, пропускаем дальше
+        if from_lemma not in CURRENCY_SYNONYMS and to_lemma not in CURRENCY_SYNONYMS:
+            pass
         else:
-            try:
-                amount = float(amount_str.replace(',', '.'))
-            except ValueError:
-                amount = 0
-                
-        from_curr_lemma = normalize_currency_rus(from_curr_raw)
-        to_curr_lemma = normalize_currency_rus(to_curr_raw)
-            
-        from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
-        to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
-            
-        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if exchange_text is not None:
+            if amount_str is None:
+                amount = 1.0
+            else:
+                try:
+                    amount = float(amount_str.replace(',', '.'))
+                except ValueError:
+                    amount = 0.0
+
+        # получаем коды валют
+        from_code = CURRENCY_SYNONYMS.get(from_lemma, from_lemma.upper())
+        to_code   = CURRENCY_SYNONYMS.get(to_lemma, to_lemma.upper())
+
+        exchange_text = await get_exchange_rate(amount, from_code, to_code)
+        if exchange_text:
             if voice_response_requested:
                 await send_voice_message(cid, exchange_text)
             else:
