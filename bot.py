@@ -59,6 +59,7 @@ import asyncio
 import google.generativeai as genai
 import tempfile
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 from pymorphy3 import MorphAnalyzer
 from string import punctuation
 from google.cloud import translate
@@ -2465,6 +2466,9 @@ async def handle_timezone_setting(message: Message):
         )
 
 
+from aiogram.exceptions import TelegramBadRequest    # ← добавь вместе с импортами
+
+# -------------------------------------------------------------------
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
     """
@@ -2495,31 +2499,39 @@ async def handle_formula_image(message: Message):
             chat_id=message.chat.id,
             photo=FSInputFile(png_path, filename="formula.png"),
             caption=(f"Я вижу формулу 👇\n<code>{latex}</code>\n\n"
-                     "Спроси что‑нибудь о ней!"),
+                     "Спроси что‑нибудь о ней!"),
             parse_mode="HTML"
         )
     finally:
         os.remove(png_path)
 
-    
     # ----- 3. формируем ответ -----
-    # 3‑a) быстрый «синтаксис LaTeX + перевод» через Gemini
-    prompt = (f"Ниже формула/уравнение в LaTeX:\n\n$$ {latex} $$\n\n"
+    prompt = (f"Ниже формула/уравнение в LaTeX:\n\n$$ {latex} $$\n\n"
               "1. Скажи, как она читается словами.\n"
               "2. Если можно, реши/упрости её.\n"
-              "3. Укажи область применения (математика, физика, химия и т.д.).")
-    answer = await generate_and_send_gemini_response(message.chat.id, prompt, False, "", "")
+              "3. Укажи область применения (математика, физика, химия и т.д.).")
+    answer = await generate_and_send_gemini_response(message.chat.id, prompt,
+                                                     show_image=False,
+                                                     rus_word="",
+                                                     leftover="")
 
-    # 3‑b) (опционально) продемонстрировать SymPy‑решение
+    # 3‑b) SymPy‑решение (необязательно)
     try:
-        from sympy import sympify, solve, latex as to_latex
+        from sympy import sympify, solve
         expr = sympify(latex)
         sol  = solve(expr)
         answer += f"\n\n<b>SymPy:</b> решение {sol}"
     except Exception:
         pass
 
-    await message.answer(answer)
+    # ----- 4. отправляем пользователю, защищаемся от «Unmatched end tag» -----
+    try:
+        await message.answer(answer)                        # обычная HTML‑версия
+    except TelegramBadRequest:
+        import html as _html
+        await message.answer(_html.escape(answer),          # без тегов
+                             parse_mode=None)               # ⬅️ выключаем HTML
+
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
