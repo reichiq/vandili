@@ -657,27 +657,29 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
 # --- «чинить» LaTeX, который не понимает matplotlib.mathtext ----------
 def _sanitize_for_png(lx: str) -> str:
     """
-    Заменяем неподдерживаемые команды и array → matrix.
+    Заменяем неподдерживаемые команды и array → pmatrix.
     """
-    # 1) Обрабатываем array-окружение
-    arr_pat = r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}"
-    m = re.search(arr_pat, lx, flags=re.S)
-    if m:
-        inner = m.group(1)
-        # {{…}} → {…}
-        inner = re.sub(r"\{\{(.+?)\}\}", r"\1", inner)
-        # формируем matrix
-        lx = r"\matrix{" + inner + "}"
+    # 1) Array‑окружение сразу в \pmatrix{…}
+    lx = re.sub(
+        r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}",
+        lambda m: r"\pmatrix{" + re.sub(r"\{\{(.+?)\}\}", r"\1", m.group(1)) + "}",
+        lx,
+        flags=re.S
+    )
+
     # 2) Остальные замены команд
     replacements = {
-        r"\implies": r"\Rightarrow",
-        r"\iff": r"\Leftrightarrow",
+        r"\implies":      r"\Rightarrow",
+        r"\iff":          r"\Leftrightarrow",
         r"\Longrightarrow": r"\Rightarrow",
         r"\longrightarrow": r"\rightarrow",
-        r"\longleftarrow": r"\leftarrow",
+        r"\longleftarrow":  r"\leftarrow",
+        # если где‑то осталось \matrix — переведём в поддерживаемый вариант
+        r"\matrix":       r"\pmatrix",
     }
     for bad, good in replacements.items():
         lx = lx.replace(bad, good)
+
     return lx
 
 STEP_RE = re.compile(
