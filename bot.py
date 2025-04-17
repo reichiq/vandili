@@ -3718,16 +3718,20 @@ async def handle_msg(
         if steps:
             from PIL import Image, ImageOps
 
-            step_imgs    = []                # список PNG шагов
-            voice_chunks = []                # реплики для TTS
+            step_imgs = []                 # список PNG шагов
+            voice_chunks = []              # реплики для TTS
 
             # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
+                # рендерим шаг в картинку и сохраняем путь
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
+                step_imgs.append(img_path)
+
+                # приводим пояснение к читабельному виду
                 explain = _clean_explain(explain_raw)
-                
                 caption = f"<b>Шаг {idx}.</b>\n{escape(explain)}"
-                
+
+                # отправляем картинку шага + подпись
                 if len(caption) > 1024:
                     await bot.send_photo(
                         cid,
@@ -3736,7 +3740,7 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-                    await safe_send(cid, explain)           # текст отдельным сообщением
+                    await safe_send(cid, explain, reply_to=message.message_id)
                 else:
                     await bot.send_photo(
                         cid,
@@ -3746,12 +3750,12 @@ async def handle_msg(
                         reply_to_message_id=message.message_id
                     )
 
-
             # ---------- итоговая формула ----------
             try:
                 all_latex = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
                 if all_latex:
                     final_latex = all_latex[-1].strip()
+                    # если итоговая формула отличается от шаговых
                     if final_latex not in {l for l, _, _ in steps}:
                         final_img = latex_to_png(_sanitize_for_png(final_latex))
                         await bot.send_photo(
@@ -3766,36 +3770,37 @@ async def handle_msg(
                     os.remove(final_img)
             # ---------- конец итоговой формулы ----------
 
-            # ---------- «общая доска» ----------
-            try:
-                imgs    = [Image.open(p) for p in step_imgs]
-                max_w   = max(im.width for im in imgs)
-                total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
+            # ---------- «общая доска» (монтируем все шаги в одну картинку) ----------
+            if step_imgs:
+                try:
+                    imgs = [Image.open(p) for p in step_imgs]
+                    max_w = max(im.width for im in imgs)
+                    total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
 
-                board = Image.new("RGB", (max_w, total_h), "white")
-                y = 0
-                for im in imgs:
-                    board.paste(ImageOps.expand(im, border=10, fill="white"), (0, y))
-                    y += im.height + 20
+                    board = Image.new("RGB", (max_w, total_h), "white")
+                    y = 0
+                    for im in imgs:
+                        board.paste(ImageOps.expand(im, border=10, fill="white"), (0, y))
+                        y += im.height + 20
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    board.save(tmp.name)
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(tmp.name, "board.png"),
-                        caption="🟢 Общий вид решения",
-                        parse_mode="HTML"
-                    )
-            finally:
-                for p in step_imgs:
-                    os.remove(p)
-                if 'tmp' in locals():
-                    os.remove(tmp.name)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        board.save(tmp.name)
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(tmp.name, "board.png"),
+                            caption="🟢 Общий вид решения",
+                            parse_mode="HTML"
+                        )
+                finally:
+                    for p in step_imgs:
+                        os.remove(p)
+                    if 'tmp' in locals():
+                        os.remove(tmp.name)
 
             # озвучка (если просили «голосом»)
             if voice_response_requested:
                 await send_voice_message(cid, " ".join(voice_chunks))
-            return                               # 🎉 done
+            return  # 🎉 готово!
 
         # ───────────────────────────────────────────
         # B. формат не распознан → плоский текст
