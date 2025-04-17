@@ -1480,9 +1480,10 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             f"Диалоги на тему «{topic}» не найдены.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]]
+                inline_keyboard=[
+                    [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]
+                ]
             )
-        )
         return
 
     # 3) формируем текст диалога
