@@ -1480,7 +1480,7 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
 
     if not topic_list:
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]]
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]]
         )
         await callback.message.edit_text(
             f"Диалоги на тему «{topic.title()}» не найдены.",
