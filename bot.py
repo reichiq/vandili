@@ -622,10 +622,12 @@ import tempfile, os
 
 def latex_to_png(latex: str) -> str:
     """
-    Рисует формулу и возвращает путь к временному .png
+    Рисует формулу и возвращает путь к временному .png.
+    Сначала прогоняет через _sanitize_for_png.
     """
+    clean_latex = _sanitize_for_png(latex)
     fig = plt.figure()
-    fig.text(0.1, 0.5, f"${latex}$", fontsize=24)
+    fig.text(0.1, 0.5, f"${clean_latex}$", fontsize=24)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp.name, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
@@ -655,9 +657,18 @@ def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
 # --- «чинить» LaTeX, который не понимает matplotlib.mathtext ----------
 def _sanitize_for_png(lx: str) -> str:
     """
-    Заменяем команды, которых нет в mathtext.
-    Добавляй сюда по мере необходимости.
+    Заменяем неподдерживаемые команды и array → matrix.
     """
+    # 1) Обрабатываем array-окружение
+    arr_pat = r"\\begin\{array\}\s*\{c\}(.+?)\\end\{array\}"
+    m = re.search(arr_pat, lx, flags=re.S)
+    if m:
+        inner = m.group(1)
+        # {{…}} → {…}
+        inner = re.sub(r"\{\{(.+?)\}\}", r"\1", inner)
+        # формируем matrix
+        lx = r"\matrix{" + inner + "}"
+    # 2) Остальные замены команд
     replacements = {
         r"\implies": r"\Rightarrow",
         r"\iff": r"\Leftrightarrow",
