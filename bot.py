@@ -505,7 +505,7 @@ def render_top_commands_bar_chart(commands_dict: dict) -> str:
     fig, ax = plt.subplots(figsize=(8, 5))
     bars = ax.bar(commands, counts)
 
-    ax.set_title("📊 Топ-5 команд")
+    ax.set_title("Топ-5 команд")
     ax.set_xlabel("Команды")
     ax.set_ylabel("Использований")
 
@@ -2554,10 +2554,13 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     m = re.search(r"(?:\*+)?Ответы?\*?\s*[:\-]\s*(.+)$", raw, flags=re.IGNORECASE | re.DOTALL)
     if not m:
         logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
-        await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
-        ]))
+        await callback.message.edit_text(
+            "❌ Не удалось распознать ответ. Попробуй ещё раз.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+            ])
+        )
         return
 
     # Вопрос — всё до "Ответ"
@@ -2577,9 +2580,11 @@ async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
+    # Выводим упражнение с HTML-разметкой
     await callback.message.edit_text(
-        f"<b>📘 Упражнение ({level})</b>\n\n{question}",
-        reply_markup=kb
+        f"<b>📘 Упражнение ({level})</b>\n\n{escape(question)}",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
 
 @dp.message(GrammarExercise.waiting_for_answer)
