@@ -1155,9 +1155,9 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
         cleaned = clean_for_tts(raw_line)
         # если запрос на русском — используем ru-RU
         if detect_lang(cleaned) == "ru":
-            lang = "ru-RU"
+            lang_code = "ru-RU"
         else:
-            lang = detect_dominant_lang(cleaned)
+            lang_code = "en-US"
 
         try:
             ogg_path = await generate_voice_snippet(cleaned, lang)
@@ -1468,52 +1468,82 @@ async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
 # ─── Обработчик выбора конкретной темы диалога ───#
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    # достаём тему из callback_data, приводим к виду заголовка
+    # 0) Предотвращаем ошибку "query is too old"
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        pass
+
+    # 1) Получаем тему
     topic_raw = callback.data.split(":", 1)[1]
     topic_title = topic_raw.replace("_", " ").title()
 
-    # 1) Сообщаем, что начинаем генерацию
+    # 2) Меняем текст кнопки на индикатор
     await callback.message.edit_text(
-        f"📖 Генерирую 3–5 коротких диалогов на тему «{topic_title}»…",
+        f"📖 Генерирую 3–5 примеров диалогов на тему «{topic_title}»…",
         parse_mode="HTML"
     )
 
-    # 2) Формируем промпт для Gemini: просим диалоги + переводы
+    # 3) Новый промпт: просим JSON‑массив для удобного разбора
     prompt = (
-        f"Ты — преподаватель английского языка. Составь 3–5 коротких диалогов на тему «{topic_title}».\n"
-        "Для каждого диалога:\n"
-        "1) Оригинал на английском:\n"
-        "   You: …\n"
-        "   VAI: …\n"
-        "2) Перевод на русский:\n"
-        "   Ты: …\n"
-        "   VAI: …\n\n"
-        "Никакого лишнего — только сами диалоги в этом формате."
+        f"Ты — опытный преподаватель английского. "
+        f"Составь 3–5 коротких диалогов на тему «{topic_title}». "
+        "Ответь строго в формате JSON-массива, например:\n"
+        '[\n'
+        '  {\n'
+        '    "you": "Excuse me, how much is this?",\n'
+        '    "vai": "It costs $20.",\n'
+        '    "ты": "Извините, сколько это стоит?",\n'
+        '    "vai_ru": "Это стоит 20 долларов."\n'
+        '  },\n'
+        '  …\n'
+        ']\n'
+        "Никаких комментариев — только JSON."
     )
 
-    # 3) Генерируем через Gemini
+    # 4) Генерируем контент
     response = await model.generate_content_async([
         {"role": "user", "parts": [prompt]}
     ])
-    raw_dialogues = response.text.strip()
+    raw = response.text.strip()
 
-    # 4) Сохраняем «сырые» диалоги (английский + русский) в FSM — пригодится для озвучки
-    await state.update_data(last_dialogue=raw_dialogues)
+    # 5) Парсим JSON
+    try:
+        dialogs = json.loads(raw)
+    except json.JSONDecodeError:
+        # fallback: если не JSON — просто показываем текст
+        await callback.message.edit_text(
+            f"<b>💬 Тема: {topic_title}</b>\n\n<code>Не удалось распознать JSON, вот что вернуло Gemini:</code>\n{escape(raw)}",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]
+            ])
+        )
+        return
 
-    # 5) Собираем текст для отправки
-    text = f"<b>💬 Тема: {topic_title}</b>\n\n" + raw_dialogues
+    # 6) Строим HTML‑текст
+    text = [f"<b>💬 Тема: {topic_title}</b>\n"]
+    for idx, dlg in enumerate(dialogs, 1):
+        text.append(f"<u>Диалог {idx}:</u>")
+        text.append(f"• <b>You:</b> {dlg['you']}")
+        text.append(f"• <b>VAI:</b> {dlg['vai']}")
+        text.append(f"• <b>Ты:</b> {dlg['ты']}")
+        text.append(f"• <b>VAI:</b> {dlg['vai_ru']}\n")
+    full_text = "\n".join(text)
 
-    # 6) Кнопки: озвучить, добавить ключевые слова, назад
+    # 7) Сохраняем для озвучки
+    await state.update_data(last_dialogue_json=dialogs)
+
+    # 8) Рисуем кнопки
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔊 Озвучить диалог", callback_data="dialogue_voice")],
-        [InlineKeyboardButton(text="📘 Ключевые слова", callback_data="dialogue_add_words")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+        [InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice")],
+        [InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")],
     ])
 
-    # 7) Отправляем пользователю
+    # 9) Отправляем готовый HTML
     await callback.message.edit_text(
-        text,
+        full_text,
         reply_markup=keyboard,
         parse_mode="HTML"
     )
