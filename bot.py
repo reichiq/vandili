@@ -3898,6 +3898,8 @@ async def handle_msg(
                 # 4) Удаляем звёздочки и маркеры «•» по краям
                 explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
                 explain = re.sub(r'^[\u2022]\s*', '', explain)
+                # дополнительно убираем все остаточные звёздочки, которые могли остаться
+                explain = explain.replace('*', '')
 
                 # 5) Делаем «Пояснение:» жирным
                 if explain.startswith('Пояснение:'):
