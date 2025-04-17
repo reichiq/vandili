@@ -598,6 +598,28 @@ def latex_to_png(latex: str) -> str:
     fig.savefig(tmp.name, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
     return tmp.name
+
+# --- Заменяем все $$...$$ на PNG и возвращаем текст + список картинок ---
+def replace_latex_with_png(text: str) -> tuple[str, list[str]]:
+    """
+    Находит фрагменты $$ ... $$, рендерит их в PNG через latex_to_png()
+    и возвращает:
+      • text  – строку без LaTeX (на месте каждой формулы – пометка [см. картинку N])
+      • images – список путей к временным PNG‑файлам
+    """
+    import re
+    images: list[str] = []
+
+    def _repl(match):
+        latex = match.group(1).strip()
+        path  = latex_to_png(latex)
+        images.append(path)
+        idx = len(images)       # 1‑based нумерация
+        return f"[см. картинку {idx}]"
+
+    new_text = re.sub(r"\$\$(.+?)\$\$", _repl, text, flags=re.S)
+    return new_text, images
+
 # ---------------------- Работа с отключёнными чатами ---------------------- #
 DISABLED_CHATS_FILE = DISABLED_CHATS_FILE
 
@@ -2496,32 +2518,33 @@ async def handle_timezone_setting(message: Message):
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
     """
-    1. Скачиваем файл; 2. вытаскиваем LaTeX; 3. даём ответ.
+    1. Скачиваем файл → 2. распознаём LaTeX → 3. генерируем ответ →
+    4. конвертируем все $$…$$ в PNG → 5. безопасно отправляем.
     """
-    # ----- 1. байты картинки -----
+    # ----- 1. получаем байты картинки -------------------------------
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
-    file = await bot.get_file(file_id)
-    url  = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
+    file    = await bot.get_file(file_id)
+    url     = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
 
     async with aiohttp.ClientSession() as sess:
         async with sess.get(url) as resp:
             img_bytes = await resp.read()
 
-    # --- 2. распознаём -----
+    # ----- 2. распознаём формулу ------------------------------------
     latex = await recognize_formula(img_bytes)
     if not latex:
         await message.answer("❌ Не смог распознать формулу.")
         return
 
-    # 2‑a) кладём в кэш, чтобы следующий текстовый вопрос «про формулу» сработал
+    # кладём в кэш → можно будет задавать вопросы «про формулу»
     user_images_text[message.from_user.id] = latex
 
-    # 2‑b) делаем картинку‑превью
+    # превью‑картинка исходной формулы
     png_path = latex_to_png(latex)
     try:
         await bot.send_photo(
-            chat_id=message.chat.id,
-            photo=FSInputFile(png_path, filename="formula.png"),
+            message.chat.id,
+            FSInputFile(png_path, filename="formula.png"),
             caption=(f"Я вижу формулу 👇\n<code>{latex}</code>\n\n"
                      "Спроси что‑нибудь о ней!"),
             parse_mode="HTML"
@@ -2529,27 +2552,36 @@ async def handle_formula_image(message: Message):
     finally:
         os.remove(png_path)
 
-    # ----- 3. формируем ответ -----
+    # ----- 3. спрашиваем Gemini -------------------------------------
     prompt = (f"Ниже формула/уравнение в LaTeX:\n\n$$ {latex} $$\n\n"
               "1. Скажи, как она читается словами.\n"
               "2. Если можно, реши/упрости её.\n"
               "3. Укажи область применения (математика, физика, химия и т.д.).")
-    answer = await generate_and_send_gemini_response(message.chat.id, prompt,
-                                                     show_image=False,
-                                                     rus_word="",
-                                                     leftover="")
+    answer = await generate_and_send_gemini_response(
+        message.chat.id, prompt,
+        show_image=False, rus_word="", leftover=""
+    )
 
-    # 3‑b) SymPy‑решение (необязательно)
+    # ----- 4. заменяем все $$…$$ на PNG‑файлы ------------------------
+    answer, extra_imgs = replace_latex_with_png(answer)
+
+    # (необязательный) SymPy‑чек
     try:
         from sympy import sympify, solve
-        expr = sympify(latex)
-        sol  = solve(expr)
+        sol = solve(sympify(latex))
         answer += f"\n\n<b>SymPy:</b> решение {sol}"
     except Exception:
         pass
 
-    # ----- 4. отправляем пользователю, защищаемся от «Unmatched end tag» -----
+    # ----- 5. безопасно отправляем текст ----------------------------
     await safe_send(message.chat.id, answer, reply_to=message.message_id)
+
+    # ----- 6. досылаем изображения‑фрагменты ------------------------
+    for p in extra_imgs:
+        try:
+            await bot.send_photo(message.chat.id, FSInputFile(p, filename="latex_part.png"))
+        finally:
+            os.remove(p)
 
 
 @dp.message(lambda message: message.voice is not None)
