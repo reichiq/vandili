@@ -3724,18 +3724,18 @@ async def handle_msg(
                 # рендерим шаг в картинку и сохраняем путь
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
-
                 # очищаем и форматируем пояснение
+    
                 explain = _clean_explain(explain_raw)
-                # убираем ведущие маркеры "* " или "• "
-                explain = re.sub(r'^[\*\u2022]\s*', '', explain)
-                explain = explain.strip('* ').strip()
+                # убираем любые ведущие/хвостовые звездочки и пробелы
+                explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
+                # убираем маркер «• » в начале, если он остался
+                explain = re.sub(r'^[\u2022]\s*', '', explain)
                 # делаем слово "Пояснение:" жирным
                 if explain.startswith('Пояснение:'):
                     explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
                 else:
                     explain = escape(explain)
-
                 caption = f"<b>Шаг {idx}.</b>\n{explain}"
 
                 # отправляем картинку шага + подпись
