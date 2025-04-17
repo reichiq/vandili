@@ -3528,19 +3528,19 @@ async def handle_all_messages_impl(message: Message, user_input: str):
             except ValueError:
                 amount = 0
                 
-            from_curr_lemma = normalize_currency_rus(from_curr_raw)
-            to_curr_lemma = normalize_currency_rus(to_curr_raw)
+        from_curr_lemma = normalize_currency_rus(from_curr_raw)
+        to_curr_lemma = normalize_currency_rus(to_curr_raw)
             
-            from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
-            to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
+        from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
+        to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
             
-            exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-            if exchange_text is not None:
-                if voice_response_requested:
-                    await send_voice_message(cid, exchange_text)
-                else:
-                    await message.answer(exchange_text)
-                return
+        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
+        if exchange_text is not None:
+            if voice_response_requested:
+                await send_voice_message(cid, exchange_text)
+            else:
+                await message.answer(exchange_text)
+            return
     
     # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
