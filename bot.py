@@ -1468,48 +1468,45 @@ async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
 # ─── Обработчик выбора конкретной темы диалога ───#
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
-    # 0) Предотвращаем ошибку "query is too old"
     try:
         await callback.answer()
     except TelegramBadRequest:
         pass
 
-    # 1) Получаем тему
     topic_raw = callback.data.split(":", 1)[1]
     topic_title = topic_raw.replace("_", " ").title()
 
-    # 2) Индикатор загрузки
     await callback.message.edit_text(
         f"📖 Генерирую 3–5 примеров диалогов на тему «{topic_title}»…",
         parse_mode="HTML"
     )
 
-    # 3) Промпт, просим JSON
+    # Новый промпт с более удобной для разбора структурой
     prompt = (
-        f"Ты — опытный преподаватель английского. "
-        f"Составь 3–5 коротких диалогов на тему «{topic_title}». "
-        "Ответь строго в формате JSON-массива, например:\n"
-        '[\n'
-        '  {\n'
-        '    "you": "Excuse me, how much is this?",\n'
-        '    "vai": "It costs $20.",\n'
-        '    "ты": "Извините, сколько это стоит?",\n'
-        '    "vai_ru": "Это стоит 20 долларов."\n'
-        '  },\n'
-        '  …\n'
-        ']\n'
-        "Никаких комментариев — только JSON."
+        f"Ты — опытный преподаватель английского. Составь 3–5 коротких диалогов на тему «{topic_title}».\n"
+        "Ответь строго чистым JSON (без ```), в формате:\n"
+        "[\n"
+        "  {\n"
+        "    \"title\": \"Ordering Coffee\",\n"
+        "    \"dialogue\": [\n"
+        "      {\"speaker\": \"You\", \"en\": \"Hi, can I get a cappuccino to go, please?\", \"ru\": \"Здравствуйте, можно мне капучино с собой, пожалуйста?\"},\n"
+        "      {\"speaker\": \"VAI\", \"en\": \"Sure. What size would you like?\", \"ru\": \"Конечно. Какой размер вы бы хотели?\"}\n"
+        "    ]\n"
+        "  },\n"
+        "  …\n"
+        "]\n"
+        "Никаких Markdown‑ограждений, только чистый JSON-массив."
     )
-    response = await model.generate_content_async([
-        {"role": "user", "parts": [prompt]}
-    ])
-    raw = response.text.strip()
 
-    # 4) Парсим JSON
+    resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+    raw = resp.text.strip()
+
+    # Убираем возможные ```json … ```  
+    raw = re.sub(r"^```json\s*|\s*```$", "", raw, flags=re.IGNORECASE).strip()
+
     try:
         dialogs = json.loads(raw)
     except json.JSONDecodeError:
-        # fallback: если не JSON — просто показываем сырое
         await callback.message.edit_text(
             f"<b>💬 Тема: {topic_title}</b>\n\n"
             f"<code>Не удалось распознать JSON, вот что вернуло Gemini:</code>\n"
@@ -1521,33 +1518,33 @@ async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    # 5) Очищаем возможные Markdown‑звёздочки внутри самих фраз
+    # Очищаем любые звёздочки внутри строк
     for dlg in dialogs:
-        for key in ("you", "vai", "ты", "vai_ru"):
-            if key in dlg:
-                dlg[key] = re.sub(r"\*+", "", dlg[key]).strip()
+        for turn in dlg.get("dialogue", []):
+            turn["en"] = re.sub(r"\*+", "", turn["en"]).strip()
+            turn["ru"] = re.sub(r"\*+", "", turn["ru"]).strip()
 
-    # 6) Формируем HTML
-    lines: list[str] = [f"<b>💬 Тема: {topic_title}</b>\n"]
-    for idx, dlg in enumerate(dialogs, 1):
-        lines.append(f"<u>Диалог {idx}:</u>")
-        lines.append(f"• <b>You:</b> {dlg['you']}")
-        lines.append(f"• <b>VAI:</b> {dlg['vai']}")
-        lines.append(f"• <b>Ты:</b> {dlg['ты']}")
-        lines.append(f"• <b>VAI:</b> {dlg['vai_ru']}\n")
+    # Собираем HTML
+    lines = [f"<b>💬 Тема: {topic_title}</b>\n"]
+    for idx, block in enumerate(dialogs, 1):
+        title = block.get("title", f"Диалог {idx}")
+        lines.append(f"<u>{title}</u>")
+        for turn in block["dialogue"]:
+            sp = turn["speaker"]
+            lines.append(f"• <b>{sp}:</b> {turn['en']}")
+            lines.append(f"  <i>«{turn['ru']}»</i>")
+        lines.append("")  # пустая строка между диалогами
+
     full_text = "\n".join(lines)
 
-    # 7) Сохраняем в FSM для озвучки
     await state.update_data(last_dialogue_json=dialogs)
 
-    # 8) Кнопки
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔊 Озвучить диалог", callback_data="dialogue_voice")],
-        [InlineKeyboardButton(text="📘 Ключевые слова", callback_data="dialogue_add_words")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+        [InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice")],
+        [InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="learn_back")],
     ])
 
-    # 9) Отправляем готовый HTML
     await callback.message.edit_text(
         full_text,
         reply_markup=keyboard,
