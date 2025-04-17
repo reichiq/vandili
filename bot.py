@@ -3672,6 +3672,8 @@ async def handle_msg(
             return
 
         prompt = (
+            "Ты — опытный преподаватель математики. Объясняй всё максимально подробно и при этом простым, понятным языком. "
+            "Избегай громоздких формулировок, разжёвывай каждый шаг и давай маленькие примеры там, где это уместно.\n\n"
             # 0) Исходный LaTeX (любой области) между $$ … $$
             "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
             f"$$ {latex} $$\n\n"
@@ -3700,7 +3702,7 @@ async def handle_msg(
 
         # запрашиваем модель
         try:
-            resp       = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
             raw_answer = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
