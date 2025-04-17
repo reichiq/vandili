@@ -3670,7 +3670,7 @@ async def handle_msg(
         if not user_input:
             await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
             return
-            
+
         prompt = (
             # 0) Исходный LaTeX (любой области) между $$ … $$
             "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
@@ -3700,17 +3700,15 @@ async def handle_msg(
 
         # запрашиваем модель
         try:
-            resp        = await model.generate_content_async(
-                [{"role": "user", "parts": [prompt]}]
-            )
-            raw_answer  = resp.text.strip()
+            resp       = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+            raw_answer = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
             await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
             return
 
         # разбиваем ответ на шаги
-        steps = split_steps(raw_answer)      # [(latex, header, explain), …]
+        steps = split_steps(raw_answer)  # [(latex, header, explain), …]
 
         # ───────────────────────────────────────────
         # A. формат корректный → отрисовываем шаги
@@ -3718,8 +3716,8 @@ async def handle_msg(
         if steps:
             from PIL import Image, ImageOps
 
-            step_imgs = []                 # список PNG шагов
-            voice_chunks = []              # реплики для TTS
+            step_imgs    = []  # список PNG шагов
+            voice_chunks = []  # реплики для TTS
 
             # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
@@ -3727,9 +3725,17 @@ async def handle_msg(
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
 
-                # приводим пояснение к читабельному виду
+                # очищаем и форматируем пояснение
                 explain = _clean_explain(explain_raw)
-                caption = f"<b>Шаг {idx}.</b>\n{escape(explain)}"
+                # убираем ведущие маркеры "* " или "• "
+                explain = re.sub(r'^[\*\u2022]\s*', '', explain)
+                # делаем слово "Пояснение:" жирным
+                if explain.startswith('Пояснение:'):
+                    explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
+                else:
+                    explain = escape(explain)
+
+                caption = f"<b>Шаг {idx}.</b>\n{explain}"
 
                 # отправляем картинку шага + подпись
                 if len(caption) > 1024:
@@ -3755,7 +3761,6 @@ async def handle_msg(
                 all_latex = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
                 if all_latex:
                     final_latex = all_latex[-1].strip()
-                    # если итоговая формула отличается от шаговых
                     if final_latex not in {l for l, _, _ in steps}:
                         final_img = latex_to_png(_sanitize_for_png(final_latex))
                         await bot.send_photo(
@@ -3770,11 +3775,11 @@ async def handle_msg(
                     os.remove(final_img)
             # ---------- конец итоговой формулы ----------
 
-            # ---------- «общая доска» (монтируем все шаги в одну картинку) ----------
+            # ─────────── «общая доска» ───────────
             if step_imgs:
                 try:
-                    imgs = [Image.open(p) for p in step_imgs]
-                    max_w = max(im.width for im in imgs)
+                    imgs    = [Image.open(p) for p in step_imgs]
+                    max_w   = max(im.width for im in imgs)
                     total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
 
                     board = Image.new("RGB", (max_w, total_h), "white")
@@ -3801,7 +3806,7 @@ async def handle_msg(
             if voice_response_requested:
                 await send_voice_message(cid, " ".join(voice_chunks))
             return  # 🎉 готово!
-
+        
         # ───────────────────────────────────────────
         # B. формат не распознан → плоский текст
         # ───────────────────────────────────────────
