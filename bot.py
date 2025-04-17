@@ -6,9 +6,6 @@ from html import unescape, escape
 import random
 import aiohttp
 import pytz
-os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
-from transformers import logging as hf_logging
-hf_logging.set_verbosity_error()
 import html as _html
 from pix2text import Pix2Text
 from PIL import Image
