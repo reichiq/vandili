@@ -632,21 +632,16 @@ STEP_RE = re.compile(
 
 def split_steps(raw: str) -> list[tuple[str, str, str]]:
     """
-    -> [(latex, short_caption, full_explain), …]
-    short_caption = «Шаг N …» + первая фраза (≤300 симв.)
+    Разбивает ответ Gemini на шаги.
+    Возвращает [(latex, header, explain), …],
+    где header — строка «Шаг N: …», explain — полное пояснение без урезания.
     """
     out = []
     for m in STEP_RE.finditer(raw):
-        header  = m.group(1).strip()
+        header  = m.group(1).strip()     # «Шаг 3: …»
         latex   = m.group(2).strip()
         explain = m.group(3).strip()
-
-        # берём первую фразу для подписи
-        first_sent = re.split(r'(?<=\.)\s', explain, 1)[0]
-        cap = textwrap.shorten(
-            f"{header} {first_sent}", width=300, placeholder="…"
-        )
-        out.append((latex, cap, explain))
+        out.append((latex, header, explain))
     return out
     
 # ---------------------- Работа с отключёнными чатами ---------------------- #
@@ -3637,6 +3632,9 @@ def parse_russian_show_request(user_text: str):
 
 #------------------Основная функция----------------№
 # ------------------Основная функция----------------№
+# ──────────────────────────────────────────────────────────────────────
+#  >>>  ПОЛНОСТЬЮ ОБНОВЛЁННАЯ handle_msg  <<<
+# ──────────────────────────────────────────────────────────────────────
 async def handle_msg(
     message: Message,
     recognized_text: str | None = None,
@@ -3652,69 +3650,78 @@ async def handle_msg(
     if uid in user_images_text:
         latex = user_images_text.pop(uid)
 
+        # если вопрос не задан — просим сформулировать
         if not user_input:
             await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
             return
 
+        # --- новый prompt ------------------------------------------------------
         prompt = (
             "Ниже формула в LaTeX (между $$):\n\n"
             f"$$ {latex} $$\n\n"
             "Вопрос пользователя:\n"
             f"{user_input}\n\n"
-            "Ответь пошагово. Для КАЖДОГО шага строго придерживайся формата:\n"
+            "Ответь ПОШАГОВО. Для КАЖДОГО шага строго используй формат:\n"
             "Шаг 1:\n"
             "$$ … $$\n"
-            "Пояснение (1‑2 предложения).\n"
+            "Подробное пояснение (несколько предложений, чтобы было понятно, как именно получен шаг).\n"
             "...\n\n"
-            "В самом конце дай итоговую формулу в $$ … $$ без лишнего текста."
+            "В самом конце приведи итоговую формулу в $$ … $$ (без лишнего текста)."
         )
 
         try:
-            resp       = await model.generate_content_async(
+            resp        = await model.generate_content_async(
                 [{"role": "user", "parts": [prompt]}]
             )
-            raw_answer = resp.text.strip()
+            raw_answer  = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
             await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
             return
 
         # ── парсим шаги ────────────────────────────
-        steps = split_steps(raw_answer)          # [(latex, short_cap, explain), ...]
+        steps = split_steps(raw_answer)          # [(latex, header, explain), …]
 
         if steps:                                # ✅ формат корректный
             from PIL import Image, ImageOps
 
-            step_imgs    = []                    # пути PNG шагов
-            voice_chunks = []                    # пояснения
+            step_imgs    = []                    # PNG‑файлы со всеми шагами
+            voice_chunks = []                    # для озвучки
 
-            for idx, (latex_step, short_cap, explain) in enumerate(steps, 1):
+            # ---------- НОВЫЙ ЦИКЛ ОТПРАВКИ ШАГОВ ----------
+            for idx, (latex_step, header, explain) in enumerate(steps, 1):
                 img_path = latex_to_png(latex_step)
                 step_imgs.append(img_path)
-                voice_chunks.append(f"Шаг {idx}. {explain}")
+                voice_chunks.append(f"{header}. {explain}")
 
-                full_caption = f"Шаг {idx}: {explain}"
-                if len(full_caption) > 1024:     # caption > Telegram‑лимит
+                caption = f"<b>{header}</b>\n{explain}"
+
+                if len(caption) > 1024:
+                    # 1️⃣ картинка + только заголовок
                     await bot.send_photo(
-                        cid, FSInputFile(img_path, "step.png"),
-                        caption=f"Шаг {idx}",
+                        cid,
+                        FSInputFile(img_path, "step.png"),
+                        caption=f"<b>{header}</b>",
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
+                    # 2️⃣ длинное пояснение отдельным сообщением
                     await safe_send(cid, explain)
                 else:
                     await bot.send_photo(
-                        cid, FSInputFile(img_path, "step.png"),
-                        caption=full_caption,
+                        cid,
+                        FSInputFile(img_path, "step.png"),
+                        caption=caption,
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
+            # ---------- конец цикла ----------
 
             # ── «общая доска»: склеиваем PNG вертикально ──
             try:
-                imgs = [Image.open(p) for p in step_imgs]
-                max_w  = max(im.width for im in imgs)
-                total_h = sum(im.height for im in imgs) + 20 * (len(imgs)-1)
+                imgs    = [Image.open(p) for p in step_imgs]
+                max_w   = max(im.width for im in imgs)
+                total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
 
                 board = Image.new("RGB", (max_w, total_h), "white")
                 y = 0
@@ -3733,9 +3740,10 @@ async def handle_msg(
             finally:
                 for p in step_imgs:
                     os.remove(p)
-                if 'tmp' in locals():
+                if "tmp" in locals():
                     os.remove(tmp.name)
 
+            # озвучка (если просили «голосом»)
             if voice_response_requested:
                 await send_voice_message(cid, " ".join(voice_chunks))
             return                               # 🎉 done
@@ -3751,13 +3759,14 @@ async def handle_msg(
                     await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
                 finally:
                     os.remove(p)
-        return                                   # ⬅  больше не идём
+        return                                   # ⬅ дальнейшая обработка не нужна
 
     # ───────────────────────────────────────────────
-    # 2) Остальная логика (имя, Unsplash и т.д.)
+    # 2) Остальная логика (имя, Unsplash, диалоги …)
     # ───────────────────────────────────────────────
     lower_inp = user_input.lower()
 
+    # --- имя бота -------------------------------------------------------
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
         return await (
@@ -3765,6 +3774,7 @@ async def handle_msg(
             else message.answer(answer)
         )
 
+    # --- информация о создателе ----------------------------------------
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
         return await (
@@ -3772,7 +3782,7 @@ async def handle_msg(
             else message.answer(reply_text)
         )
 
-    # — картинки Unsplash («покажи …»)
+    # --- «покажи …» (Unsplash) -----------------------------------------
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -3783,15 +3793,18 @@ async def handle_msg(
     image_url   = await get_unsplash_image_url(
         image_en, UNSPLASH_ACCESS_KEY
     ) if show_image else None
+
+    # Текстовый ответ Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover
     )
 
+    # --- если просили ответ «голосом» -----------------------------------
     if voice_response_requested:
         await send_voice_message(cid, gemini_text or "Нет ответа.")
         return
 
-    # ── отправляем результат ──────────────────────
+    # --- отправка результата -------------------------------------------
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -3819,6 +3832,7 @@ async def handle_msg(
             await message.answer(chunk)
     else:
         await message.answer("❌ Я не смог сгенерировать ответ.")
+# ──────────────────────────────────────────────────────────────────────
 
 @dp.message(F.text.lower().startswith("вай покажи"))
 async def group_show_request(message: Message):
