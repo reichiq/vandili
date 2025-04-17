@@ -868,24 +868,6 @@ EXCHANGE_PATTERN = re.compile(
     r"(?i)(?:(\d+(?:[.,]\d+)?)[ \t]+)?([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
 )
 
-@dp.message(F.text.regexp(EXCHANGE_PATTERN))
-async def handle_exchange_request(message: Message):
-    match = EXCHANGE_PATTERN.search(message.text)
-    if not match:
-        await message.answer("Не удалось распознать запрос на обмен валют 😔")
-        return
-
-    amount, from_curr, to_curr = match.groups()
-
-    # Если количество не указано, ставим 1
-    if amount is None:
-        amount = 1.0
-    else:
-        # Исправляем запятую на точку
-        amount = float(amount.replace(",", "."))
-
-    result_text = await get_exchange_rate(amount, from_curr, to_curr)
-    await message.answer(result_text)
     
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     from_curr = from_curr.lower()
