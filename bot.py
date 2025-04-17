@@ -1469,43 +1469,49 @@ async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("dialogue_topic:"))
 async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    # приводим topic к нижнему регистру
-    topic = callback.data.split(":", 1)[1].lower()  # теперь "in class", "taxi" и т.п.
+    # достаём тему из callback_data, приводим к виду заголовка
+    topic_raw = callback.data.split(":", 1)[1]
+    topic_title = topic_raw.replace("_", " ").title()
 
-    if isinstance(dialogues, dict):
-        topic_list = dialogues.get(topic, [])
-    else:
-        # если у вас список словарей с ключом "topic"
-        topic_list = [d for d in dialogues if d.get("topic", "").lower() == topic]
+    # 1) Сообщаем, что начинаем генерацию
+    await callback.message.edit_text(
+        f"📖 Генерирую 3–5 коротких диалогов на тему «{topic_title}»…",
+        parse_mode="HTML"
+    )
 
-    if not topic_list:
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]]
-        )
-        await callback.message.edit_text(
-            f"Диалоги на тему «{topic.title()}» не найдены.",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-        return
+    # 2) Формируем промпт для Gemini: просим диалоги + переводы
+    prompt = (
+        f"Ты — преподаватель английского языка. Составь 3–5 коротких диалогов на тему «{topic_title}».\n"
+        "Для каждого диалога:\n"
+        "1) Оригинал на английском:\n"
+        "   You: …\n"
+        "   VAI: …\n"
+        "2) Перевод на русский:\n"
+        "   Ты: …\n"
+        "   VAI: …\n\n"
+        "Никакого лишнего — только сами диалоги в этом формате."
+    )
 
-    # 3) формируем текст диалога
-    #    предположим, что topic_list — это список объектов вида {"user": "...", "bot": "..."}
-    text = f"<b>💬 Тема: {topic}</b>\n\n"
-    for ex in topic_list:
-        text += f"<b>Ты:</b> {ex['user']}\n"
-        text += f"<b>VAI:</b> {ex['bot']}\n\n"
+    # 3) Генерируем через Gemini
+    response = await model.generate_content_async([
+        {"role": "user", "parts": [prompt]}
+    ])
+    raw_dialogues = response.text.strip()
 
-    # 4) сохраняем последний диалог в FSM, чтобы его можно было озвучить или проанализировать слова
-    await state.update_data(last_dialogue=text)
+    # 4) Сохраняем «сырые» диалоги (английский + русский) в FSM — пригодится для озвучки
+    await state.update_data(last_dialogue=raw_dialogues)
 
-    # 5) предложим кнопки «Озвучить» и «Добавить в словарь» (эти колбеки у вас уже есть)
+    # 5) Собираем текст для отправки
+    text = f"<b>💬 Тема: {topic_title}</b>\n\n" + raw_dialogues
+
+    # 6) Кнопки: озвучить, добавить ключевые слова, назад
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔊 Озвучить диалог", callback_data="dialogue_voice")],
         [InlineKeyboardButton(text="📘 Ключевые слова", callback_data="dialogue_add_words")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
+    # 7) Отправляем пользователю
     await callback.message.edit_text(
         text,
         reply_markup=keyboard,
