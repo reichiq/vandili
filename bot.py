@@ -2523,52 +2523,61 @@ async def handle_grammar(callback: CallbackQuery):
         [InlineKeyboardButton(text="📗 A2", callback_data="grammar_level:A2")],
         [InlineKeyboardButton(text="📙 B1", callback_data="grammar_level:B1")],
         [InlineKeyboardButton(text="📕 B2", callback_data="grammar_level:B2")],
-        [InlineKeyboardButton(text="📒 C1", callback_data="grammar_level:C1")],  # ← добавили
-        [InlineKeyboardButton(text="📓 C2", callback_data="grammar_level:C2")],  # ← и это
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+        [InlineKeyboardButton(text="📓 C1", callback_data="grammar_level:C1")],
+        [InlineKeyboardButton(text="❌ Назад", callback_data="learn_back")],
     ])
     await callback.message.edit_text("Выбери уровень грамматики:", reply_markup=keyboard)
+
 
 @dp.callback_query(F.data.startswith("grammar_level:"))
 async def handle_grammar_level(callback: CallbackQuery, state: FSMContext):
     level = callback.data.split(":", 1)[1]
     await callback.answer(f"Генерирую упражнение для уровня {level}…")
-    
+
+    # Просим ровно одно предложение‑упражнение с одним пропуском
     prompt = (
-        f"Составь одно небольшое грамматическое упражнение уровня {level}.\n"
-        "Формат:\n"
+        f"Составь одно небольшое грамматическое упражнение уровня {level}: "
+        "одно предложение с одним пропуском.\n\n"
+        "Формат ответа (без лишнего текста):\n"
         "Тема: Present Simple\n"
-        "Задание: Поставь глагол в правильной форме\n"
+        "Задание: Поставь глагол в скобках в нужную форму.\n"
         "1. He ____ (go) to school every day.\n"
         "Ответ: goes"
     )
     resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
     raw = resp.text.strip()
 
-    # надёжный парсинг ответа
-    m = re.search(r"Ответ\s*[:\-]\s*(.+)", raw, flags=re.IGNORECASE)
+    # Ищем как "Ответ:" так и "Ответы:" и всё, что идёт после, даже если многострочно
+    m = re.search(r"(?:\*+)?Ответы?\*?\s*[:\-]\s*(.+)$", raw, flags=re.IGNORECASE | re.DOTALL)
     if not m:
         logging.error(f"[GRAMMAR:{level}] Bad response:\n{raw}")
-        await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.")
+        await callback.message.edit_text("❌ Не удалось распознать ответ. Попробуй ещё раз.", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="🔁 Ещё раз", callback_data=f"grammar_level:{level}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
+        ]))
         return
 
+    # Вопрос — всё до "Ответ"
     question = raw[:m.start()].strip()
-    correct = m.group(1).strip()
+    # Правильный ответ — первая строка из секции ответов
+    answers_block = m.group(1).strip()
+    first_line = answers_block.splitlines()[0]
+    correct = re.sub(r"^[\d\.\)\s]*", "", first_line).strip()  # убираем номер и точку
 
+    # Сохраняем для проверки
     await state.set_state(GrammarExercise.waiting_for_answer)
     await state.update_data(correct_answer=correct)
 
+    # Кнопки — новый вопрос того же уровня или возврат
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        # при повторном нажатии "Новое" снова вызываем тот же уровень
         [InlineKeyboardButton(text="🔁 Новое", callback_data=f"grammar_level:{level}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")],
     ])
 
     await callback.message.edit_text(
-        f"<b>📘 Упражнение ({level}):</b>\n\n{question}",
+        f"<b>📘 Упражнение ({level})</b>\n\n{question}",
         reply_markup=kb
     )
-
 
 @dp.message(GrammarExercise.waiting_for_answer)
 async def check_grammar_answer(message: Message, state: FSMContext):
