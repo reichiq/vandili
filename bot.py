@@ -1459,6 +1459,50 @@ async def handle_learn_dialogues(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="learn_back")]
     ])
     await callback.message.edit_text("Выбери тему диалога:", reply_markup=keyboard)
+# ─── Обработчик выбора конкретной темы диалога ───#
+@dp.callback_query(F.data.startswith("dialogue_topic:"))
+async def handle_dialogue_topic(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()  # «закрываем» spinning indicator
+
+    # 1) достаём тему
+    topic = callback.data.split(":", 1)[1]  # например "Airport"
+
+    # 2) фильтруем ваш список `dialogues` по выбранной теме
+    #    структура dialogues может быть либо словарём {topic: [..]}, 
+    #    либо списком dict'ов с ключом "topic".
+    if isinstance(dialogues, dict):
+        topic_list = dialogues.get(topic, [])
+    else:
+        topic_list = [d for d in dialogues if d.get("topic") == topic]
+
+    if not topic_list:
+        # на случай, если тема вдруг не найдена
+        await callback.message.edit_text(
+            f"Диалоги на тему «{topic}» не найдены.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="learn_back")]]
+            )
+        )
+        return
+
+    # 3) формируем текст диалога
+    #    предположим, что topic_list — это список объектов вида {"user": "...", "bot": "..."}
+    text = f"<b>💬 Тема: {topic}</b>\n\n"
+    for ex in topic_list:
+        text += f"<b>Ты:</b> {ex['user']}\n"
+        text += f"<b>VAI:</b> {ex['bot']}\n\n"
+
+    # 4) сохраняем последний диалог в FSM, чтобы его можно было озвучить или проанализировать слова
+    await state.update_data(last_dialogue=text)
+
+    # 5) предложим кнопки «Озвучить» и «Добавить в словарь» (эти колбеки у вас уже есть)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [ InlineKeyboardButton("🔊 Озвучить диалог", callback_data="dialogue_voice") ],
+        [ InlineKeyboardButton("📘 Ключевые слова", callback_data="dialogue_add_words") ],
+        [ InlineKeyboardButton("🔙 Назад", callback_data="learn_back") ],
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @dp.callback_query(F.data == "review_menu")
