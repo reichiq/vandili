@@ -864,53 +864,41 @@ CURRENCY_SYNONYMS = {
     "¥": "JPY",
 }
 
-EXCHANGE_PATTERN = re.compile(
-    r"(?i)(?:(\d+(?:[.,]\d+)?)[ \t]+)?([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
-)
-
-    
 async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     from_curr = from_curr.lower()
     to_curr = to_curr.lower()
-
-    # Сначала заменяем на стандартные коды валют
-    from_curr = CURRENCY_SYNONYMS.get(from_curr, from_curr).lower()
-    to_curr = CURRENCY_SYNONYMS.get(to_curr, to_curr).lower()
-
     url = f"https://www.floatrates.com/daily/{from_curr}.json"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    logging.error(f"Floatrates вернул статус {resp.status} для {url}")
+                    logging.exception(f"Floatrates вернул статус {resp.status} для {url}")
                     return None
                 data = await resp.json()
     except Exception as e:
         logging.error(f"Ошибка при запросе к Floatrates: {e}")
         return None
-
     if to_curr not in data:
         return None
-
     rate = data[to_curr].get("rate")
     if rate is None:
         return None
     return float(rate)
 
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
-    # Нормализуем валюты сразу
-    from_curr_code = CURRENCY_SYNONYMS.get(from_curr.lower(), from_curr.upper())
-    to_curr_code = CURRENCY_SYNONYMS.get(to_curr.lower(), to_curr.upper())
-
-    # Пробуем получить курс
     rate = await get_floatrates_rate(from_curr, to_curr)
     if rate is None:
-        return "Извините, не смог найти курс валют для такого запроса 😔"
-
+        return None
     result = amount * rate
     today = datetime.now().strftime("%Y-%m-%d")
-    return (f"Курс {amount:.0f} {from_curr_code} – {result:.2f} {to_curr_code} на {today} 😊\n"
+    return (f"Курс {amount:.0f} {from_curr.upper()} – {result:.2f} {to_curr.upper()} на {today} 😊\n"
             "Курс в банках и на биржах может отличаться.")
+
+# Новый универсальный шаблон для запроса курса валют
+# Он обрабатывает запросы вида: "1 доллар сум" и "1 доллар в сум", а также с английскими обозначениями.
+EXCHANGE_PATTERN = re.compile(
+    r"(?i)(\d+(?:[.,]\d+)?)[ \t]+([a-zа-яё$€₽¥]+)(?:\s+(?:в|to))?\s+([a-zа-яё$€₽¥]+)"
+)
 
 # ---------------------- Функции для погоды ---------------------- #
 async def do_geocoding_request(name: str) -> dict:
@@ -3517,35 +3505,28 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
-        amount_str, raw_from, raw_to = exchange_match.groups()
-        
-        if amount_str:
-            try:
-                amount = float(amount_str.replace(',', '.'))
-            except ValueError:
-                amount = 1.0
-            else:
-                amount = 1.0
-                
-        from_lemma = normalize_currency_rus(raw_from)
-        to_lemma   = normalize_currency_rus(raw_to)
-
-    # 4) Проверяем, что это действительно валюта, а не любой текст
-        if from_lemma in CURRENCY_SYNONYMS or to_lemma in CURRENCY_SYNONYMS:
-        # 5) Получаем ISO‑коды
-            from_code = CURRENCY_SYNONYMS.get(from_lemma, from_lemma.upper())
-            to_code   = CURRENCY_SYNONYMS.get(to_lemma,   to_lemma.upper())
-
-        # 6) Делаем запрос курса
-            exchange_text = await get_exchange_rate(amount, from_code, to_code)
-            if exchange_text:
-                if voice_response_requested:
-                    await send_voice_message(cid, exchange_text)
-                else:
-                    await message.answer(exchange_text)
-                return
-
+        amount_str = exchange_match.group(1).replace(',', '.')
+        try:
+            amount = float(amount_str)
+        except:
+            amount = 0
+        from_curr_raw = exchange_match.group(2)
+        to_curr_raw = exchange_match.group(3)
     
+        from_curr_lemma = normalize_currency_rus(from_curr_raw)
+        to_curr_lemma = normalize_currency_rus(to_curr_raw)
+    
+        from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
+        to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
+    
+        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
+        if exchange_text is not None:
+            if voice_response_requested:
+                await send_voice_message(cid, exchange_text)
+            else:
+                await message.answer(exchange_text)
+            return
+
     # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
