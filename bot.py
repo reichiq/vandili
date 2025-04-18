@@ -3703,6 +3703,17 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(gemini_text, **thread_kwargs(message))
         return
 
+    # Все остальные запросы идут сюда:
+    gemini_text = await handle_msg(message, user_input, voice_response_requested)
+    if not gemini_text:
+        return
+
+    if voice_response_requested:
+        await send_voice_message(cid, gemini_text)
+    else:
+        await message.answer(gemini_text, **thread_kwargs(message))
+    return
+
 def split_smart(text: str, limit: int) -> list[str]:
     results = []
     start = 0
