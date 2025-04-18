@@ -2709,12 +2709,11 @@ async def check_grammar_answer(message: Message, state: FSMContext):
         )
     else:
         await message.answer(
-            (
                 f"❌ Неверно.\n"
                 f"Правильный ответ: <b>{data['correct_answer']}</b>\n\n"
-                "Пожалуйста, введите именно эту форму, без дополнительных слов."
-            ),
-            parse_mode="HTML"
+                "Пожалуйста, введите именно эту форму, без дополнительных слов.",
+                parse_mode="HTML"
+                **thread_kwargs(message)
         )
 
     await state.clear()
