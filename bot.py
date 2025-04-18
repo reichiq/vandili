@@ -1462,7 +1462,7 @@ async def show_notes_command(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Открыть мои заметки", url=private_url)]
         ])
-        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard, **thread_kwargs(message))
         return
     await show_notes(message.chat.id)
 
@@ -1474,7 +1474,7 @@ async def show_reminders_command(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Открыть мои напоминания", url=private_url)]
         ])
-        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard, **thread_kwargs(message))
         return
     await show_reminders(message.chat.id)
 
@@ -1494,7 +1494,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_reminders")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="learn_close")]
     ])
-    await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
+    await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard, **thread_kwargs(message))
 
 @dp.callback_query(F.data == "learn_back")
 async def handle_learn_back(callback: CallbackQuery):
@@ -2177,7 +2177,7 @@ async def handle_add_word_input(message: Message, state: FSMContext):
         "Значение: ...\nПример: ..."
     )
 
-    await message.answer("🔄 Генерирую перевод и пример...")
+    await message.answer("🔄 Генерирую перевод и пример...", **thread_kwargs(message))
     try:
         response = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
         raw = response.text.strip().split("\n")
@@ -2815,7 +2815,7 @@ async def handle_formula_image(message: Message):
     (ответ от Gemini НЕ генерируем – ждём вопрос пользователя)
     """
     # 0️⃣ Сообщаем пользователю, что начали обработку
-    notify_msg = await message.answer("🔄 Обрабатываю изображение, пожалуйста, подождите…")
+    notify_msg = await message.answer("🔄 Обрабатываю изображение, пожалуйста, подождите…", **thread_kwargs(message))
     # 1️⃣  — получаем байты картинки
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     tg_file = await bot.get_file(file_id)
@@ -2830,7 +2830,7 @@ async def handle_formula_image(message: Message):
     if not latex:
         # 1️⃣ Обновляем статус: обработка завершилась с ошибкой
         await notify_msg.edit_text("❌ Не удалось обработать изображение.")
-        await message.answer("❌ Не смог распознать формулу.")
+        await message.answer("❌ Не смог распознать формулу.", **thread_kwargs(message))
         return
 
     # 3️⃣  — кладём в кэш → в следующем сообщении пользователь сможет
@@ -2859,7 +2859,7 @@ async def handle_formula_image(message: Message):
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
     _register_message_stats(message)
-    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...")
+    await message.answer("Секундочку, я обрабатываю ваше голосовое сообщение...", **thread_kwargs(message))
     try:
         file = await bot.get_file(message.voice.file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -2896,7 +2896,7 @@ async def handle_voice_message(message: Message):
         logging.error(f"Ошибка распознавания голосового сообщения: {e}")
     os.remove(wav_path)
     if not recognized_text:
-        await message.answer("Извините, я не смог распознать голосовое сообщение 😔")
+        await message.answer("Извините, я не смог распознать голосовое сообщение 😔", **thread_kwargs(message))
         return
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     voice_response_requested = bool(voice_regex.search(recognized_text))
@@ -3499,10 +3499,11 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         snippets = web_search(user_input)
         if snippets:
             await message.answer(
-                f"⚡ Вот что нашёл в Google по запросу «{user_input}»:\n{snippets}"
+                f"⚡ Вот что нашёл в Google по запросу «{user_input}»:\n{snippets}",
+                **thread_kwargs(message)
             )
         else:
-            await message.answer("❌ Не удалось найти новости в Google.")
+            await message.answer("❌ Не удалось найти новости в Google.", **thread_kwargs(message))
         return
 
     voice_response_requested = False  # исправление UnboundLocalError
@@ -3606,6 +3607,8 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
         if not (mentioned or reply_to_bot or username_mentioned):
             return
+        if mentioned:
+            user_input = clean_user_input(user_input)
 
     # Если пользователь отправил документ
     if message.document:
@@ -3618,9 +3621,9 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         text = extract_text_from_file(message.document.file_name, file_bytes)
         if text:
             user_documents[uid] = text
-            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.")
+            await message.answer("✅ Файл получен! Можешь задать вопрос по его содержимому.", **thread_kwargs(message))
         else:
-            await message.answer("⚠️ Не удалось извлечь текст из файла.")
+            await message.answer("⚠️ Не удалось извлечь текст из файла.", **thread_kwargs(message))
         return
 
     # Проверка запроса на ответ голосом
@@ -3653,7 +3656,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                 if voice_response_requested:
                     await send_voice_message(cid, exchange_text)
                 else:
-                    await message.answer(exchange_text)
+                    await message.answer(exchange_text, **thread_kwargs(message))
                 return
 
     # Исправленная обработка запроса погоды с использованием WeatherAPI
@@ -3683,7 +3686,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         if voice_response_requested:
             await send_voice_message(cid, weather_info)
         else:
-            await message.answer(weather_info)
+            await message.answer(weather_info, **thread_kwargs(message))
         return
 
     # Проверка на вопрос по файлу (исправленная позиция, после return)
@@ -3697,7 +3700,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         if voice_response_requested:
             await send_voice_message(cid, gemini_text)
         else:
-            await message.answer(gemini_text)
+            await message.answer(gemini_text, **thread_kwargs(message))
         return
 
     # Все остальные запросы идут сюда:
@@ -3708,7 +3711,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
     if voice_response_requested:
         await send_voice_message(cid, gemini_text)
     else:
-        await message.answer(gemini_text)
+        await message.answer(gemini_text, **thread_kwargs(message))
     return
 
 def split_smart(text: str, limit: int) -> list[str]:
@@ -3733,6 +3736,17 @@ def split_smart(text: str, limit: int) -> list[str]:
             results.append(chunk)
         start += cut_pos
     return [x for x in results if x]
+
+def clean_user_input(user_input: str) -> str:
+    """
+    Убирает из текста обращения к боту вроде "вай", "vai", "вэй" вместе с запятыми, восклицательными знаками и двоеточиями.
+    Возвращает аккуратно очищенную строку.
+    """
+    # Убираем одиночные "вай", "vai", "вэй" со знаками препинания (запятая, двоеточие, восклицательный, вопросительный)
+    cleaned_text = re.sub(r"\b(вай|vai|вэй)[\s,.:;!?]*", "", user_input, flags=re.IGNORECASE)
+    # После удаления вай могут остаться двойные пробелы — убираем
+    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text).strip()
+    return cleaned_text
 
 CAPTION_LIMIT = 950
 TELEGRAM_MSG_LIMIT = 4096
@@ -3974,11 +3988,11 @@ async def handle_msg(
     if uid in user_images_text:
         latex = user_images_text.pop(uid)
         # уведомляем пользователя, что вопрос обрабатывается
-        await message.answer("🔄 Обрабатываю ваш запрос… 😊")
+        await message.answer("🔄 Обрабатываю ваш запрос… 😊", **thread_kwargs(message))
 
         # нет вопроса → просим сформулировать
         if not user_input:
-            await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!")
+            await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!", **thread_kwargs(message))
             return
 
         prompt = (
@@ -4016,7 +4030,7 @@ async def handle_msg(
             raw_answer = resp.text.strip()
         except Exception as e:
             logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
-            await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.")
+            await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.", **thread_kwargs(message))
             return
 
         # разбиваем ответ на шаги
@@ -4217,7 +4231,7 @@ async def handle_msg(
         for chunk in split_smart(gemini_text, TELEGRAM_MSG_LIMIT):
             await message.answer(chunk)
     else:
-        await message.answer("❌ Я не смог сгенерировать ответ.")
+        await message.answer("❌ Я не смог сгенерировать ответ.", **thread_kwargs(message))
 # ──────────────────────────────────────────────────────────────────────
 
 
