@@ -4138,81 +4138,77 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         "почему", "зачем", "на кого", "кто", "что такое", "влияние",
         "философ", "отрицал", "повлиял", "смысл", "экзистенциализм", "опроверг"
     ]
-    # если в запросе встречаются «аналитические» ключевые слова — чуть расширяем prompt
-    needs_expansion = any(k in full_prompt.lower() for k in analysis_keywords)
-    if needs_expansion:
-        smart_prompt = (
+    # чуть «раскатываем» промпт, если надо глубокой аналитики
+    if any(k in full_prompt.lower() for k in analysis_keywords):
+        smart = (
             "Ответь чётко и по делу. Если в вопросе несколько частей — ответь на каждую. "
-            "Приводи имена и конкретные примеры, если они есть. Не повторяй вопрос, просто ответь:\n\n"
+            "Упоминай имена и примеры, не повторяй вопрос, просто ответь:\n\n"
         )
-        full_prompt = smart_prompt + full_prompt
+        full_prompt = smart + full_prompt
 
-    # короткий путь для генерации подписей к картинкам
+    # … короткий путь для картинок, если нужно …
     if show_image and rus_word and not leftover:
         return await generate_short_caption(rus_word)
 
-    # строим историю диалога (context window)
+    # строим контекст
     conversation = chat_history.setdefault(cid, [])
     conversation.append({"role": "user", "parts": [full_prompt]})
     if len(conversation) > 8:
         conversation.pop(0)
 
     try:
-        # показываем «печатаю…»
-        await bot.send_chat_action(chat_id=cid, action="typing")
-
-        # первый прогон Gemini
+        await bot.send_chat_action(cid, "typing")
         resp = await model.generate_content_async(conversation)
-        raw_model_text = resp.text.strip()
+        raw = resp.text.strip()
 
-        # —————————————————————————————————————————————————————————————————
-        #  Второй проход: если модель ссылается на нехватку актуальности
-        # —————————————————————————————————————————————————————————————————
-        trigger = (
-            "обрезаны по состоянию на" in raw_model_text.lower()
-            or "не обладаю информацией" in raw_model_text.lower()
-        )
-        if trigger:
-            logging.info("[GEMINI] мало знаний — запускаем web_search и фолбэк")
-            snippets = web_search(full_prompt)
-            fallback_msg = (
+        # 1) если Gemini жалуется на устаревшие данные — делаем Google Search + повтор
+        low = raw.lower()
+        if "обрезаны по состоянию на" in low or "не обладаю информацией" in low:
+            logging.info("[GEMINI] нет актуальных данных → web_search fallback")
+            facts = web_search(full_prompt)
+            fb = (
                 "У меня есть результаты веб-поиска по запросу:\n"
-                f"{snippets}\n\n"
-                f"Пожалуйста, на их основе дай развернутый ответ:\n{full_prompt}"
+                f"{facts}\n\n"
+                f"На их основе дай развёрнутый ответ на вопрос:\n{full_prompt}"
             )
-            # добавляем факт‑блок в историю
-            conversation.append({"role": "user", "parts": [fallback_msg]})
-            # повторный прогон Gemini с учётом фактов
+            conversation.append({"role": "user", "parts": [fb]})
             resp2 = await model.generate_content_async(conversation)
-            raw_model_text = resp2.text.strip()
-            logging.info("[GEMINI] фолбэк-ответ получен")
-            # сохраняем ответ модели в историю
-            conversation.append({"role": "model", "parts": [raw_model_text]})
-            if len(conversation) > 8:
-                conversation.pop(0)
+            raw = resp2.text.strip()
+            logging.info("[GEMINI] получил ответ по фактам")
 
-        # если Gemini не вернул кандидатов — значит запрос заблокировали
-        if not resp.candidates:
-            reason = getattr(resp.prompt_feedback, "block_reason", "неизвестна")
-            logging.exception(f"[BOT] Запрос заблокирован Gemini: причина — {reason}")
-            gemini_text = (
-                f"⚠️ Запрос отклонён. Возможная причина: <b>{reason}</b>.\n"
-                "Попробуйте переформулировать запрос."
-            )
-        else:
-            # форматируем ответ
-            gemini_text = format_gemini_response(raw_model_text)
-            # сохраняем в историю для контекста
-            conversation.append({"role": "model", "parts": [raw_model_text]})
-            if len(conversation) > 8:
-                conversation.pop(0)
+        # 2) если модель вообще ничего не сгенерировала или блокирована
+        if not resp.candidates or not raw:
+            logging.warning("[GEMINI] неизвестный ответ или блокировка → web_search прямой")
+            snippets = web_search(full_prompt)
+            if snippets:
+                return f"Я не смог найти ответ в своих данных, вот что нашёл в Google:\n{snippets}"
+            else:
+                return "❌ Не удалось найти информацию в Google."
+
+        # 3) форматируем и сохраняем в историю
+        gemini_text = format_gemini_response(raw)
+        conversation.append({"role": "model", "parts": [raw]})
+        if len(conversation) > 8:
+            conversation.pop(0)
+
+        # 4) если в готовом геми́ни-тексте модель извиняется/говорит «не знаю» — на всякий случай тоже WebSearch
+        low2 = gemini_text.lower()
+        unknown_triggers = ["извин", "не знаю", "не могу дать", "не могу ответить", "нет информации"]
+        if any(phr in low2 for phr in unknown_triggers):
+            logging.info("[GEMINI] ответ содержит «не знаю» → веб-поиск fallback")
+            snippets = web_search(full_prompt)
+            if snippets:
+                return f"Похоже, я не уверен в ответе. Вот что нашёл через Google:\n{snippets}"
 
     except Exception as e:
-        logging.error(f"[BOT] Ошибка при обращении к Gemini: {e}")
-        gemini_text = "⚠️ Произошла ошибка при генерации ответа. Попробуйте ещё раз позже."
+        logging.error(f"[BOT] Ошибка Gemini/fallback: {e}")
+        # на ошибку тоже пробуем веб-поиск
+        snippets = web_search(full_prompt)
+        if snippets:
+            return f"Произошла ошибка при генерации, но вот что нашёл в Google:\n{snippets}"
+        return "⚠️ Ошибка при генерации ответа."
 
     return gemini_text
-
 
 async def vocab_reminder_loop():
     while True:
