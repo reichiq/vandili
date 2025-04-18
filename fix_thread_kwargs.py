@@ -1,6 +1,6 @@
 import re
 
-filename = "test.py"  # твой основной файл
+filename = "bot.py"  # твой основной файл
 
 with open(filename, "r", encoding="utf-8") as f:
     content = f.read()
