@@ -251,8 +251,6 @@ async def on_startup(_):
     BOT_ID = me.id
 
 if __name__ == "__main__":
-    import asyncio
-    from aiogram import executor
     executor.start_polling(dp, on_startup=on_startup)
 # Клавиатура с основными действиями
 main_menu_keyboard = ReplyKeyboardMarkup(
