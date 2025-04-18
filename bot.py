@@ -1162,7 +1162,7 @@ def split_text_for_tts(text: str, max_len: int = 4500) -> list[str]:
     return chunks
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(message: Message, text: str, lang: str = "en‑US"):
+async def send_voice_message(chat_id: int, text: str, lang: str = "en‑US"):
     client = texttospeech.TextToSpeechClient()
     clean_text = clean_for_tts(text)
 
