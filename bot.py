@@ -142,6 +142,39 @@ def web_search(query: str, num_results: int = 5) -> str:
     logging.info(f"[web_search] найдено сниппетов: {len(snippets)}")
     return "\n".join(snippets)
 
+def extract_text_from_file(file_name: str, file_bytes: bytes) -> str:
+    """
+    Извлекает текст из файла по его расширению.
+    Поддерживаются .txt, .py, .md, .docx, .pdf.
+    Возвращает строку с содержимым или пустую строку, если не удалось.
+    """
+    ext = file_name.rsplit(".", 1)[-1].lower()
+    
+    # Текстовые файлы (код, разметка, обычный текст)
+    if ext in ("txt", "py", "md"):
+        try:
+            return file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return file_bytes.decode("latin-1", errors="ignore")
+    
+    # DOCX
+    if ext == "docx":
+        doc = Document(BytesIO(file_bytes))
+        return "\n".join(p.text for p in doc.paragraphs)
+    
+    # PDF
+    if ext == "pdf":
+        reader = PdfReader(BytesIO(file_bytes))
+        texts = []
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                texts.append(page_text)
+        return "\n".join(texts)
+    
+    # Если формат не поддерживается
+    return ""
+
 def detect_lang(text: str) -> str:
     return "ru" if re.search(r"[а-яА-Я]", text) else "en"
 
