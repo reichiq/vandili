@@ -1162,7 +1162,7 @@ def split_text_for_tts(text: str, max_len: int = 4500) -> list[str]:
     return chunks
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
+async def send_voice_message(message: Message, text: str, lang: str = "en‑US"):
     client = texttospeech.TextToSpeechClient()
     clean_text = clean_for_tts(text)
 
@@ -1194,14 +1194,14 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
             )
         except Exception as e:
             logging.exception("[TTS] Ошибка при синтезе речи:")
-            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.", **thread_kwargs(message))
+            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.")
             return
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out:
             out.write(response.audio_content)
             out_path = out.name
 
-        await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg", **thread_kwargs(message)))
+        await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg"))
         await asyncio.sleep(1.2)  # немного подождём между отправками
         os.remove(out_path)
 
