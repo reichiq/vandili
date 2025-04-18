@@ -1357,13 +1357,13 @@ async def cmd_help(message: Message):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support_request")]]
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread_kwargs(message))
     else:
         private_url = f"https://t.me/{BOT_USERNAME}?start=support"
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✉️ Написать в поддержку", url=private_url)]]
         )
-        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread(message))
+        await bot.send_message(chat_id=message.chat.id, text="Если возник вопрос или хочешь сообщить об ошибке — напишите нам:", reply_markup=keyboard, **thread_kwargs(message))
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
@@ -4206,10 +4206,10 @@ async def handle_msg(
                             cid,
                             FSInputFile(tmp_path, "image.jpg"),
                             caption=caption or "…",
-                            **thread(message)
+                            **thread_kwargs(message)
                         )
                         for c in rest:
-                            await bot.send_message(cid, c, **thread(message))
+                            await bot.send_message(cid, c, **thread_kwargs(message))
                     finally:
                         os.remove(tmp_path)
     elif gemini_text:
