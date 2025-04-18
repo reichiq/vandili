@@ -850,6 +850,7 @@ def normalize_city_name(raw_city: str) -> str:
 # Добавлено правило для "долар" с одной "л" для обработки опечаток
 CURRENCY_SYNONYMS = {
     "доллар": "USD", "доллары": "USD", "долларов": "USD",
+    "доларов": "USD",
     "долар": "USD",
     "евро": "EUR",
     "рубль": "RUB", "рубли": "RUB", "рублей": "RUB",
@@ -886,33 +887,41 @@ async def get_floatrates_rate(from_curr: str, to_curr: str) -> float:
     return float(rate)
 
 async def get_exchange_rate(amount: float, from_curr: str, to_curr: str) -> str:
-    # 1) Нормализуем пользовательские входные данные в ISO‑коды
+    # 1) Получаем стандартные коды валют
     from_code = CURRENCY_SYNONYMS.get(from_curr.lower(), from_curr.upper())
     to_code   = CURRENCY_SYNONYMS.get(to_curr.lower(),   to_curr.upper())
 
-    # 2) Пробуем получить курс из floatrates
+    # 2) Пробуем floatrates.com
     rate = await get_floatrates_rate(from_code, to_code)
-    if rate is None:
-        # 3) Fallback: делаем web-поиск через Google Custom Search
-        query = f"{int(amount)} {from_code} в {to_code} курс"
-        snippets = web_search(query, num_results=3)
+    if rate is not None:
+        result = amount * rate
+        date = datetime.now().strftime("%d.%m.%Y")
         return (
-            f"⚠️ Не удалось получить курс через floatrates.\n"
-            f"Вот что нашёл Google по запросу «{query}»:\n\n{snippets}"
+            f"Курс {amount:.0f} {from_code} → {result:.2f} {to_code} на {date} 😊\n"
+            "Курс в банках и на биржах может отличаться."
         )
 
-    # 4) Вычисляем результат
-    result = amount * rate
+    # 3) Fallback — пробуем exchangerate.host
+    url = f"https://api.exchangerate.host/convert?from={from_code}&to={to_code}&amount={amount}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                data = await resp.json()
+        if resp.status == 200 and data.get("result") is not None:
+            converted = data["result"]
+            # API возвращает поле 'date' в формате YYYY-MM-DD
+            api_date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+            # приводим к дд.мм.гггг
+            date = datetime.fromisoformat(api_date).strftime("%d.%m.%Y")
+            return (
+                f"Курс {amount:.0f} {from_code} → {converted:.2f} {to_code} на {date} 😊\n"
+                "Курс в банках и на биржах может отличаться."
+            )
+    except Exception:
+        pass
 
-    # 5) Делаем дату в формате ДД.ММ.ГГГГ
-    today = datetime.now().strftime("%d.%m.%Y")
-
-    # 6) Возвращаем пользователю
-    return (
-        f"Курс {amount:.0f} {from_code} – {result:.2f} {to_code} на {today} 😊\n"
-        "Курс в банках и на биржах может отличаться."
-    )
-
+    # 4) Если ни floatrates, ни exchangerate.host не сработали:
+    return "❌ Не удалось получить курс валют. Попробуй чуть позже."
 # Новый универсальный шаблон для запроса курса валют
 # Он обрабатывает запросы вида: "1 доллар сум" и "1 доллар в сум", а также с английскими обозначениями.
 EXCHANGE_PATTERN = re.compile(
