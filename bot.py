@@ -4160,8 +4160,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
     # … короткий путь для картинок, если нужно …
     if show_image and rus_word and not leftover:
-        await generate_short_caption(rus_word)
-        return None
+        return await generate_short_caption(rus_word)
 
     # строим контекст
     conversation = chat_history.setdefault(cid, [])
@@ -4174,9 +4173,15 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         resp = await model.generate_content_async(conversation)
         raw = resp.text.strip()
 
-        # 1) если Gemini жалуется на устаревшие данные — делаем Google Search + повтор
+        # 1) если Gemini жалуется на устаревшие данные или на то, что это будущее — fallback в Google
         low = raw.lower()
-        if "обрезаны по состоянию на" in low or "не обладаю информацией" in low:
+        if any(trigger in low for trigger in (
+            "обрезаны по состоянию на",
+            "не обладаю информацией",
+            "не могу предоставить",
+            "не могу предсказывать",
+            "еще не наступила",
+        )):
             logging.info("[GEMINI] нет актуальных данных → web_search fallback")
             facts = web_search(full_prompt)
             fb = (
