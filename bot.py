@@ -247,6 +247,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 BOT_ID = None
+BOT_USERNAME = None
 
 # Клавиатура с основными действиями
 main_menu_keyboard = ReplyKeyboardMarkup(
@@ -3568,7 +3569,8 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             and message.reply_to_message.from_user
             and message.reply_to_message.from_user.id == BOT_ID
         )
-        if not (mentioned or reply_to_bot):
+        username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
+        if not (mentioned or reply_to_bot or username_mentioned):
             return
 
     # Если пользователь отправил документ
@@ -4337,9 +4339,10 @@ async def reminder_loop():
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
-    global BOT_ID
+    global BOT_ID, BOT_USERNAME
     me = await bot.get_me()
     BOT_ID = me.id
+    BOT_USERNAME = me.username
     
     asyncio.create_task(reminder_loop())
     asyncio.create_task(vocab_reminder_loop())
