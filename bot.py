@@ -386,19 +386,20 @@ def save_notes():
     except Exception as e:
         logging.exception(f"[BOT] Не удалось сохранить заметки: {e}")
 
-def load_support_map() -> dict:
+def load_support_map() -> dict[tuple[int,int], int]:
     if not os.path.exists(SUPPORT_MAP_FILE):
         return {}
     try:
-        with open(SUPPORT_MAP_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        lst = json.load(open(SUPPORT_MAP_FILE, encoding="utf-8"))  # ожидаем [[chat_id, msg_id, user_id], ...]
+        return {(c, m): u for c, m, u in lst}
     except:
         return {}
 
 def save_support_map():
     try:
+        lst = [[c, m, u] for (c, m), u in support_reply_map.items()]
         with open(SUPPORT_MAP_FILE, "w", encoding="utf-8") as f:
-            json.dump(support_reply_map, f)
+            json.dump(lst, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.exception(f"Ошибка при сохранении support_map: {e}")
 
