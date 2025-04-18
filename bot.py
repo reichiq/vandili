@@ -3412,6 +3412,18 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     uid = message.from_user.id
     cid = message.chat.id
 
+    # ─────────── Обработка новостей от пользователя ───────────
+    lower_input = user_input.lower()
+    if "новости" in lower_input or lower_input.startswith("новости") or "последние новости" in lower_input:
+        snippets = web_search(user_input)
+        if snippets:
+            await message.answer(
+                f"⚡ Вот что нашёл в Google по запросу «{user_input}»:\n{snippets}"
+            )
+        else:
+            await message.answer("❌ Не удалось найти новости в Google.")
+        return
+
     voice_response_requested = False  # исправление UnboundLocalError
     if uid in pending_note_or_reminder:
         data = pending_note_or_reminder.pop(uid)
@@ -4193,7 +4205,7 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
         # 4) если в готовом геми́ни-тексте модель извиняется/говорит «не знаю» — на всякий случай тоже WebSearch
         low2 = gemini_text.lower()
-        unknown_triggers = ["извин", "не знаю", "не могу дать", "не могу ответить", "нет информации"]
+        unknown_triggers = ["извин", "не знаю", "не могу дать", "не могу ответить", "нет информации", "у меня нет сведений", "у меня нет данных"]
         if any(phr in low2 for phr in unknown_triggers):
             logging.info("[GEMINI] ответ содержит «не знаю» → веб-поиск fallback")
             snippets = web_search(full_prompt)
