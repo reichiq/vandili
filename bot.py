@@ -245,13 +245,9 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-async def on_startup(_):
-    global BOT_ID
-    me = await bot.get_me()
-    BOT_ID = me.id
+dp = Dispatcher()
+BOT_ID = None
 
-if __name__ == "__main__":
-    executor.start_polling(dp, on_startup=on_startup)
 # Клавиатура с основными действиями
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
