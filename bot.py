@@ -3533,27 +3533,25 @@ async def handle_all_messages_impl(message: Message, user_input: str):
     # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
-        amount_str = exchange_match.group(1).replace(',', '.')
+        amount_str, raw_from, raw_to = exchange_match.groups()
         try:
-            amount = float(amount_str)
-        except:
-            amount = 0
-        from_curr_raw = exchange_match.group(2)
-        to_curr_raw = exchange_match.group(3)
-    
-        from_curr_lemma = normalize_currency_rus(from_curr_raw)
-        to_curr_lemma = normalize_currency_rus(to_curr_raw)
-    
-        from_curr = CURRENCY_SYNONYMS.get(from_curr_lemma, from_curr_lemma.upper())
-        to_curr = CURRENCY_SYNONYMS.get(to_curr_lemma, to_curr_lemma.upper())
-    
-        exchange_text = await get_exchange_rate(amount, from_curr, to_curr)
-        if exchange_text is not None:
-            if voice_response_requested:
-                await send_voice_message(cid, exchange_text)
-            else:
-                await message.answer(exchange_text)
-            return
+            amount = float(amount_str.replace(',', '.')) if amount_str else 1.0
+        except ValueError:
+            amount = 1.0
+        from_lemma = normalize_currency_rus(raw_from)
+        to_lemma   = normalize_currency_rus(raw_to)
+        
+        if from_lemma in CURRENCY_SYNONYMS and to_lemma in CURRENCY_SYNONYMS:
+            from_code = CURRENCY_SYNONYMS[from_lemma]
+            to_code   = CURRENCY_SYNONYMS[to_lemma]
+            
+            exchange_text = await get_exchange_rate(amount, from_code, to_code)
+            if exchange_text:
+                if voice_response_requested:
+                    await send_voice_message(cid, exchange_text)
+                else:
+                    await message.answer(exchange_text)
+                return
 
     # Исправленная обработка запроса погоды с использованием WeatherAPI
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
