@@ -125,6 +125,7 @@ def web_search(query: str, num_results: int = 5) -> str:
     Делает запрос в Google Custom Search JSON API и возвращает
     конкатенированные сниппеты результатов.
     """
+    logging.info(f"[web_search] запрос: {query!r}")
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         "key": GOOGLE_SEARCH_API_KEY,
@@ -133,10 +134,12 @@ def web_search(query: str, num_results: int = 5) -> str:
         "num": num_results,
     }
     resp = requests.get(url, params=params)
+    logging.info(f"[web_search] status: {resp.status_code}")
     data = resp.json()
     snippets = []
     for item in data.get("items", []):
         snippets.append(f"- {item['snippet']}")
+    logging.info(f"[web_search] найдено сниппетов: {len(snippets)}")
     return "\n".join(snippets)
 
 def detect_lang(text: str) -> str:
@@ -4162,24 +4165,31 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
         resp = await model.generate_content_async(conversation)
         raw_model_text = resp.text.strip()
 
-        # fallback только когда Gemini прямо говорит о нехватке знаний
-        if (
+        # —————————————————————————————————————————————————————————————————
+        #  Второй проход: если модель ссылается на нехватку актуальности
+        # —————————————————————————————————————————————————————————————————
+        trigger = (
             "обрезаны по состоянию на" in raw_model_text.lower()
             or "не обладаю информацией" in raw_model_text.lower()
-        ):
-            # делаем веб‑поиск по полному запросу
+        )
+        if trigger:
+            logging.info("[GEMINI] мало знаний — запускаем web_search и фолбэк")
             snippets = web_search(full_prompt)
-            # формируем новый prompt с фактами из поиска
-            fallback_prompt = (
+            fallback_msg = (
                 "У меня есть результаты веб-поиска по запросу:\n"
                 f"{snippets}\n\n"
-                f"На их основе дай полный развёрнутый ответ на вопрос:\n{full_prompt}"
+                f"Пожалуйста, на их основе дай развернутый ответ:\n{full_prompt}"
             )
-            # повторный прогон Gemini
-            resp2 = await model.generate_content_async([
-                {"role": "user", "parts": [fallback_prompt]}
-            ])
+            # добавляем факт‑блок в историю
+            conversation.append({"role": "user", "parts": [fallback_msg]})
+            # повторный прогон Gemini с учётом фактов
+            resp2 = await model.generate_content_async(conversation)
             raw_model_text = resp2.text.strip()
+            logging.info("[GEMINI] фолбэк-ответ получен")
+            # сохраняем ответ модели в историю
+            conversation.append({"role": "model", "parts": [raw_model_text]})
+            if len(conversation) > 8:
+                conversation.pop(0)
 
         # если Gemini не вернул кандидатов — значит запрос заблокировали
         if not resp.candidates:
