@@ -104,7 +104,7 @@ async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None):
         await bot.send_message(chat_id,
                                text=text,
                                parse_mode="HTML",
-                               reply_to_message_id=reply_to)
+                               reply_to_message_id=reply_to, **thread_kwargs(message))
     except TelegramBadRequest:
         # 2‑я попытка — вырезаем все теги, кроме <code>/<pre>
         no_tags = re.sub(r'</?(?!code|pre)[a-zA-Z][^>]*>', '', text)
@@ -112,11 +112,11 @@ async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None):
             await bot.send_message(chat_id,
                                    text=no_tags,
                                    parse_mode="HTML",
-                                   reply_to_message_id=reply_to)
+                                   reply_to_message_id=reply_to, **thread_kwargs(message))
         except TelegramBadRequest:
             # 3‑я попытка — полностью экранируем, отключаем parse_mode
             await bot.send_message(chat_id,
-                                   text=_html.escape(text),
+                                   text=_html.escape(text, **thread_kwargs(message)),
                                    parse_mode=None,
                                    reply_to_message_id=reply_to)
 
@@ -839,24 +839,24 @@ async def send_admin_reply_as_single_message(admin_message: Message, user_id: in
 
     if admin_message.text:
         reply_text = f"{prefix}\n{admin_message.text}"
-        await bot.send_message(chat_id=user_id, text=reply_text)
+        await bot.send_message(chat_id=user_id, text=reply_text, **thread_kwargs(message))
     elif admin_message.photo:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption)
+        await bot.send_photo(chat_id=user_id, photo=admin_message.photo[-1].file_id, caption=caption, **thread_kwargs(message))
     elif admin_message.voice:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_voice(chat_id=user_id, voice=admin_message.voice.file_id, caption=caption)
+        await bot.send_voice(chat_id=user_id, voice=admin_message.voice.file_id, caption=caption, **thread_kwargs(message))
     elif admin_message.video:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_video(chat_id=user_id, video=admin_message.video.file_id, caption=caption)
+        await bot.send_video(chat_id=user_id, video=admin_message.video.file_id, caption=caption, **thread_kwargs(message))
     elif admin_message.document:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_document(chat_id=user_id, document=admin_message.document.file_id, caption=caption)
+        await bot.send_document(chat_id=user_id, document=admin_message.document.file_id, caption=caption, **thread_kwargs(message))
     elif admin_message.audio:
         caption = prefix + ("\n" + admin_message.caption if admin_message.caption else "")
-        await bot.send_audio(chat_id=user_id, audio=admin_message.audio.file_id, caption=caption)
+        await bot.send_audio(chat_id=user_id, audio=admin_message.audio.file_id, caption=caption, **thread_kwargs(message))
     else:
-        await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]")
+        await bot.send_message(chat_id=user_id, text=f"{prefix}\n[Сообщение в неподдерживаемом формате]", **thread_kwargs(message))
 
 # ---------------------- Морфологическая нормализация для валют и городов ---------------------- #
 def normalize_currency_rus(word: str) -> str:
@@ -1194,14 +1194,14 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
             )
         except Exception as e:
             logging.exception("[TTS] Ошибка при синтезе речи:")
-            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.")
+            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.", **thread_kwargs(message))
             return
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out:
             out.write(response.audio_content)
             out_path = out.name
 
-        await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg"))
+        await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg", **thread_kwargs(message)))
         await asyncio.sleep(1.2)  # немного подождём между отправками
         os.remove(out_path)
 
@@ -1238,7 +1238,7 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     lines = [l.strip() for l in dialogue_text.strip().splitlines() if l.strip()]
     total = len(lines)
 
-    progress_msg = await bot.send_message(chat_id, f"🔊 Озвучка [░░░░░░░░░░░░░░░░░░░░] 0/{total}")
+    progress_msg = await bot.send_message(chat_id, f"🔊 Озвучка [░░░░░░░░░░░░░░░░░░░░] 0/{total}", **thread_kwargs(message))
 
     def progress_bar(current: int, total: int, size: int = 20) -> str:
         filled = int(size * current / total)
@@ -1280,7 +1280,7 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     final_path = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg").name
     final_audio.export(final_path, format="ogg")
 
-    await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg"))
+    await bot.send_voice(chat_id=chat_id, voice=FSInputFile(final_path, filename="dialogue.ogg", **thread_kwargs(message)))
     os.remove(final_path)
 
     await progress_msg.edit_text("✅ Озвучка завершена!")
@@ -1308,7 +1308,7 @@ async def cmd_start(message: Message, command: CommandObject):
         return
     elif command.args == "support":
         support_mode_users.add(message.from_user.id)
-        await message.answer(SUPPORT_PROMPT_TEXT)
+        await message.answer(SUPPORT_PROMPT_TEXT, **thread_kwargs(message))
         return
 
     greet = """Привет! Я <b>VAI</b> — твой заботливый помощник и верный компаньон 🤖💬
@@ -1332,12 +1332,12 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer("Бот включён ✅")
-        await message.answer(greet, reply_markup=main_menu_keyboard)
+        await message.answer("Бот включён ✅", **thread_kwargs(message))
+        await message.answer(greet, reply_markup=main_menu_keyboard, **thread_kwargs(message))
         return
 
     # 📩 Если в ЛС
-    await message.answer(greet, reply_markup=main_menu_keyboard)
+    await message.answer(greet, reply_markup=main_menu_keyboard, **thread_kwargs(message))
 
 @dp.message(Command("stop", prefix="/!"))
 async def cmd_stop(message: Message, command: CommandObject):
@@ -1346,9 +1346,9 @@ async def cmd_stop(message: Message, command: CommandObject):
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫")
+        await message.answer("Бот отключён в группе 🚫", **thread_kwargs(message))
     else:
-        await message.answer("Бот отключён 🚫")
+        await message.answer("Бот отключён 🚫", **thread_kwargs(message))
         
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -1395,7 +1395,7 @@ async def cmd_adminstats(message: Message):
         await message.answer_photo(photo=FSInputFile(chart_path, filename="top_commands.png"), caption=text)
         os.remove(chart_path)
     else:
-        await message.answer(text + "\nНет данных по командам.")
+        await message.answer(text + "\nНет данных по командам.", **thread_kwargs(message))
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
@@ -1408,7 +1408,7 @@ async def cmd_broadcast(message: Message):
     else:
         text_parts = message.text.split(maxsplit=1)
         if len(text_parts) < 2:
-            await message.answer("Нет текста для рассылки.")
+            await message.answer("Нет текста для рассылки.", **thread_kwargs(message))
             return
         broadcast_text = text_parts[1]
         broadcast_msg = None
@@ -1418,34 +1418,34 @@ async def cmd_broadcast(message: Message):
         try:
             if broadcast_msg:
                 if broadcast_msg.text:
-                    await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_msg.text}")
+                    await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_msg.text}", **thread_kwargs(message))
                 elif broadcast_msg.photo:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_photo(chat_id=recipient, photo=broadcast_msg.photo[-1].file_id, caption=caption)
+                    await bot.send_photo(chat_id=recipient, photo=broadcast_msg.photo[-1].file_id, caption=caption, **thread_kwargs(message))
                 elif broadcast_msg.video:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_video(chat_id=recipient, video=broadcast_msg.video.file_id, caption=caption)
+                    await bot.send_video(chat_id=recipient, video=broadcast_msg.video.file_id, caption=caption, **thread_kwargs(message))
                 elif broadcast_msg.voice:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_voice(chat_id=recipient, voice=broadcast_msg.voice.file_id, caption=caption)
+                    await bot.send_voice(chat_id=recipient, voice=broadcast_msg.voice.file_id, caption=caption, **thread_kwargs(message))
                 elif broadcast_msg.document:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_document(chat_id=recipient, document=broadcast_msg.document.file_id, caption=caption)
+                    await bot.send_document(chat_id=recipient, document=broadcast_msg.document.file_id, caption=caption, **thread_kwargs(message))
                 elif broadcast_msg.audio:
                     caption = broadcast_msg.caption or ""
                     caption = f"{broadcast_prefix}\n{caption}"
-                    await bot.send_audio(chat_id=recipient, audio=broadcast_msg.audio.file_id, caption=caption)
+                    await bot.send_audio(chat_id=recipient, audio=broadcast_msg.audio.file_id, caption=caption, **thread_kwargs(message))
                 else:
-                    await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n[Сообщение в неподдерживаемом формате]")
+                    await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n[Сообщение в неподдерживаемом формате]", **thread_kwargs(message))
             else:
-                await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_text}")
+                await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_text}", **thread_kwargs(message))
         except Exception as e:
             logging.exception(f"[BROADCAST] Ошибка при отправке в чат {recipient}: {e}")
-    await message.answer("Рассылка завершена.")
+    await message.answer("Рассылка завершена.", **thread_kwargs(message))
 
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
@@ -1824,7 +1824,7 @@ async def send_quiz_question(message: Message, state: FSMContext):
         score = data["score"]
         level = data["level"]
         await message.answer(
-            f"🏁 Тест завершён!\nТы ответил правильно на {score} из {len(questions)}.",
+            f"🏁 Тест завершён!\nТы ответил правильно на {score} из {len(questions, **thread_kwargs(message))}.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 Назад к темам", callback_data=f"learn_level:{level}")]
             ])
@@ -1838,7 +1838,7 @@ async def send_quiz_question(message: Message, state: FSMContext):
         [InlineKeyboardButton(text=f"{key}) {val}", callback_data=f"quiz_answer:{key}")]
         for key, val in question["options"].items()
     ]
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons, **thread_kwargs(message)), parse_mode="HTML")
 
 @dp.callback_query(F.data == "dialogue_voice")
 async def handle_dialogue_voice(callback: CallbackQuery, state: FSMContext):
@@ -2196,10 +2196,10 @@ async def handle_add_word_input(message: Message, state: FSMContext):
         await message.answer(
             f"<b>Слово:</b> {word_raw}\n<b>Значение:</b> {meaning}\n<b>Пример:</b> {example}",
             reply_markup=keyboard
-        )
+        , **thread_kwargs(message))
     except Exception as e:
         logging.exception(f"[VOCAB_ADD_INTERFACE] Ошибка: {e}")
-        await message.answer("❌ Не удалось добавить слово.")
+        await message.answer("❌ Не удалось добавить слово.", **thread_kwargs(message))
         await state.clear()
 
 @dp.callback_query(F.data == "progress_reset")
@@ -2334,7 +2334,7 @@ async def ask_add_vocab(callback: CallbackQuery):
     uid = callback.from_user.id
     await callback.message.delete()
     pending_note_or_reminder[uid] = {"type": "add_vocab"}
-    await bot.send_message(uid, "✍️ Введи английское слово, которое хочешь добавить в словарь.")
+    await bot.send_message(uid, "✍️ Введи английское слово, которое хочешь добавить в словарь.", **thread_kwargs(message))
 
 @dp.callback_query(F.data == "learn_review")
 async def handle_vocab_review(callback: CallbackQuery, state: FSMContext):
@@ -2376,7 +2376,7 @@ async def send_next_review_word(uid: int, state: FSMContext):
     index = data.get("index", 0)
 
     if index >= len(queue):
-        await bot.send_message(uid, "✅ Все слова повторены!")
+        await bot.send_message(uid, "✅ Все слова повторены!", **thread_kwargs(message))
         await state.clear()
         return
 
@@ -2398,7 +2398,7 @@ async def send_next_review_word(uid: int, state: FSMContext):
         f"<b>{entry['word']}</b> — {entry['meaning']}\n\n<i>{entry['example']}</i>",
         reply_markup=keyboard,
         parse_mode="HTML"
-    )
+    , **thread_kwargs(message))
 
 @dp.callback_query(F.data.startswith("review_remember:"))
 async def review_remember(callback: CallbackQuery, state: FSMContext):
@@ -2590,9 +2590,9 @@ async def save_new_value(message: Message, state: FSMContext):
     if 0 <= index < len(vocab) and field in ["word", "meaning", "example"]:
         vocab[index][field] = new_value
         save_vocab(user_vocab)
-        await message.answer(f"✅ Обновлено: <b>{field}</b> → {new_value}")
+        await message.answer(f"✅ Обновлено: <b>{field}</b> → {new_value}", **thread_kwargs(message))
     else:
-        await message.answer("❌ Ошибка при обновлении.")
+        await message.answer("❌ Ошибка при обновлении.", **thread_kwargs(message))
 
     await state.clear()
     # Показываем обновлённый словарь
@@ -2703,7 +2703,7 @@ async def check_grammar_answer(message: Message, state: FSMContext):
             "✅ Верно! Хотите ещё одно упражнение?",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar")]
+                    [InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar", **thread_kwargs(message))]
                 ]
             )
         )
@@ -2711,9 +2711,15 @@ async def check_grammar_answer(message: Message, state: FSMContext):
         await message.answer(
                 f"❌ Неверно.\n"
                 f"Правильный ответ: <b>{data['correct_answer']}</b>\n\n"
+<<<<<<< HEAD
                 "Пожалуйста, введите именно эту форму, без дополнительных слов.",
                 parse_mode="HTML"
                 **thread_kwargs(message)
+=======
+                "Пожалуйста, введите именно эту форму, без дополнительных слов."
+            , **thread_kwargs(message)),
+            parse_mode="HTML"
+>>>>>>> e23766e (fix: добавлен thread_kwargs для всех ответов бота)
         )
 
     await state.clear()
@@ -2754,7 +2760,7 @@ async def handle_timezone_setting(message: Message):
             "или\n"
             "<b>Мой город: Москва</b>",
             parse_mode="HTML"
-        )
+        , **thread_kwargs(message))
         return
 
     setting_type = tz_match.group(1).lower()
@@ -2767,7 +2773,7 @@ async def handle_timezone_setting(message: Message):
             await message.answer(
                 f"❌ Не удалось определить часовой пояс для <b>{value}</b>.\n"
                 "Попробуй указать другой город или написать: <code>Мой часовой пояс: Europe/Warsaw</code>"
-            )
+            , **thread_kwargs(message))
             return
         tz_str = geo["timezone"]
 
@@ -2775,7 +2781,7 @@ async def handle_timezone_setting(message: Message):
         save_timezones(user_timezones)
 
         await message.answer(
-            f"Запомнил: <b>{value.capitalize()}</b> ✅\n"
+            f"Запомнил: <b>{value.capitalize(**thread_kwargs(message))}</b> ✅\n"
             f"Теперь я буду использовать часовой пояс: <code>{tz_str}</code> для напоминаний."
         )
 
@@ -2787,7 +2793,7 @@ async def handle_timezone_setting(message: Message):
         await message.answer(
             f"Часовой пояс установлен: <code>{tz_str}</code>. "
             f"Теперь я буду использовать его для напоминаний."
-        )
+        , **thread_kwargs(message))
 
     # 🔧 ШАГ 2: если раньше было ожидающее напоминание — обрабатываем его
     reminder_data = pending_note_or_reminder.get(user_id)
@@ -2843,7 +2849,7 @@ async def handle_formula_image(message: Message):
     try:
         await bot.send_photo(
             chat_id = message.chat.id,
-            photo   = FSInputFile(png_path, "formula.png"),
+            photo   = FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
             caption = (f"Я вижу это 👆\n<code>{latex}</code>\n\n"
                        "Спроси что‑нибудь об этом!"),
             parse_mode = "HTML"
@@ -3005,7 +3011,7 @@ async def edit_reminder_text(message: Message, state: FSMContext):
     ])
     await message.answer(
         f"📅 Введи новую дату в формате <code>ДД.ММ.ГГГГ</code>\nили нажми <b>Пропустить</b>.\n\n"
-        f"Текущая дата: <code>{old_local.strftime('%d.%m.%Y')}</code>",
+        f"Текущая дата: <code>{old_local.strftime('%d.%m.%Y', **thread_kwargs(message))}</code>",
         reply_markup=keyboard
     )
 
@@ -3022,7 +3028,7 @@ async def edit_reminder_date(message: Message, state: FSMContext):
         old_local = old_dt.astimezone(pytz.timezone(user_timezones.get(message.from_user.id, "UTC")))
         await message.answer(
             f"⏰ Введи новое время в формате <code>ЧЧ:ММ</code>,\nили напиши <b>Пропустить</b>.\n\n"
-            f"Текущее время: <code>{old_local.strftime('%H:%M')}</code>"
+            f"Текущее время: <code>{old_local.strftime('%H:%M', **thread_kwargs(message))}</code>"
         )
         return
 
@@ -3036,9 +3042,9 @@ async def edit_reminder_date(message: Message, state: FSMContext):
         await message.answer(
             "⏰ Введи новое время в формате <code>ЧЧ:ММ</code>\nили нажми <b>Пропустить</b>.",
             reply_markup=keyboard
-        )
+        , **thread_kwargs(message))
     except ValueError:
-        await message.answer("⚠️ Неверный формат даты. Пример: <code>12.04.2025</code>")
+        await message.answer("⚠️ Неверный формат даты. Пример: <code>12.04.2025</code>", **thread_kwargs(message))
 
 @dp.message(ReminderEdit.waiting_for_new_time)
 async def edit_reminder_time(message: Message, state: FSMContext):
@@ -3058,12 +3064,12 @@ async def edit_reminder_time(message: Message, state: FSMContext):
         try:
             new_time = datetime.strptime(raw, "%H:%M").time()
         except ValueError:
-            await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>")
+            await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>", **thread_kwargs(message))
             return
 
     tz_str = user_timezones.get(user_id)
     if not tz_str:
-        await message.answer("❌ Не найден часовой пояс. Напиши: <code>Мой город: Москва</code>")
+        await message.answer("❌ Не найден часовой пояс. Напиши: <code>Мой город: Москва</code>", **thread_kwargs(message))
         await state.clear()
         return
 
@@ -3075,10 +3081,10 @@ async def edit_reminder_time(message: Message, state: FSMContext):
 
         reminders[index] = (user_id, dt_utc, new_text)
         save_reminders()
-        await message.answer(f"✅ Напоминание обновлено: <b>{new_text}</b> — <code>{dt_local.strftime('%d.%m.%Y %H:%M')}</code> ({tz_str})")
+        await message.answer(f"✅ Напоминание обновлено: <b>{new_text}</b> — <code>{dt_local.strftime('%d.%m.%Y %H:%M', **thread_kwargs(message))}</code> ({tz_str})")
     except Exception as e:
         logging.exception(f"[REMINDER_EDIT] Ошибка: {e}")
-        await message.answer("❌ Не удалось обновить напоминание.")
+        await message.answer("❌ Не удалось обновить напоминание.", **thread_kwargs(message))
     await state.clear()
 
 
@@ -3159,20 +3165,20 @@ async def process_reminder_date(message: Message, state: FSMContext):
     try:
         date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
         await state.update_data(date=date_obj)
-        await message.answer("⏰ Теперь введи время в формате <b>ЧЧ:ММ</b>\nПример: <code>15:30</code>")
+        await message.answer("⏰ Теперь введи время в формате <b>ЧЧ:ММ</b>\nПример: <code>15:30</code>", **thread_kwargs(message))
         await state.set_state(ReminderAdd.waiting_for_time)
     except ValueError:
-        await message.answer("⚠️ Неверный формат даты. Попробуй снова. Пример: <code>12.04.2025</code>")
+        await message.answer("⚠️ Неверный формат даты. Попробуй снова. Пример: <code>12.04.2025</code>", **thread_kwargs(message))
 
 @dp.message(ReminderAdd.waiting_for_time)
 async def process_reminder_time(message: Message, state: FSMContext):
     try:
         time_obj = datetime.strptime(message.text.strip(), "%H:%M").time()
         await state.update_data(time=time_obj)
-        await message.answer("✍️ Введи текст напоминания (что нужно напомнить)")
+        await message.answer("✍️ Введи текст напоминания (что нужно напомнить, **thread_kwargs(message))")
         await state.set_state(ReminderAdd.waiting_for_text)
     except ValueError:
-        await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>")
+        await message.answer("⚠️ Неверный формат времени. Пример: <code>15:30</code>", **thread_kwargs(message))
 
 @dp.message(ReminderAdd.waiting_for_text)
 async def process_reminder_text(message: Message, state: FSMContext):
@@ -3183,14 +3189,14 @@ async def process_reminder_text(message: Message, state: FSMContext):
     text = message.text.strip()
 
     if not date or not time:
-        await message.answer("❌ Ошибка: отсутствуют дата или время. Попробуй снова.")
+        await message.answer("❌ Ошибка: отсутствуют дата или время. Попробуй снова.", **thread_kwargs(message))
         await state.clear()
         return
 
     dt_local = datetime.combine(date, time)
     tz_str = user_timezones.get(user_id)
     if not tz_str:
-        await message.answer("⏳ Чтобы установить напоминание, напиши:\n<code>Мой город: Москва</code>")
+        await message.answer("⏳ Чтобы установить напоминание, напиши:\n<code>Мой город: Москва</code>", **thread_kwargs(message))
         pending_note_or_reminder[user_id] = {
             "text": text,
             "type": "reminder",
@@ -3206,13 +3212,13 @@ async def process_reminder_text(message: Message, state: FSMContext):
         dt_utc = dt_localized.astimezone(pytz.utc)
     except Exception as e:
         logging.exception(f"[FSM] Ошибка при преобразовании даты: {e}")
-        await message.answer("❌ Не удалось определить время. Убедись, что всё введено корректно.")
+        await message.answer("❌ Не удалось определить время. Убедись, что всё введено корректно.", **thread_kwargs(message))
         await state.clear()
         return
 
     reminders.append((user_id, dt_utc, text))
     save_reminders()
-    await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
+    await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M', **thread_kwargs(message))}</code> ({tz_str})")
     await state.clear()
 
 from datetime import timedelta
@@ -3221,12 +3227,12 @@ async def handle_reminder(message: Message):
     user_id = message.from_user.id
     reminder_data = pending_note_or_reminder.pop(user_id, None)
     if not reminder_data:
-        await message.answer("❌ Не удалось обработать напоминание.")
+        await message.answer("❌ Не удалось обработать напоминание.", **thread_kwargs(message))
         return
 
     tz_str = user_timezones.get(user_id)
     if not tz_str:
-        await message.answer("❌ Не удалось найти часовой пояс.")
+        await message.answer("❌ Не удалось найти часовой пояс.", **thread_kwargs(message))
         return
 
     try:
@@ -3246,10 +3252,10 @@ async def handle_reminder(message: Message):
 
         reminders.append((user_id, dt_utc, reminder_data["text"]))
         save_reminders()
-        await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M')}</code> ({tz_str})")
+        await message.answer(f"✅ Напоминание установлено на <code>{dt_local.strftime('%Y-%m-%d %H:%M', **thread_kwargs(message))}</code> ({tz_str})")
     except Exception as e:
         logging.exception(f"[DELAYED_REMINDER] Ошибка: {e}")
-        await message.answer("❌ Не удалось установить напоминание.")
+        await message.answer("❌ Не удалось установить напоминание.", **thread_kwargs(message))
 
 @dp.message(F.text.lower().startswith("добавь слово:"))
 async def handle_add_vocab(message: Message):
@@ -3257,7 +3263,7 @@ async def handle_add_vocab(message: Message):
     try:
         word_raw = message.text.split(":", 1)[1].strip()
     except:
-        await message.answer("Формат: <code>Добавь слово: example</code>")
+        await message.answer("Формат: <code>Добавь слово: example</code>", **thread_kwargs(message))
         return
 
     prompt = (
@@ -3282,10 +3288,10 @@ async def handle_add_vocab(message: Message):
 
         user_vocab.setdefault(uid, []).append(entry)
         save_vocab(user_vocab)
-        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.")
+        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.", **thread_kwargs(message))
     except Exception as e:
         logging.exception(f"[VOCAB_ADD] Ошибка: {e}")
-        await message.answer("❌ Не удалось добавить слово.")
+        await message.answer("❌ Не удалось добавить слово.", **thread_kwargs(message))
 
 @dp.message(F.text == "📝 Мои заметки")
 async def handle_notes_button(message: Message):
@@ -3315,7 +3321,7 @@ async def handle_vocab_word_input(message: Message, state: FSMContext):
 
     word_raw = message.text.strip()
     if not word_raw or len(word_raw) < 2:
-        await message.answer("❌ Слово слишком короткое. Попробуй снова.")
+        await message.answer("❌ Слово слишком короткое. Попробуй снова.", **thread_kwargs(message))
         return
 
     prompt = (
@@ -3344,10 +3350,10 @@ async def handle_vocab_word_input(message: Message, state: FSMContext):
         await message.answer(
             f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.\n"
             f"<b>Значение:</b> {meaning}\n<i>{example}</i>"
-        )
+        , **thread_kwargs(message))
     except Exception as e:
         logging.exception(f"[VOCAB_ADD] Ошибка: {e}")
-        await message.answer("❌ Не удалось добавить слово. Попробуй позже.")
+        await message.answer("❌ Не удалось добавить слово. Попробуй позже.", **thread_kwargs(message))
 
 # ★ Изменена функция show_notes – если нет заметок, всегда отправляем сообщение
 async def show_notes(uid: int, callback: CallbackQuery = None, message: Message = None):
@@ -3368,7 +3374,7 @@ async def show_notes(uid: int, callback: CallbackQuery = None, message: Message 
             [InlineKeyboardButton(text="➕ Добавить", callback_data="note_add")],
             [InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")]
         ])
-        await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard)
+        await bot.send_message(uid, "📭 У тебя пока нет заметок.", reply_markup=keyboard, **thread_kwargs(message))
         return
 
     text = "<b>Твои заметки:</b>\n"
@@ -3386,7 +3392,7 @@ async def show_notes(uid: int, callback: CallbackQuery = None, message: Message 
     buttons.append([
         InlineKeyboardButton(text="❌ Закрыть", callback_data="note_close")
     ])
-    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons, **thread_kwargs(message)))
 
 async def show_reminders(uid: int, callback: CallbackQuery = None):
     # Удаляем устаревшие напоминания
@@ -3407,7 +3413,7 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
             [InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add")],
             [InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")]
         ])
-        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.", reply_markup=keyboard)
+        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.", reply_markup=keyboard, **thread_kwargs(message))
         return
     text = "<b>Твои напоминания:</b>\n"
     buttons = []
@@ -3425,7 +3431,7 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
     buttons.append([
         InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")
     ])
-    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons, **thread_kwargs(message)))
 
 async def show_dialogues(callback: CallbackQuery):
     if not dialogues:
@@ -3520,7 +3526,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                 save_notes()
                 await show_notes(uid)
             else:
-                await message.answer("Не удалось найти заметку для редактирования.")
+                await message.answer("Не удалось найти заметку для редактирования.", **thread_kwargs(message))
             return
 
     # Если админ отвечает на сообщение поддержки
@@ -3546,7 +3552,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                         chat_id=ADMIN_ID,
                         text=(
                             f"👁 <b>{sender_name}</b> {sender_username} ответил <b>{user_name}</b> {user_username}:\n\n"
-                            f"{escape(text_preview)}"
+                            f"{escape(text_preview, **thread_kwargs(message))}"
                         )
                     )
                     
@@ -3569,26 +3575,26 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content)
+                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg", **thread_kwargs(message)), caption=content)
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
-                sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content)
+                sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4", **thread_kwargs(message)), caption=content)
             else:
                 for support_id in SUPPORT_IDS:
                     try:
-                        sent_msg = await bot.send_message(chat_id=support_id, text=content)
+                        sent_msg = await bot.send_message(chat_id=support_id, text=content, **thread_kwargs(message))
                         support_reply_map[(sent_msg.chat.id, sent_msg.message_id)] = uid
                         save_support_map()
                     except Exception as e:
                         logging.exception(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
-            await message.answer("Сообщение отправлено в поддержку.")
+            await message.answer("Сообщение отправлено в поддержку.", **thread_kwargs(message))
         except Exception as e:
             logging.exception(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            await message.answer("Произошла ошибка при отправке сообщения в поддержку.")
+            await message.answer("Произошла ошибка при отправке сообщения в поддержку.", **thread_kwargs(message))
         return
 
     # Если бот отключён в группе
@@ -4080,7 +4086,7 @@ async def handle_msg(
                 if len(caption) > 1024:
                     await bot.send_photo(
                         cid,
-                        FSInputFile(img_path, "step.png"),
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
                         caption=f"<b>Шаг {idx}</b>",
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
@@ -4089,7 +4095,7 @@ async def handle_msg(
                 else:
                     await bot.send_photo(
                         cid,
-                        FSInputFile(img_path, "step.png"),
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
                         caption=caption,
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
@@ -4105,7 +4111,7 @@ async def handle_msg(
                         final_img = latex_to_png(_sanitize_for_png(final_latex))
                         await bot.send_photo(
                             cid,
-                            FSInputFile(final_img, "result.png"),
+                            FSInputFile(final_img, "result.png", **thread_kwargs(message)),
                             caption="🏁 <b>Итог</b>",
                             parse_mode="HTML",
                             reply_to_message_id=message.message_id
@@ -4132,7 +4138,7 @@ async def handle_msg(
                         board.save(tmp.name)
                         await bot.send_photo(
                             cid,
-                            FSInputFile(tmp.name, "board.png"),
+                            FSInputFile(tmp.name, "board.png", **thread_kwargs(message)),
                             caption="🟢 Общий вид решения",
                             parse_mode="HTML"
                         )
@@ -4157,7 +4163,7 @@ async def handle_msg(
             await safe_send(cid, text, reply_to=message.message_id)
             for p in imgs:
                 try:
-                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png"))
+                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
                 finally:
                     os.remove(p)
         return                                   # дальше не идём
@@ -4218,7 +4224,7 @@ async def handle_msg(
                         caption, rest = split_caption_and_text(gemini_text or "…")
                         await bot.send_photo(
                             cid,
-                            FSInputFile(tmp_path, "image.jpg"),
+                            FSInputFile(tmp_path, "image.jpg", **thread_kwargs(message)),
                             caption=caption or "…",
                             **thread_kwargs(message)
                         )
@@ -4346,7 +4352,7 @@ async def vocab_reminder_loop():
                             f"🔁 Пора повторить слово: <b>{entry['word']}</b>\n"
                             f"{entry['meaning']}\n<i>{entry['example']}</i>",
                             reply_markup=keyboard
-                        )
+                        , **thread_kwargs(message))
                         break  # только одно напоминание за цикл
                     except Exception as e:
                         logging.exception(f"[VOCAB_REMINDER] Ошибка при отправке: {e}")
@@ -4377,7 +4383,7 @@ async def reminder_loop():
                 if "войс" in text.lower() or "голосом" in text.lower():
                     await send_voice_message(user_id, f"🔔 Напоминание!\n{text}")
                 else:
-                    await bot.send_message(user_id, f"🔔 Напоминание!\n{text}")
+                    await bot.send_message(user_id, f"🔔 Напоминание!\n{text}", **thread_kwargs(message))
             except Exception as e:
                 logging.exception(f"[REMINDER] Не удалось отправить напоминание: {e}")
 

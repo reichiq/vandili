@@ -1,0 +1,20 @@
+{
+  "messages_total": 363,
+  "files_received": 1,
+  "commands_used": {
+    "/start": 23,
+    "/feedback": 4,
+    "/help": 2,
+    "/adminstats": 14,
+    "/stop": 3
+  },
+  "unique_users": [
+    7432719425,
+    7460682925,
+    6208034574,
+    1936733487,
+    5748236307,
+    774671412,
+    7596284446
+  ]
+}
