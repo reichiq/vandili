@@ -1,4 +1,7 @@
 .env
-venv/
+key.json
+key2.json
+*.service-account.json
+*.secret.json
 venv/
 LaTeX-OCR/
