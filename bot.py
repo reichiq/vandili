@@ -245,6 +245,15 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+async def on_startup(_):
+    global BOT_ID
+    me = await bot.get_me()
+    BOT_ID = me.id
+
+if __name__ == "__main__":
+    import asyncio
+    from aiogram import executor
+    executor.start_polling(dp, on_startup=on_startup)
 # Клавиатура с основными действиями
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -3406,7 +3415,50 @@ async def show_dialogues(callback: CallbackQuery):
     ])
     await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
-async def handle_all_messages_impl(message: Message, user_input: str):
+@dp.message()
+async def handle_all_messages(message: Message):
+    user_input = (message.text or "").strip()
+    uid = message.from_user.id
+    cid = message.chat.id
+
+    # --- Проверка на запрос с озвучкой: ---
+    if re.search(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", user_input, re.IGNORECASE):
+        # Если это ответ на сообщение — озвучим его напрямую
+        if message.reply_to_message and message.reply_to_message.text:
+            target = message.reply_to_message.text
+            voice_lang = "ru-RU" if detect_lang(target) == "ru" else "en-US"
+            await message.reply("🎧 Озвучиваю...")
+            await send_voice_message(message.chat.id, target, voice_lang)
+            return
+
+        # Иначе генерируем ответ и озвучиваем
+        cleaned = re.sub(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", "", user_input, flags=re.IGNORECASE).strip()
+        if not cleaned:
+            await message.reply("❌ Напиши, что озвучить.")
+            return
+
+        await message.reply("🎤 Генерирую ответ и озвучиваю...")
+
+        try:
+            response = await model.generate_content_async([{"role": "user", "parts": [cleaned]}])
+            reply_text = response.text.strip()
+
+            # --------------- (ИЗМЕНЕНО) Очистим лишние символы. ---------------
+            # Хочешь, можешь поместить это внутрь send_voice_message, 
+            # но проще отфильтровать прямо здесь:
+            reply_text = re.sub(r"[*_`]+", "", reply_text)
+
+            lang = detect_lang(reply_text)
+            voice_lang = "ru-RU" if lang == "ru" else "en-US"
+            await send_voice_message(message.chat.id, reply_text, voice_lang)
+        except Exception as e:
+            logging.exception("[BOT] Ошибка при генерации и озвучке:")
+            await message.reply("❌ Не удалось сгенерировать или озвучить.")
+        return
+
+    # --- Обычная обработка всех остальных сообщений ---
+    await _handle_all_messages_core(message, user_input, uid, cid)
+async def _handle_all_messages_core(message: Message, user_input: str, uid: int, cid: int):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
@@ -4288,50 +4340,6 @@ async def reminder_loop():
 
         
         await asyncio.sleep(30)  # каждые 30 секунд проверяем
-
-
-@dp.message()
-async def handle_all_messages(message: Message):
-    user_input = (message.text or "").strip()
-
-    # --- Проверка на запрос с озвучкой: ---
-    if re.search(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", user_input, re.IGNORECASE):
-        # Если это ответ на сообщение — озвучим его напрямую
-        if message.reply_to_message and message.reply_to_message.text:
-            target = message.reply_to_message.text
-            voice_lang = "ru-RU" if detect_lang(target) == "ru" else "en-US"
-            await message.reply("🎧 Озвучиваю...")
-            await send_voice_message(message.chat.id, target, voice_lang)
-            return
-
-        # Иначе генерируем ответ и озвучиваем
-        cleaned = re.sub(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", "", user_input, flags=re.IGNORECASE).strip()
-        if not cleaned:
-            await message.reply("❌ Напиши, что озвучить.")
-            return
-
-        await message.reply("🎤 Генерирую ответ и озвучиваю...")
-
-        try:
-            response = await model.generate_content_async([{"role": "user", "parts": [cleaned]}])
-            reply_text = response.text.strip()
-
-            # --------------- (ИЗМЕНЕНО) Очистим лишние символы. ---------------
-            # Хочешь, можешь поместить это внутрь send_voice_message, 
-            # но проще отфильтровать прямо здесь:
-            reply_text = re.sub(r"[*_`]+", "", reply_text)
-
-            lang = detect_lang(reply_text)
-            voice_lang = "ru-RU" if lang == "ru" else "en-US"
-            await send_voice_message(message.chat.id, reply_text, voice_lang)
-        except Exception as e:
-            logging.exception("[BOT] Ошибка при генерации и озвучке:")
-            await message.reply("❌ Не удалось сгенерировать или озвучить.")
-        return
-
-    # --- Обычная обработка всех остальных сообщений ---
-    await handle_all_messages_impl(message, user_input)
-
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
