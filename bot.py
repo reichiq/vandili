@@ -2703,23 +2703,18 @@ async def check_grammar_answer(message: Message, state: FSMContext):
             "✅ Верно! Хотите ещё одно упражнение?",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar", **thread_kwargs(message))]
+                    [InlineKeyboardButton(text="📘 Новое", callback_data="learn_grammar")]
                 ]
-            )
+            ),
+            **thread_kwargs(message)
         )
     else:
         await message.answer(
-                f"❌ Неверно.\n"
-                f"Правильный ответ: <b>{data['correct_answer']}</b>\n\n"
-<<<<<<< HEAD
-                "Пожалуйста, введите именно эту форму, без дополнительных слов.",
-                parse_mode="HTML"
-                **thread_kwargs(message)
-=======
-                "Пожалуйста, введите именно эту форму, без дополнительных слов."
-            , **thread_kwargs(message)),
-            parse_mode="HTML"
->>>>>>> e23766e (fix: добавлен thread_kwargs для всех ответов бота)
+            f"❌ Неверно.\n"
+            f"Правильный ответ: <b>{data['correct_answer']}</b>\n\n"
+            "Пожалуйста, введите именно эту форму, без дополнительных слов.",
+            parse_mode="HTML",
+            **thread_kwargs(message)
         )
 
     await state.clear()
