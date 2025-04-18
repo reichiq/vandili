@@ -3409,7 +3409,7 @@ async def show_dialogues(callback: CallbackQuery):
     ])
     await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
-@dp.message(block=False)
+@dp.message()
 async def handle_all_messages(message: Message):
     user_input = (message.text or "").strip()
     uid = message.from_user.id
