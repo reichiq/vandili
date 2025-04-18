@@ -1252,7 +1252,7 @@ async def send_bilingual_voice(chat_id: int, dialogue_text: str):
     await progress_msg.edit_text("✅ Озвучка завершена!")
 
 # ---------------------- Вспомогательная функция для thread ---------------------- #
-def thread(message: Message) -> dict:
+def thread_kwargs(message: Message) -> dict:
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP] and message.message_thread_id:
         return {"message_thread_id": message.message_thread_id}
     return {}
