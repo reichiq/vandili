@@ -4160,7 +4160,8 @@ async def generate_and_send_gemini_response(cid, full_prompt, show_image, rus_wo
 
     # … короткий путь для картинок, если нужно …
     if show_image and rus_word and not leftover:
-        return await generate_short_caption(rus_word)
+        await generate_short_caption(rus_word)
+        return None
 
     # строим контекст
     conversation = chat_history.setdefault(cid, [])
