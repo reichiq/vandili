@@ -6,3 +6,4 @@ key2.json
 venv/
 LaTeX-OCR/
 data/stats.json
+/data/*.json
