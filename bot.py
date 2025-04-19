@@ -1320,7 +1320,7 @@ async def cmd_start(message: Message, command: CommandObject):
         return
     elif command.args == "support":
         support_mode_users.add(message.from_user.id)
-        await message.answer(SUPPORT_PROMPT_TEXT, **thread_kwargs(message))
+        await message.answer(SUPPORT_PROMPT_TEXT)
         return
 
     greet = """Привет! Я <b>VAI</b> — твой заботливый помощник и верный компаньон 🤖💬
@@ -1344,12 +1344,12 @@ async def cmd_start(message: Message, command: CommandObject):
             disabled_chats.remove(message.chat.id)
             save_disabled_chats(disabled_chats)
             logging.info(f"[BOT] Бот снова включён в группе {message.chat.id}")
-        await message.answer("Бот включён ✅", **thread_kwargs(message))
-        await message.answer(greet, reply_markup=main_menu_keyboard, **thread_kwargs(message))
+        await message.answer("Бот включён ✅")
+        await message.answer(greet, reply_markup=main_menu_keyboard)
         return
 
     # 📩 Если в ЛС
-    await message.answer(greet, reply_markup=main_menu_keyboard, **thread_kwargs(message))
+    await message.answer(greet, reply_markup=main_menu_keyboard)
 
 @dp.message(Command("stop", prefix="/!"))
 async def cmd_stop(message: Message, command: CommandObject):
@@ -1358,9 +1358,9 @@ async def cmd_stop(message: Message, command: CommandObject):
         disabled_chats.add(message.chat.id)
         save_disabled_chats(disabled_chats)
         logging.info(f"[BOT] Бот отключён в группе {message.chat.id}")
-        await message.answer("Бот отключён в группе 🚫", **thread_kwargs(message))
+        await message.answer("Бот отключён в группе 🚫")
     else:
-        await message.answer("Бот отключён 🚫", **thread_kwargs(message))
+        await message.answer("Бот отключён 🚫")
         
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -1407,7 +1407,7 @@ async def cmd_adminstats(message: Message):
         await message.answer_photo(photo=FSInputFile(chart_path, filename="top_commands.png"), caption=text)
         os.remove(chart_path)
     else:
-        await message.answer(text + "\nНет данных по командам.", **thread_kwargs(message))
+        await message.answer(text + "\nНет данных по командам.")
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
@@ -1457,7 +1457,7 @@ async def cmd_broadcast(message: Message):
                 await bot.send_message(chat_id=recipient, text=f"{broadcast_prefix}\n{broadcast_text}", **thread_kwargs(message))
         except Exception as e:
             logging.exception(f"[BROADCAST] Ошибка при отправке в чат {recipient}: {e}")
-    await message.answer("Рассылка завершена.", **thread_kwargs(message))
+    await message.answer("Рассылка завершена.")
 
 @dp.callback_query(F.data == "support_request")
 async def handle_support_click(callback: CallbackQuery):
@@ -1474,7 +1474,7 @@ async def show_notes_command(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Открыть мои заметки", url=private_url)]
         ])
-        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard, **thread_kwargs(message))
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
         return
     await show_notes(message.chat.id)
 
@@ -1486,7 +1486,7 @@ async def show_reminders_command(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Открыть мои напоминания", url=private_url)]
         ])
-        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard, **thread_kwargs(message))
+        await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
         return
     await show_reminders(message.chat.id)
 
@@ -1506,7 +1506,7 @@ async def cmd_learn_en(message: Message):
         [InlineKeyboardButton(text="🔔 Напоминания", callback_data="learn_reminders")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="learn_close")]
     ])
-    await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard, **thread_kwargs(message))
+    await message.answer("🇬🇧 <b>Изучение английского</b>\nВыбери раздел:", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "learn_back")
 async def handle_learn_back(callback: CallbackQuery):
