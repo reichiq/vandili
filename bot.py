@@ -1142,31 +1142,41 @@ async def get_weather_info(city: str, days: int = 1, mode: str = "") -> str:
                 forecast_lines.append(f"• {date}: {formatted_condition}, от {mintemp}°C до {maxtemp}°C")
             return "\n".join(forecast_lines)
 
-def split_text_for_tts(text: str, max_len: int = 4500) -> list[str]:
+def split_text_for_tts(text: str, max_bytes: int = 4800) -> list[str]:
     import re
     paragraphs = re.split(r'(?<=[.!?])\s+', text)
-    
-    chunks = []
+    chunks: list[str] = []
     current = ""
 
     for para in paragraphs:
-        if len(current) + len(para) + 1 < max_len:
-            current += para + " "
+        candidate = (current + " " + para).strip()
+        # проверяем длину в байтах
+        if len(candidate.encode('utf-8')) <= max_bytes:
+            current = candidate
         else:
-            chunks.append(current.strip())
-            current = para + " "
+            # «закрываем» предыдущий кусок
+            if current:
+                chunks.append(current)
+            # если один параграф длиннее лимита — режем его на части
+            if len(para.encode('utf-8')) > max_bytes:
+                avg_size = max_bytes // 2
+                for i in range(0, len(para), avg_size):
+                    chunks.append(para[i:i+avg_size])
+                current = ""
+            else:
+                current = para
 
     if current:
-        chunks.append(current.strip())
-
+        chunks.append(current)
     return chunks
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str, lang: str = "en‑US"):
+async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
     client = texttospeech.TextToSpeechClient()
     clean_text = clean_for_tts(text)
 
-    chunks = split_text_for_tts(clean_text, max_len=4500)
+    # теперь разбиваем по байтам, а не по символам
+    chunks = split_text_for_tts(clean_text)
 
     for i, chunk in enumerate(chunks):
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
@@ -1174,14 +1184,13 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en‑US"):
         if lang == "en-US":
             voice_name = "en-US-Wavenet-F"
         elif lang == "ru-RU":
-            voice_name = "ru-RU-Wavenet-B"  
+            voice_name = "ru-RU-Wavenet-B"
         else:
             voice_name = lang
 
         voice = texttospeech.VoiceSelectionParams(
             language_code=lang,
             name=voice_name
-
         )
 
         audio_config = texttospeech.AudioConfig(
@@ -1190,7 +1199,9 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en‑US"):
 
         try:
             response = client.synthesize_speech(
-                input=synthesis_input, voice=voice, audio_config=audio_config
+                input=synthesis_input,
+                voice=voice,
+                audio_config=audio_config
             )
         except Exception as e:
             logging.exception("[TTS] Ошибка при синтезе речи:")
@@ -1201,7 +1212,10 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en‑US"):
             out.write(response.audio_content)
             out_path = out.name
 
-        await bot.send_voice(chat_id=chat_id, voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg"))
+        await bot.send_voice(
+            chat_id=chat_id,
+            voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg")
+        )
         await asyncio.sleep(1.2)  # немного подождём между отправками
         os.remove(out_path)
 
