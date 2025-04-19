@@ -3608,20 +3608,20 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
-        # Новое условие: бот отвечает в группах только при упоминании его имени или при reply на его сообщение
-        if not message.message_thread_id:
-            lower_text = user_input.lower()
-            mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
-            reply_to_bot = (
-                message.reply_to_message
-                and message.reply_to_message.from_user
-                and message.reply_to_message.from_user.id == BOT_ID
-            )
-            username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
-            if not (mentioned or reply_to_bot or username_mentioned):
-                return
-            if mentioned:
-                user_input = clean_user_input(user_input)
+
+        lower_text = user_input.lower()
+        mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
+        reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == BOT_ID
+        )
+        username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
+        if not (mentioned or reply_to_bot or username_mentioned):
+            return
+        if mentioned:
+            user_input = clean_user_input(user_input)
+
 
     # Если пользователь отправил документ
     if message.document:
