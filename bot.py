@@ -1203,7 +1203,7 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US", messa
             )
         except Exception as e:
             logging.exception("[TTS] Ошибка при синтезе речи:")
-            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.")
+            await bot.send_message(chat_id, "❌ Ошибка при озвучке части текста.", **thread_kwargs(message))
             return
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as out:
@@ -2409,8 +2409,8 @@ async def send_next_review_word(uid: int, state: FSMContext):
         uid,
         f"<b>{entry['word']}</b> — {entry['meaning']}\n\n<i>{entry['example']}</i>",
         reply_markup=keyboard,
-        parse_mode="HTML"
-    , **thread_kwargs(message))
+        parse_mode="HTML",
+        **thread_kwargs(message))
 
 @dp.callback_query(F.data.startswith("review_remember:"))
 async def review_remember(callback: CallbackQuery, state: FSMContext):
