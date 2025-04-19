@@ -4358,7 +4358,7 @@ async def vocab_reminder_loop():
                         await bot.send_message(uid,
                             f"🔁 Пора повторить слово: <b>{entry['word']}</b>\n"
                             f"{entry['meaning']}\n<i>{entry['example']}</i>",
-                            reply_markup=keyboard
+                            reply_markup=keyboard,
                             parse_mode="HTML"
                         )
                         break  # только одно напоминание за цикл
