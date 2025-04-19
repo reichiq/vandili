@@ -3468,17 +3468,17 @@ async def handle_all_messages(message: Message):
         if message.reply_to_message and message.reply_to_message.text:
             target = message.reply_to_message.text
             voice_lang = "ru-RU" if detect_lang(target) == "ru" else "en-US"
-            await message.reply("🎧 Озвучиваю...")
+            await message.reply("🎧 Озвучиваю...", **thread_kwargs(message))
             await send_voice_message(message.chat.id, target, voice_lang, message=message)
             return
 
         # Иначе генерируем ответ и озвучиваем
         cleaned = re.sub(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", "", user_input, flags=re.IGNORECASE).strip()
         if not cleaned:
-            await message.reply("❌ Напиши, что озвучить.")
+            await message.reply("❌ Напиши, что озвучить.", **thread_kwargs(message))
             return
 
-        await message.reply("🎤 Генерирую ответ и озвучиваю...")
+        await message.reply("🎤 Генерирую ответ и озвучиваю...", **thread_kwargs(message))
 
         try:
             response = await model.generate_content_async([{"role": "user", "parts": [cleaned]}])
@@ -3494,7 +3494,7 @@ async def handle_all_messages(message: Message):
             await send_voice_message(message.chat.id, reply_text, voice_lang, message=message)
         except Exception as e:
             logging.exception("[BOT] Ошибка при генерации и озвучке:")
-            await message.reply("❌ Не удалось сгенерировать или озвучить.")
+            await message.reply("❌ Не удалось сгенерировать или озвучить.", **thread_kwargs(message))
         return
 
     # --- Обычная обработка всех остальных сообщений ---
@@ -4359,7 +4359,8 @@ async def vocab_reminder_loop():
                             f"🔁 Пора повторить слово: <b>{entry['word']}</b>\n"
                             f"{entry['meaning']}\n<i>{entry['example']}</i>",
                             reply_markup=keyboard
-                        , **thread_kwargs(message))
+                            parse_mode="HTML"
+                        )
                         break  # только одно напоминание за цикл
                     except Exception as e:
                         logging.exception(f"[VOCAB_REMINDER] Ошибка при отправке: {e}")
