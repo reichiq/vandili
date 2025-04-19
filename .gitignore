@@ -5,3 +5,4 @@ key2.json
 *.secret.json
 venv/
 LaTeX-OCR/
+data/stats.json
