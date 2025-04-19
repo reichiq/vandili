@@ -94,7 +94,8 @@ VOICE_MAP = {
     "ru": {"lang": "ru-RU", "name": "ru-RU-Wavenet-C"},
 }
 
-async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None):
+async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None, message: Message | None = None):
+
     """
     Пытается отправить text c parse_mode=HTML.
     Если Telegram ругается — пробуем более «безопасные» варианты.
@@ -278,9 +279,6 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY") or ""
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
-BOT_ID = None
-BOT_USERNAME = None
 
 # Клавиатура с основными действиями
 main_menu_keyboard = ReplyKeyboardMarkup(
@@ -828,7 +826,7 @@ def _register_message_stats(message: Message):
         save_stats()
 
 # ---------------------- Функция отправки ответа админа одним сообщением ---------------------- #
-async def send_admin_reply_as_single_message(admin_message: Message, user_id: int):
+async def send_admin_reply_as_single_message(admin_message: Message, user_id: int, message: Message):
     sender_id = admin_message.from_user.id
     if sender_id == ADMIN_ID:
         prefix = "<b>📩 Ответ от службы поддержки. С вами — 👾 Admin:</b>"
@@ -1171,7 +1169,7 @@ def split_text_for_tts(text: str, max_bytes: int = 4800) -> list[str]:
     return chunks
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str, lang: str = "en-US"):
+async def send_voice_message(chat_id: int, text: str, lang: str = "en-US", message: Message | None = None):
     client = texttospeech.TextToSpeechClient()
     clean_text = clean_for_tts(text)
 
@@ -1247,7 +1245,7 @@ async def generate_voice_snippet(text: str, lang_code: str) -> str:
         out_file.write(response.audio_content)
         return out_file.name
         
-async def send_bilingual_voice(chat_id: int, dialogue_text: str):
+async def send_bilingual_voice(chat_id: int, dialogue_text: str, message: Message):
     audio_segments = []
     lines = [l.strip() for l in dialogue_text.strip().splitlines() if l.strip()]
     total = len(lines)
@@ -1759,7 +1757,7 @@ async def handle_learn_voice(callback: CallbackQuery, state: FSMContext):
 
     try:
         # ✨ Используем билингвальную озвучку (строка за строкой, auto-detect языка)
-        await send_bilingual_voice(callback.message.chat.id, course_text)
+        await send_bilingual_voice(callback.message.chat.id, course_text, message=message)
     except Exception as e:
         logging.exception(f"[learn_voice] Ошибка при озвучке: {e}")
         await callback.message.answer("❌ Не удалось озвучить темы.")
@@ -1865,7 +1863,7 @@ async def handle_dialogue_voice(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Нет доступного диалога для озвучки.")
         return
 
-    await send_bilingual_voice(callback.message.chat.id, dialogue)
+    await send_bilingual_voice(callback.message.chat.id, dialogue, message=message)
 
 @dp.callback_query(F.data == "learn_achievements")
 async def show_achievements(callback: CallbackQuery):
@@ -3471,7 +3469,7 @@ async def handle_all_messages(message: Message):
             target = message.reply_to_message.text
             voice_lang = "ru-RU" if detect_lang(target) == "ru" else "en-US"
             await message.reply("🎧 Озвучиваю...")
-            await send_voice_message(message.chat.id, target, voice_lang)
+            await send_voice_message(message.chat.id, target, voice_lang, message=message)
             return
 
         # Иначе генерируем ответ и озвучиваем
@@ -3493,7 +3491,7 @@ async def handle_all_messages(message: Message):
 
             lang = detect_lang(reply_text)
             voice_lang = "ru-RU" if lang == "ru" else "en-US"
-            await send_voice_message(message.chat.id, reply_text, voice_lang)
+            await send_voice_message(message.chat.id, reply_text, voice_lang, message=message)
         except Exception as e:
             logging.exception("[BOT] Ошибка при генерации и озвучке:")
             await message.reply("❌ Не удалось сгенерировать или озвучить.")
@@ -3544,7 +3542,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         if (message.chat.id, original_id) in support_reply_map:
             user_id = support_reply_map[(message.chat.id, original_id)]
             try:
-                await send_admin_reply_as_single_message(message, user_id)
+                await send_admin_reply_as_single_message(message, user_id, message=message)
                 if message.from_user.id != ADMIN_ID:
                     sender = message.from_user
                     sender_name = sender.full_name
@@ -3668,7 +3666,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             exchange_text = await get_exchange_rate(amount, from_code, to_code)
             if exchange_text:
                 if voice_response_requested:
-                    await send_voice_message(cid, exchange_text)
+                    await send_voice_message(cid, exchange_text, message=message)
                 else:
                     await message.answer(exchange_text, **thread_kwargs(message))
                 return
@@ -3698,7 +3696,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
         if voice_response_requested:
-            await send_voice_message(cid, weather_info)
+            await send_voice_message(cid, weather_info, message=message)
         else:
             await message.answer(weather_info, **thread_kwargs(message))
         return
@@ -3712,7 +3710,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
 
         if voice_response_requested:
-            await send_voice_message(cid, gemini_text)
+            await send_voice_message(cid, gemini_text, message=message)
         else:
             await message.answer(gemini_text, **thread_kwargs(message))
         return
@@ -3723,7 +3721,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         return
 
     if voice_response_requested:
-        await send_voice_message(cid, gemini_text)
+        await send_voice_message(cid, gemini_text, message=message)
     else:
         await message.answer(gemini_text, **thread_kwargs(message))
     return
@@ -4100,7 +4098,7 @@ async def handle_msg(
                         parse_mode="HTML",
                         reply_to_message_id=message.message_id
                     )
-                    await safe_send(cid, explain, reply_to=message.message_id)
+                    await safe_send(cid, explain, reply_to=message.message_id, message=message)
                 else:
                     await bot.send_photo(
                         cid,
@@ -4167,9 +4165,9 @@ async def handle_msg(
         # ───────────────────────────────────────────
         text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
         if voice_response_requested:
-            await send_voice_message(cid, text)
+            await send_voice_message(cid, text, message=message)
         else:
-            await safe_send(cid, text, reply_to=message.message_id)
+            await safe_send(cid, text, reply_to=message.message_id, message=message)
             for p in imgs:
                 try:
                     await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
@@ -4217,7 +4215,7 @@ async def handle_msg(
 
     # --- если нужен voice‑ответ ----------------------------------------
     if voice_response_requested:
-        await send_voice_message(cid, gemini_text or "Нет ответа.")
+        await send_voice_message(cid, gemini_text or "Нет ответа.", message=message)
         return
 
     # --- отправляем результат ------------------------------------------
@@ -4390,7 +4388,7 @@ async def reminder_loop():
         for user_id, text in to_send:
             try:
                 if "войс" in text.lower() or "голосом" in text.lower():
-                    await send_voice_message(user_id, f"🔔 Напоминание!\n{text}")
+                    await send_voice_message(user_id, f"🔔 Напоминание!\n{text}", message=message)
                 else:
                     await bot.send_message(user_id, f"🔔 Напоминание!\n{text}", **thread_kwargs(message))
             except Exception as e:
