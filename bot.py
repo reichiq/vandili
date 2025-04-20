@@ -4005,159 +4005,130 @@ async def handle_msg(
     # ───────────────────────────────────────────────
     if uid in user_images_text:
         latex = user_images_text.pop(uid)
-        # уведомляем пользователя, что вопрос обрабатывается
         await message.answer("🔄 Обрабатываю ваш запрос… 😊", **thread_kwargs(message))
-
-        # нет вопроса → просим сформулировать
+        
         if not user_input:
             await message.answer("✍️ Сформулируй вопрос к этой формуле, и я отвечу!", **thread_kwargs(message))
             return
-
+        
         prompt = (
             "Ты — опытный преподаватель математики. Объясняй всё максимально подробно и при этом простым, понятным языком. "
             "Избегай громоздких формулировок, разжёвывай каждый шаг и давай маленькие примеры там, где это уместно.\n\n"
-            # 0) Исходный LaTeX (любой области) между $$ … $$
             "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
             f"$$ {latex} $$\n\n"
-            # 1) Определи область и тип задачи
-            "1) Скажи, к какой области относится эта запись (Математика / Физика / Химия / Другое) "
-            "и какой это тип задачи:\n"
-            "   – В математике: интеграл, уравнение, производная, упрощение и т.п.\n"
-            "   – В физике: формула для расчёта величины (напр. сила, скорость, энергия), выведи нужное значение или преобразуй уравнение.\n"
-            "   – В химии: уравнение реакции, баланса, расчёт стехиометрии и т.п.\n\n"
-            # 2) Что делать
-            "2) В зависимости от типа задачи:\n"
-            "   • Если это интеграл – вычисли его.\n"
-            "   • Если уравнение – реши его для указанной переменной.\n"
-            "   • Если производная – найди её.\n"
-            "   • Если упрощение – упрости выражение.\n"
-            "   • Если физика – выполни расчёт (подставь при необходимости физические константы) или преобразуй формулу как требуется.\n"
-            "   • Если химия – сбалансируй реакцию или рассчитай количества веществ.\n\n"
-            # 3) Пошаговый разбор
+            "1) Скажи, к какой области относится эта запись и какой это тип задачи "
+            "(интеграл, уравнение, производная, упрощение и т.п.).\n"
+            "2) Выполни действие (вычисли интеграл, реши уравнение, найди производную или упрости).\n"
             "3) Дай пошаговое решение. Для каждого шага указывай:\n"
-            "   Шаг N:\n"
-            "   • Формула в LaTeX между $$…$$\n"
-            "   • Пояснение на русском.\n\n"
-            # 4) Итог
-            "4) В конце приведи итоговый ответ (численное значение, общий вид решения или сбалансированное уравнение) тоже в формате $$…$$."
+            "   • Формулу в LaTeX между $$…$$\n"
+            "   • Пояснение на русском.\n"
+            "4) В конце приведи итоговый ответ в формате $$…$$."
         )
-
-        # запрашиваем модель
-        try:
-            resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
-            raw_answer = resp.text.strip()
-        except Exception as e:
-            logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
-            await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.", **thread_kwargs(message))
-            return
-
-        # разбиваем ответ на шаги
-        steps = split_steps(raw_answer)  # [(latex, header, explain), …]
-
-        # ───────────────────────────────────────────
-        # A. формат корректный → отрисовываем шаги
-        # ───────────────────────────────────────────
-        if steps:
-            from PIL import Image, ImageOps
-            step_imgs    = []
-            voice_chunks = []
-
-            for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
-                img_path = latex_to_png(_sanitize_for_png(latex_step))
-                step_imgs.append(img_path)
-
-                # очищаем текст пояснения
-                cleaned_lines = [
-                    line for line in explain_raw.splitlines()
-                    if not re.match(r'^\s*\**\s*\d+\)\s*', line)
-                ]
-                cleaned = "\n".join(cleaned_lines)
-                explain = _clean_explain(cleaned)
-                explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
-                explain = re.sub(r'^[\u2022]\s*', '', explain)
-                explain = explain.replace('*', '')
-
-                if explain.startswith('Пояснение:'):
-                    explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
-                    explain = re.sub(r'^<b>Пояснение:</b>[\*\s]*', '<b>Пояснение:</b> ', explain)
-                else:
-                    explain = escape(explain)
-
-                caption = f"<b>Шаг {idx}.</b>\n{explain}"
-
-                # Отправка с безопасным fallback
-                if len(caption) > 1024:
-                    try:
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                            caption=f"<b>Шаг {idx}</b>",
-                            parse_mode="HTML",
-                            reply_to_message_id=message.message_id
-                        )
-                    except TelegramBadRequest:
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                            caption=_html.escape(f"Шаг {idx}"),
-                            parse_mode=None,
-                            reply_to_message_id=message.message_id
-                        )
-                    await safe_send(cid, explain, reply_to=message.message_id, message=message)
-                else:
-                    try:
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                            caption=caption,
-                            parse_mode="HTML",
-                            reply_to_message_id=message.message_id
-                        )
-                    except TelegramBadRequest:
-                        await bot.send_photo(
-                            cid,
-                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                            caption=_html.escape(caption),
-                            parse_mode=None,
-                            reply_to_message_id=message.message_id
-                        )
-
-            # … здесь может быть финальная формула и общий вид решения …
-
-            return
-
-        # ───────────────────────────────────────────
-        # B. формат не распознан → плоский текст
-        # ───────────────────────────────────────────
-        text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
-        if voice_response_requested:
-            await send_voice_message(cid, text, message=message)
-        else:
-            # отправляем текст напрямую с HTML и fallback
-            try:
-                await bot.send_message(
-                    cid,
-                    text,
-                    parse_mode="HTML",
-                    reply_to_message_id=message.message_id,
-                    **thread_kwargs(message)
-                )
-            except TelegramBadRequest:
-                await bot.send_message(
-                    cid,
-                    _html.escape(text),
-                    parse_mode=None,
-                    reply_to_message_id=message.message_id,
-                    **thread_kwargs(message)
-                )
-            for p in imgs:
-                try:
-                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
-                finally:
-                    os.remove(p)
+    try:
+        resp = await model.generate_content_async([{"role": "user", "parts": [prompt]}])
+        raw_answer = resp.text.strip()
+    except Exception as e:
+        logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
+        await message.answer("❌ Не смог получить ответ. Попробуй ещё раз.", **thread_kwargs(message))
         return
-    
-    lower_inp = user_input.lower()
+
+    steps = split_steps(raw_answer)
+    if steps:
+        from PIL import Image, ImageOps
+        step_imgs = []
+        voice_chunks = []
+
+        for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
+            img_path = latex_to_png(_sanitize_for_png(latex_step))
+            step_imgs.append(img_path)
+
+            cleaned_lines = [
+                line for line in explain_raw.splitlines()
+                if not re.match(r'^\s*\**\s*\d+\)\s*', line)
+            ]
+            cleaned = "\n".join(cleaned_lines)
+            explain = _clean_explain(cleaned)
+            explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
+            explain = re.sub(r'^[\u2022]\s*', '', explain)
+            explain = explain.replace('*', '')
+
+            if explain.startswith('Пояснение:'):
+                explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
+                explain = re.sub(
+                    r'^<b>Пояснение:</b>[\*\s]*',
+                    '<b>Пояснение:</b> ',
+                    explain
+                )
+            else:
+                explain = escape(explain)
+
+            caption = f"<b>Шаг {idx}.</b>\n{explain}"
+
+            if len(caption) > 1024:
+                try:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                        caption=f"<b>Шаг {idx}</b>",
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
+                except TelegramBadRequest:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                        caption=_html.escape(f"Шаг {idx}"),
+                        parse_mode=None,
+                        reply_to_message_id=message.message_id
+                    )
+                await safe_send(cid, explain, reply_to=message.message_id, message=message)
+            else:
+                try:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id
+                    )
+                except TelegramBadRequest:
+                    await bot.send_photo(
+                        cid,
+                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                        caption=_html.escape(caption),
+                        parse_mode=None,
+                        reply_to_message_id=message.message_id
+                    )
+        return
+
+    text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
+    if voice_response_requested:
+        await send_voice_message(cid, text, message=message)
+    else:
+        try:
+            await bot.send_message(
+                cid,
+                text,
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id,
+                **thread_kwargs(message)
+            )
+        except TelegramBadRequest:
+            await bot.send_message(
+                cid,
+                _html.escape(text),
+                parse_mode=None,
+                reply_to_message_id=message.message_id,
+                **thread_kwargs(message)
+            )
+        for p in imgs:
+            try:
+                await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
+            finally:
+                os.remove(p)
+    return
+
+lower_inp = user_input.lower()
 
 
             # ---------- итоговая формула ----------
