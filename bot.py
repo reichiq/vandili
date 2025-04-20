@@ -120,9 +120,11 @@ async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None, mes
         except TelegramBadRequest:
             # 3‑я попытка — полностью экранируем, отключаем parse_mode
             await bot.send_message(chat_id,
-                                   text=_html.escape(text, **thread_kwargs(message)),
-                                   parse_mode=None,
-                                   reply_to_message_id=reply_to)
+                                   text=text,
+                                   parse_mode="HTML",
+                                   reply_to_message_id=reply_to,
+                                   **thread_kwargs(message)
+                                  )
 
 def web_search(query: str, num_results: int = 5) -> str:
     """
@@ -4171,7 +4173,13 @@ async def handle_msg(
         if voice_response_requested:
             await send_voice_message(cid, text, message=message)
         else:
-            await safe_send(cid, text, reply_to=message.message_id, message=message)
+            await bot.send_message(
+                cid,
+                text=text,
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id,
+                **thread_kwargs(message)
+            )
             for p in imgs:
                 try:
                     await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
