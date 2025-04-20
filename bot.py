@@ -4059,34 +4059,24 @@ async def handle_msg(
         # ───────────────────────────────────────────
         if steps:
             from PIL import Image, ImageOps
+            step_imgs    = []
+            voice_chunks = []
 
-            step_imgs    = []  # список PNG шагов
-            voice_chunks = []  # реплики для TTS
-
-            # ---------- отправляем каждый шаг ----------#
             for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
-                # 1) Рендерим формулу
                 img_path = latex_to_png(_sanitize_for_png(latex_step))
                 step_imgs.append(img_path)
-                # 2) Отбрасываем строку «4) Итоговый ответ: …», если она есть
-                cleaned_lines = []
-                for line in explain_raw.splitlines():
-                    # удаляем строки, начинающиеся с цифры+')' (возможно с обрамлением **)
-                    if re.match(r'^\s*\**\s*\d+\)\s*', line):
-                        continue
-                    cleaned_lines.append(line)
+
+                # очищаем текст пояснения
+                cleaned_lines = [
+                    line for line in explain_raw.splitlines()
+                    if not re.match(r'^\s*\**\s*\d+\)\s*', line)
+                ]
                 cleaned = "\n".join(cleaned_lines)
-
-                # 3) Превращаем формулу в читабельный текст
                 explain = _clean_explain(cleaned)
-
-                # 4) Удаляем звёздочки и маркеры «•» по краям
                 explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain)
                 explain = re.sub(r'^[\u2022]\s*', '', explain)
-                # дополнительно убираем все остаточные звёздочки, которые могли остаться
                 explain = explain.replace('*', '')
 
-                # 5) Делаем «Пояснение:» жирным
                 if explain.startswith('Пояснение:'):
                     explain = explain.replace('Пояснение:', '<b>Пояснение:</b>', 1)
                     explain = re.sub(r'^<b>Пояснение:</b>[\*\s]*', '<b>Пояснение:</b> ', explain)
@@ -4095,24 +4085,79 @@ async def handle_msg(
 
                 caption = f"<b>Шаг {idx}.</b>\n{explain}"
 
-                # 6) Отправляем
+                # Отправка с безопасным fallback
                 if len(caption) > 1024:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                        caption=f"<b>Шаг {idx}</b>",
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
+                    try:
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=f"<b>Шаг {idx}</b>",
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
+                        )
+                    except TelegramBadRequest:
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=_html.escape(f"Шаг {idx}"),
+                            parse_mode=None,
+                            reply_to_message_id=message.message_id
+                        )
                     await safe_send(cid, explain, reply_to=message.message_id, message=message)
                 else:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                        caption=caption,
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
+                    try:
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
+                        )
+                    except TelegramBadRequest:
+                        await bot.send_photo(
+                            cid,
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=_html.escape(caption),
+                            parse_mode=None,
+                            reply_to_message_id=message.message_id
+                        )
+
+            # … здесь может быть финальная формула и общий вид решения …
+
+            return
+
+        # ───────────────────────────────────────────
+        # B. формат не распознан → плоский текст
+        # ───────────────────────────────────────────
+        text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
+        if voice_response_requested:
+            await send_voice_message(cid, text, message=message)
+        else:
+            # отправляем текст напрямую с HTML и fallback
+            try:
+                await bot.send_message(
+                    cid,
+                    text,
+                    parse_mode="HTML",
+                    reply_to_message_id=message.message_id,
+                    **thread_kwargs(message)
+                )
+            except TelegramBadRequest:
+                await bot.send_message(
+                    cid,
+                    _html.escape(text),
+                    parse_mode=None,
+                    reply_to_message_id=message.message_id,
+                    **thread_kwargs(message)
+                )
+            for p in imgs:
+                try:
+                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
+                finally:
+                    os.remove(p)
+        return
+    
+    lower_inp = user_input.lower()
 
 
             # ---------- итоговая формула ----------
