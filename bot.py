@@ -4496,15 +4496,22 @@ async def reminder_loop():
 
 # ---------------------- Запуск бота ---------------------- #
 async def main():
-    global BOT_ID, BOT_USERNAME
+    # 0) если у вас раньше был webhook — удаляем его и сбрасываем накопившиеся апдейты
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    # 1) загружаем информацию о себе (id, username)
     me = await bot.get_me()
+    global BOT_ID, BOT_USERNAME
     BOT_ID = me.id
     BOT_USERNAME = me.username
-    
+
+    # 2) запускаем фоновые циклы
     asyncio.create_task(reminder_loop())
     asyncio.create_task(vocab_reminder_loop())
-    
-    await dp.start_polling(bot)
+
+    # 3) запускаем polling и говорим Telegram, что хотим **все** апдейты
+    await dp.start_polling(bot, allowed_updates=None)
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(main())
