@@ -12,6 +12,8 @@ from PIL import Image
 from datetime import datetime
 from google.cloud import texttospeech
 from io import BytesIO
+import easyocr
+_ocr_reader = easyocr.Reader(['en', 'ru'], gpu=False)
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ChatType
 from aiogram.types import (
@@ -253,6 +255,18 @@ def clean_for_tts(text: str) -> str:
     # (ИЗМЕНЕНО) убираем markdown
     text = re.sub(r"[*_`]+", "", text)
     return text.strip()
+
+def recognize_text(image_bytes: bytes) -> str:
+    """
+    Извлекает обычный текст с картинки с помощью EasyOCR.
+    """
+    try:
+        img = BytesIO(image_bytes)
+        result = _ocr_reader.readtext(img, detail=0)
+        return "\n".join(result).strip()
+    except Exception as e:
+        logging.exception(f"[OCR] Ошибка при распознавании текста: {e}")
+        return ""
 
 def load_dialogues():
     with open("learning/dialogues.json", "r", encoding="utf-8") as f:
@@ -2844,34 +2858,38 @@ async def handle_formula_image(message: Message):
 
     # 2️⃣  — распознаём формулу
     latex = await recognize_formula(img_bytes)
-    if not latex:
-        # 1️⃣ Обновляем статус: обработка завершилась с ошибкой
-        await notify_msg.edit_text("❌ Не удалось обработать изображение.")
-        await message.answer("❌ Не смог распознать формулу.", **thread_kwargs(message))
-        return
-
-    # 3️⃣  — кладём в кэш → в следующем сообщении пользователь сможет
-    # 1️⃣ Обновляем статус: распознавание прошло успешно
-    await notify_msg.edit_text("✅ Изображение обработано")
-    #      спросить «реши её», «упрости» и т.д.
-    user_images_text[message.from_user.id] = latex
-
-    #     делаем маленькое превью, чтобы человек видел, что именно распознано
-    png_path = latex_to_png(latex)
-    try:
-        await bot.send_photo(
-            chat_id = message.chat.id,
-            photo   = FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
-            caption = (f"Я вижу это 👆\n<code>{latex}</code>\n\n"
-                       "Спроси что‑нибудь об этом!"),
-            parse_mode = "HTML"
-        )
-    finally:
-        os.remove(png_path)
-
-    # 🔚  больше ничего не делаем – ждём дальнейший вопрос пользователя
-    return
-
+    if latex:
+        # 3️⃣ — кладём в кэш → в следующем сообщении пользователь сможет спросить «реши её», «упрости» и т.д.
+        await notify_msg.edit_text("✅ Изображение обработано")
+        user_images_text[message.from_user.id] = {"formula": latex, "text": None}
+        png_path = latex_to_png(latex)
+        try:
+            await bot.send_photo(
+                chat_id = message.chat.id,
+                photo   = FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
+                caption = (f"Я вижу это 👆\n<code>{latex}</code>\n\n"
+                           "Спроси что‑нибудь об этом!"),
+                parse_mode = "HTML"
+            )
+        finally:
+            os.remove(png_path)
+    else:
+        # ➡ Если формулу не удалось распознать — пробуем распознать обычный текст
+        text = recognize_text(img_bytes)
+        if text:
+            await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
+            user_images_text[message.from_user.id] = {"formula": None, "text": text}
+            await message.answer(
+                f"📄 Я нашёл следующий текст на картинке:\n\n{text}\n\nТеперь можешь задать вопрос по картинке!",
+                **thread_kwargs(message)
+            )
+        else:
+            await notify_msg.edit_text("✅ Картинка получена, но текста не обнаружено")
+            user_images_text[message.from_user.id] = {"formula": None, "text": None}
+            await message.answer(
+                "Картинка считана.\nТеперь можешь задать вопрос по содержимому изображения!",
+                **thread_kwargs(message)
+            )
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
