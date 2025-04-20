@@ -4053,7 +4053,7 @@ def parse_russian_show_request(user_text: str):
 
 
 # ──────────────────────────────────────────────────────────────────────
-#  >>>  handle_msg – версия с фиксацией LaTeX и итоговой формулой  <<<
+#  >>>  handle_msg – версия с разделением формулы и обычного текста  <<<
 # ──────────────────────────────────────────────────────────────────────
 async def handle_msg(
     message: Message,
@@ -4064,164 +4064,174 @@ async def handle_msg(
     user_input = recognized_text or (message.text or "").strip()
     uid = message.from_user.id
 
-    # A. Формула
-    if uid in user_images_text:
-        latex = user_images_text.pop(uid)
-        await message.answer("🔄 Обрабатываю ваш запрос… 😊", **thread_kwargs(message))
+    # A. Если есть формула, обрабатываем как формулу
+    user_data = user_images_text.pop(uid, None)
+    if user_data:
+        formula = user_data.get("formula")
+        text = user_data.get("text")
 
-        if not user_input:
-            await message.answer(
-                "✍️ Сформулируй вопрос к этой формуле, и я отвечу!",
-                **thread_kwargs(message)
-            )
-            return
+        if formula:
+            # Если есть формула — работаем по старой логике (шаги)
+            await message.answer("🔄 Обрабатываю вашу формулу…", **thread_kwargs(message))
 
-        prompt = (
-            "Ты — опытный преподаватель математики. Объясняй всё максимально подробно и при этом "
-            "простым, понятным языком. Избегай громоздких формулировок, разжёвывай каждый шаг "
-            "и давай маленькие примеры там, где это уместно.\n\n"
-            "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
-            f"$$ {latex} $$\n\n"
-            "1) Скажи, к какой области относится эта запись и какой это тип задачи "
-            "(интеграл, уравнение, производная, упрощение и т.п.).\n"
-            "2) Выполни действие (вычисли интеграл, реши уравнение, найди производную или упрости).\n"
-            "3) Дай пошаговое решение. Для каждого шага указывай:\n"
-            "   • Формулу в LaTeX между $$…$$\n"
-            "   • Пояснение на русском.\n"
-            "4) В конце приведи итоговый ответ в формате $$…$$."
-        )
-
-        try:
-            resp = await model.generate_content_async(
-                [{"role": "user", "parts": [prompt]}]
-            )
-            raw_answer = resp.text.strip()
-        except Exception as e:
-            logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
-            await message.answer(
-                "❌ Не смог получить ответ. Попробуй ещё раз.",
-                **thread_kwargs(message)
-            )
-            return
-
-        steps = split_steps(raw_answer)
-        step_imgs: list[str] = []
-        voice_chunks: list[str] = []
-
-        if steps:
-            from PIL import Image, ImageOps
-
-            # Шаги
-            for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
-                img_path = latex_to_png(_sanitize_for_png(latex_step))
-                step_imgs.append(img_path)
-
-                # Чистим текст пояснения
-                cleaned_lines = [
-                    line for line in explain_raw.splitlines()
-                    if not re.match(r'^\s*\**\s*\d+\)\s*', line)
-                ]
-                cleaned = "\n".join(cleaned_lines)
-                explain = _clean_explain(cleaned)
-                explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain).replace('*', '')
-                explain = escape(explain) if not explain.startswith('Пояснение:') else explain.replace(
-                    'Пояснение:', '<b>Пояснение:</b>', 1
+            if not user_input:
+                await message.answer(
+                    "✍️ Сформулируй вопрос к этой формуле, и я отвечу!",
+                    **thread_kwargs(message)
                 )
+                return
 
-                caption = f"<b>Шаг {idx}.</b>\n{explain}"
-                if len(caption) > 1024:
-                    # Если слишком длинный caption
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                        caption=f"<b>Шаг {idx}</b>",
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
-                    )
-                    await safe_send(cid, explain, reply_to=message.message_id, message=message)
-                else:
-                    await bot.send_photo(
-                        cid,
-                        FSInputFile(img_path, "step.png", **thread_kwargs(message)),
-                        caption=caption,
-                        parse_mode="HTML",
-                        reply_to_message_id=message.message_id
+            prompt = (
+                "Ты — опытный преподаватель математики. Объясняй всё максимально подробно и при этом "
+                "простым, понятным языком. Избегай громоздких формулировок, разжёвывай каждый шаг "
+                "и давай маленькие примеры там, где это уместно.\n\n"
+                "Перед тобой выражение в формате LaTeX между двойными долларами:\n"
+                f"$$ {formula} $$\n\n"
+                "1) Скажи, к какой области относится эта запись и какой это тип задачи "
+                "(интеграл, уравнение, производная, упрощение и т.п.).\n"
+                "2) Выполни действие (вычисли интеграл, реши уравнение, найди производную или упрости).\n"
+                "3) Дай пошаговое решение. Для каждого шага указывай:\n"
+                "   • Формулу в LaTeX между $$…$$\n"
+                "   • Пояснение на русском.\n"
+                "4) В конце приведи итоговый ответ в формате $$…$$."
+            )
+
+            try:
+                resp = await model.generate_content_async(
+                    [{"role": "user", "parts": [prompt]}]
+                )
+                raw_answer = resp.text.strip()
+            except Exception as e:
+                logging.exception(f"[FORMULA‑QA] Gemini error: {e}")
+                await message.answer(
+                    "❌ Не смог получить ответ. Попробуй ещё раз.",
+                    **thread_kwargs(message)
+                )
+                return
+
+            steps = split_steps(raw_answer)
+            step_imgs: list[str] = []
+            voice_chunks: list[str] = []
+
+            if steps:
+                from PIL import Image, ImageOps
+
+                for idx, (latex_step, _h, explain_raw) in enumerate(steps, 1):
+                    img_path = latex_to_png(_sanitize_for_png(latex_step))
+                    step_imgs.append(img_path)
+
+                    cleaned_lines = [
+                        line for line in explain_raw.splitlines()
+                        if not re.match(r'^\s*\**\s*\d+\)\s*', line)
+                    ]
+                    cleaned = "\n".join(cleaned_lines)
+                    explain = _clean_explain(cleaned)
+                    explain = re.sub(r'^[\*\s]+|[\*\s]+$', '', explain).replace('*', '')
+                    explain = escape(explain) if not explain.startswith('Пояснение:') else explain.replace(
+                        'Пояснение:', '<b>Пояснение:</b>', 1
                     )
 
-            # Итоговая формула
-            all_latex = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
-            if all_latex:
-                final_latex = all_latex[-1].strip()
-                if final_latex not in {l for l, _, _ in steps}:
-                    try:
-                        final_img = latex_to_png(_sanitize_for_png(final_latex))
+                    caption = f"<b>Шаг {idx}.</b>\n{explain}"
+                    if len(caption) > 1024:
                         await bot.send_photo(
                             cid,
-                            FSInputFile(final_img, "result.png", **thread_kwargs(message)),
-                            caption="🏁 <b>Итог</b>",
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=f"<b>Шаг {idx}</b>",
                             parse_mode="HTML",
                             reply_to_message_id=message.message_id
                         )
-                    finally:
-                        os.remove(final_img)
-
-            # Общая доска
-            if step_imgs:
-                try:
-                    imgs = [Image.open(p) for p in step_imgs]
-                    max_w = max(im.width for im in imgs)
-                    total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
-                    board = Image.new("RGB", (max_w, total_h), "white")
-                    y = 0
-                    for im in imgs:
-                        board.paste(ImageOps.expand(im, border=10, fill="white"), (0, y))
-                        y += im.height + 20
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                        board.save(tmp.name)
+                        await safe_send(cid, explain, reply_to=message.message_id, message=message)
+                    else:
                         await bot.send_photo(
                             cid,
-                            FSInputFile(tmp.name, "board.png", **thread_kwargs(message)),
-                            caption="🟢 Общий вид решения",
-                            parse_mode="HTML"
+                            FSInputFile(img_path, "step.png", **thread_kwargs(message)),
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_to_message_id=message.message_id
                         )
-                finally:
-                    for p in step_imgs:
-                        os.remove(p)
-                    os.remove(tmp.name)
 
-            # Голосовой ответ
+                all_latex = re.findall(r"\$\$(.+?)\$\$", raw_answer, flags=re.S)
+                if all_latex:
+                    final_latex = all_latex[-1].strip()
+                    if final_latex not in {l for l, _, _ in steps}:
+                        try:
+                            final_img = latex_to_png(_sanitize_for_png(final_latex))
+                            await bot.send_photo(
+                                cid,
+                                FSInputFile(final_img, "result.png", **thread_kwargs(message)),
+                                caption="🏁 <b>Итог</b>",
+                                parse_mode="HTML",
+                                reply_to_message_id=message.message_id
+                            )
+                        finally:
+                            os.remove(final_img)
+
+                if step_imgs:
+                    try:
+                        imgs = [Image.open(p) for p in step_imgs]
+                        max_w = max(im.width for im in imgs)
+                        total_h = sum(im.height for im in imgs) + 20 * (len(imgs) - 1)
+                        board = Image.new("RGB", (max_w, total_h), "white")
+                        y = 0
+                        for im in imgs:
+                            board.paste(ImageOps.expand(im, border=10, fill="white"), (0, y))
+                            y += im.height + 20
+
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                            board.save(tmp.name)
+                            await bot.send_photo(
+                                cid,
+                                FSInputFile(tmp.name, "board.png", **thread_kwargs(message)),
+                                caption="🟢 Общий вид решения",
+                                parse_mode="HTML"
+                            )
+                    finally:
+                        for p in step_imgs:
+                            os.remove(p)
+                        os.remove(tmp.name)
+
+                if voice_response_requested:
+                    await send_voice_message(cid, " ".join(voice_chunks))
+                return
+
+            text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
             if voice_response_requested:
-                await send_voice_message(cid, " ".join(voice_chunks))
+                await send_voice_message(cid, text, message=message)
+            else:
+                try:
+                    await bot.send_message(
+                        cid,
+                        text,
+                        parse_mode="HTML",
+                        reply_to_message_id=message.message_id,
+                        **thread_kwargs(message)
+                    )
+                except TelegramBadRequest:
+                    await bot.send_message(
+                        cid,
+                        _html.escape(text),
+                        parse_mode=None,
+                        reply_to_message_id=message.message_id,
+                        **thread_kwargs(message)
+                    )
+                for p in imgs:
+                    await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
+                    os.remove(p)
             return
 
-        # Если шаги не распознаны — плоский текст
-        text, imgs = replace_latex_with_png(format_gemini_response(raw_answer))
-        if voice_response_requested:
-            await send_voice_message(cid, text, message=message)
+        elif text:
+            # Если обычный текст (НЕ формула) — обработать как текст
+            user_input = text
+            await message.answer("✅ Текст считан с изображения. Отвечаю…", **thread_kwargs(message))
         else:
-            try:
-                await bot.send_message(
-                    cid,
-                    text,
-                    parse_mode="HTML",
-                    reply_to_message_id=message.message_id,
-                    **thread_kwargs(message)
-                )
-            except TelegramBadRequest:
-                await bot.send_message(
-                    cid,
-                    _html.escape(text),
-                    parse_mode=None,
-                    reply_to_message_id=message.message_id,
-                    **thread_kwargs(message)
-                )
-            for p in imgs:
-                await bot.send_photo(cid, FSInputFile(p, "latex_part.png", **thread_kwargs(message)))
-                os.remove(p)
-        return
+            await message.answer(
+                "⚠️ Картинка считана, но текст не найден. Сформулируй свой вопрос вручную!",
+                **thread_kwargs(message)
+            )
+            return
 
-    # B. Всё остальное
+    # B. Всё остальное: обычные сообщения
+
     lower_inp = user_input.lower()
 
     # --- имя бота ---
@@ -4232,7 +4242,7 @@ async def handle_msg(
             else message.answer(answer)
         )
 
-    # --- информация о создателе ----------------------------------------
+    # --- информация о создателе ---
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
         return await (
@@ -4240,12 +4250,12 @@ async def handle_msg(
             else message.answer(reply_text)
         )
 
-    # --- «покажи …» (Unsplash) -----------------------------------------
+    # --- «покажи …» (Unsplash) ---
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
 
-    leftover    = leftover.strip()
+    leftover = leftover.strip()
     full_prompt = f"{rus_word} {leftover}".strip() if rus_word else leftover
 
     image_url = await get_unsplash_image_url(
@@ -4257,12 +4267,12 @@ async def handle_msg(
         cid, full_prompt, show_image, rus_word, leftover
     )
 
-    # --- если нужен voice‑ответ ----------------------------------------
+    # --- если нужен voice‑ответ ---
     if voice_response_requested:
         await send_voice_message(cid, gemini_text or "Нет ответа.", message=message)
         return
 
-    # --- отправляем результат ------------------------------------------
+    # --- отправляем результат ---
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
@@ -4285,7 +4295,7 @@ async def handle_msg(
                         os.remove(tmp_path)
     elif gemini_text:
         for chunk in split_smart(gemini_text, TELEGRAM_MSG_LIMIT):
-            await message.answer( chunk, parse_mode="HTML", **thread_kwargs(message))
+            await message.answer(chunk, parse_mode="HTML", **thread_kwargs(message))
     else:
         await message.answer("❌ Я не смог сгенерировать ответ.", **thread_kwargs(message))
 # ──────────────────────────────────────────────────────────────────────
