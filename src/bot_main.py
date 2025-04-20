@@ -2880,19 +2880,25 @@ async def handle_formula_image(message: Message):
         await notify_msg.edit_text("✅ Изображение обработано")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
 
-        # 🔥 Проверяем, можно ли визуализировать LaTeX
         if is_valid_latex(latex):
-            png_path = latex_to_png(latex)
             try:
-                await bot.send_photo(
-                    chat_id=message.chat.id,
-                    photo=FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
-                    caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
-                             "Спроси что‑нибудь об этом!"),
-                    parse_mode="HTML"
+                png_path = latex_to_png(latex)
+                try:
+                    await bot.send_photo(
+                        chat_id=message.chat.id,
+                        photo=FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
+                        caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
+                                 "Спроси что‑нибудь об этом!"),
+                        parse_mode="HTML"
+                    )
+                finally:
+                    os.remove(png_path)
+            except Exception:
+                await message.answer(
+                    f"⚠️ Формула получена, но при попытке визуализации возникла ошибка:\n\n<code>{latex}</code>",
+                    parse_mode="HTML",
+                    **thread_kwargs(message)
                 )
-            finally:
-                os.remove(png_path)
         else:
             await message.answer(
                 f"⚠️ Формула получена, но она выглядит странно и не может быть визуализирована:\n\n<code>{latex}</code>",
