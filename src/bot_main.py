@@ -2920,7 +2920,7 @@ async def handle_formula_image(message: Message):
 
     else:
         # ➡ Если формулы нет — пробуем распознать обычный текст
-        text = recognize_text(img_bytes)
+        text = await recognize_text(img_bytes)
 
         if text:
             await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
