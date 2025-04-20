@@ -256,6 +256,22 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"[*_`]+", "", text)
     return text.strip()
 
+def is_valid_latex(latex_code: str) -> bool:
+    """
+    Пробует скомпилировать LaTeX в matplotlib.
+    Если ошибка — возвращает False.
+    """
+    import matplotlib.pyplot as plt
+
+    try:
+        fig = plt.figure()
+        fig.text(0, 0, f"${latex_code}$")
+        plt.close(fig)
+        return True
+    except Exception:
+        plt.close(fig)
+        return False
+
 def recognize_text(image_bytes: bytes) -> str:
     """
     Извлекает обычный текст с картинки с помощью EasyOCR.
@@ -2841,41 +2857,53 @@ async def handle_timezone_setting(message: Message):
 async def handle_formula_image(message: Message):
     """
     1. скачиваем файл
-    2. распознаём LaTeX
-    3. кладём формулу в кэш + показываем превью
+    2. распознаём LaTeX или текст
+    3. кладём формулу или текст в кэш + показываем превью
     (ответ от Gemini НЕ генерируем – ждём вопрос пользователя)
     """
     # 0️⃣ Сообщаем пользователю, что начали обработку
     notify_msg = await message.answer("🔄 Обрабатываю изображение, пожалуйста, подождите…", **thread_kwargs(message))
-    # 1️⃣  — получаем байты картинки
+
+    # 1️⃣ — получаем байты картинки
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     tg_file = await bot.get_file(file_id)
-    url     = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
 
     async with aiohttp.ClientSession() as sess:
         async with sess.get(url) as r:
             img_bytes = await r.read()
 
-    # 2️⃣  — распознаём формулу
+    # 2️⃣ — распознаём формулу
     latex = await recognize_formula(img_bytes)
+
     if latex:
-        # 3️⃣ — кладём в кэш → в следующем сообщении пользователь сможет спросить «реши её», «упрости» и т.д.
         await notify_msg.edit_text("✅ Изображение обработано")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
-        png_path = latex_to_png(latex)
-        try:
-            await bot.send_photo(
-                chat_id = message.chat.id,
-                photo   = FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
-                caption = (f"Я вижу это 👆\n<code>{latex}</code>\n\n"
-                           "Спроси что‑нибудь об этом!"),
-                parse_mode = "HTML"
+
+        # 🔥 Проверяем, можно ли визуализировать LaTeX
+        if is_valid_latex(latex):
+            png_path = latex_to_png(latex)
+            try:
+                await bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
+                    caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
+                             "Спроси что‑нибудь об этом!"),
+                    parse_mode="HTML"
+                )
+            finally:
+                os.remove(png_path)
+        else:
+            await message.answer(
+                f"⚠️ Формула получена, но она выглядит странно и не может быть визуализирована:\n\n<code>{latex}</code>",
+                parse_mode="HTML",
+                **thread_kwargs(message)
             )
-        finally:
-            os.remove(png_path)
+
     else:
         # ➡ Если формулу не удалось распознать — пробуем распознать обычный текст
         text = recognize_text(img_bytes)
+
         if text:
             await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
             user_images_text[message.from_user.id] = {"formula": None, "text": text}
