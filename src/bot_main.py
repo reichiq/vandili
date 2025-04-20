@@ -2856,15 +2856,15 @@ async def handle_timezone_setting(message: Message):
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
     """
-    1. скачиваем файл
-    2. распознаём LaTeX или текст
-    3. кладём формулу или текст в кэш + показываем превью
-    (ответ от Gemini НЕ генерируем – ждём вопрос пользователя)
+    1. Скачиваем файл
+    2. Пытаемся распознать формулу
+    3. Если формулы нет — распознаём обычный текст
+    4. Кладём в кэш + показываем результат
     """
     # 0️⃣ Сообщаем пользователю, что начали обработку
     notify_msg = await message.answer("🔄 Обрабатываю изображение, пожалуйста, подождите…", **thread_kwargs(message))
 
-    # 1️⃣ — получаем байты картинки
+    # 1️⃣ Получаем байты картинки
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     tg_file = await bot.get_file(file_id)
     url = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
@@ -2873,10 +2873,11 @@ async def handle_formula_image(message: Message):
         async with sess.get(url) as r:
             img_bytes = await r.read()
 
-    # 2️⃣ — распознаём формулу
+    # 2️⃣ Пытаемся распознать формулу
     latex = await recognize_formula(img_bytes)
 
-    if latex:
+    # ➡ Проверка: нормальная ли это формула?
+    if latex and len(latex) < 300 and not latex.lower().startswith("\\begin"):
         await notify_msg.edit_text("✅ Изображение обработано")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
 
@@ -2907,7 +2908,7 @@ async def handle_formula_image(message: Message):
             )
 
     else:
-        # ➡ Если формулу не удалось распознать — пробуем распознать обычный текст
+        # ➡ Если формулы нет — пробуем распознать обычный текст
         text = recognize_text(img_bytes)
 
         if text:
