@@ -256,22 +256,6 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"[*_`]+", "", text)
     return text.strip()
 
-def is_valid_latex(latex_code: str) -> bool:
-    """
-    Пробует скомпилировать LaTeX в matplotlib.
-    Если ошибка — возвращает False.
-    """
-    import matplotlib.pyplot as plt
-
-    try:
-        fig = plt.figure()
-        fig.text(0, 0, f"${latex_code}$")
-        plt.close(fig)
-        return True
-    except Exception:
-        plt.close(fig)
-        return False
-
 def recognize_text(image_bytes: bytes) -> str:
     """
     Извлекает обычный текст с картинки с помощью EasyOCR.
@@ -687,6 +671,22 @@ async def recognize_formula(image_bytes: bytes) -> str | None:
         return block.get("formula") or block.get("text")
 
     return None
+
+def is_valid_latex(latex_code: str) -> bool:
+    """
+    Пробует скомпилировать LaTeX в matplotlib.
+    Если ошибка — возвращает False.
+    """
+    import matplotlib.pyplot as plt
+
+    try:
+        fig = plt.figure()
+        fig.text(0, 0, f"${latex_code}$")
+        plt.close(fig)
+        return True
+    except Exception:
+        plt.close(fig)
+        return False
 
 # --- Рендер LaTeX в PNG (для превью) ---
 import matplotlib
