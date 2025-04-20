@@ -79,6 +79,8 @@ class VocabEdit(StatesGroup):
     waiting_for_new_value = State()
 class GrammarExercise(StatesGroup):
     waiting_for_answer = State()
+class ConfirmIntegral(StatesGroup):
+    waiting_for_confirmation = State()
 class VocabReview(StatesGroup):
     reviewing = State()
 class QuizStates(StatesGroup):
@@ -100,6 +102,7 @@ async def safe_send(chat_id: int, text: str, *, reply_to: int | None = None, mes
     Пытается отправить text c parse_mode=HTML.
     Если Telegram ругается — пробуем более «безопасные» варианты.
     """
+    text = unescape(text)
     try:
         # 1‑я попытка — как есть (красивый HTML)
         await bot.send_message(chat_id,
