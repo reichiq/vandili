@@ -3298,10 +3298,10 @@ async def handle_add_vocab(message: Message):
 
         user_vocab.setdefault(uid, []).append(entry)
         save_vocab(user_vocab)
-        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.", **thread_kwargs(message))
+        await message.answer(f"✅ Слово <b>{word_raw}</b> добавлено в твой словарь.", message=message)
     except Exception as e:
         logging.exception(f"[VOCAB_ADD] Ошибка: {e}")
-        await message.answer("❌ Не удалось добавить слово.", **thread_kwargs(message))
+        await message.answer("❌ Не удалось добавить слово.", message=message)
 
 @dp.message(F.text == "📝 Мои заметки")
 async def handle_notes_button(message: Message):
