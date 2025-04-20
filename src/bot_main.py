@@ -256,14 +256,25 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"[*_`]+", "", text)
     return text.strip()
 
-def recognize_text(image_bytes: bytes) -> str:
+import numpy as np
+import cv2
+
+async def recognize_text(image_bytes: bytes) -> str:
     """
     Извлекает обычный текст с картинки с помощью EasyOCR.
     """
     try:
-        img = BytesIO(image_bytes)
-        result = _ocr_reader.readtext(img, detail=0)
-        return "\n".join(result).strip()
+        # Преобразуем байты в numpy-массив
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img_np is None:
+            logging.error("[OCR] Ошибка: не удалось преобразовать байты в изображение")
+            return ""
+
+        result = _ocr_reader.readtext(img_np, detail=0)
+        text = "\n".join(result).strip()
+        return text
     except Exception as e:
         logging.exception(f"[OCR] Ошибка при распознавании текста: {e}")
         return ""
