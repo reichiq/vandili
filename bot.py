@@ -4221,7 +4221,7 @@ async def handle_msg(
                         os.remove(tmp_path)
     elif gemini_text:
         for chunk in split_smart(gemini_text, TELEGRAM_MSG_LIMIT):
-            await message.answer(escape(chunk), parse_mode="HTML", **thread_kwargs(message))
+            await message.answer( chunk, parse_mode="HTML", **thread_kwargs(message))
     else:
         await message.answer("❌ Я не смог сгенерировать ответ.", **thread_kwargs(message))
 # ──────────────────────────────────────────────────────────────────────
