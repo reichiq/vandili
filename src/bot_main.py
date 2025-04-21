@@ -709,6 +709,14 @@ def latex_to_png(latex: str) -> str:
     """
     Рисует формулу и возвращает путь к временному .png
     """
+    # Убираем команды, которые matplotlib не поддерживает
+    latex = re.sub(r"\\textstyle|\\displaystyle|\\scriptstyle|\\scriptscriptstyle", "", latex)
+    # Автоматически добавляем фигурные скобки после функций: ln, log, sin, cos, tan, cot, sec, csc
+    latex = re.sub(r"(\\(?:ln|log|sin|cos|tan|cot|sec|csc))\s+([a-zA-Z0-9])", r"\1{\2}", latex)
+    # Авто-обработка скобок для аргументов функций, типа sin(x+1) → sin{(x+1)}
+    latex = re.sub(r"(\\(?:ln|log|sin|cos|tan|cot|sec|csc))\s*\(([^()]+)\)", r"\1{\(\2\)}", latex)
+
+    
     fig = plt.figure()
     fig.text(0.1, 0.5, f"${latex}$", fontsize=24)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
