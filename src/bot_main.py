@@ -718,7 +718,7 @@ def latex_to_png(latex: str) -> str:
 
     
     fig = plt.figure()
-    fig.text(0.1, 0.5, f"${latex}$", fontsize=24)
+    fig.text(0.5, 0.5, f"${latex}$", fontsize=24, ha='center', va='center')
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp.name, bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
