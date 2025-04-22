@@ -683,6 +683,17 @@ async def recognize_formula(image_bytes: bytes) -> str | None:
 
     return None
 
+# Функция для описания изображения через Gemini
+async def describe_image_with_gemini(image_bytes: bytes) -> str:
+    import base64
+    b64_img = base64.b64encode(image_bytes).decode()
+
+    response = model.generate_content([
+        {"mime_type": "image/png", "data": b64_img}
+    ], generation_config={"temperature": 0.4})
+
+    return response.text.strip()
+
 def is_valid_latex(latex_code: str) -> bool:
     """
     Пробует скомпилировать LaTeX в matplotlib.
@@ -2879,7 +2890,8 @@ async def handle_formula_image(message: Message):
     2. Скачиваем файл
     3. Пытаемся распознать формулу
     4. Если формулы нет — распознаём обычный текст
-    5. Кладём в кэш + показываем результат
+    5. Если текста нет — распознаём содержимое изображения
+    6. Кладём в кэш + показываем результат
     """
     # ➡️ Проверка: нужно ли обрабатывать изображение
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -2911,9 +2923,8 @@ async def handle_formula_image(message: Message):
     # 2️⃣ Пытаемся распознать формулу
     latex = await recognize_formula(img_bytes)
 
-    # ➡ Проверка: нормальная ли это формула?
     if latex and len(latex) < 300 and not latex.lower().startswith("\\begin"):
-        await notify_msg.edit_text("✅ Изображение обработано")
+        await notify_msg.edit_text("✅ Изображение обработано (формула найдена)")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
 
         if is_valid_latex(latex):
@@ -2922,10 +2933,11 @@ async def handle_formula_image(message: Message):
                 try:
                     await bot.send_photo(
                         chat_id=message.chat.id,
-                        photo=FSInputFile(png_path, "formula.png", **thread_kwargs(message)),
+                        photo=FSInputFile(png_path, "formula.png"),
                         caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
                                  "Спроси что‑нибудь об этом!"),
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        **thread_kwargs(message)
                     )
                 finally:
                     os.remove(png_path)
@@ -2941,25 +2953,37 @@ async def handle_formula_image(message: Message):
                 parse_mode="HTML",
                 **thread_kwargs(message)
             )
+        return
 
+    # 3️⃣ Формулы нет — пробуем распознать текст
+    text = await recognize_text(img_bytes)
+
+    if text:
+        await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
+        user_images_text[message.from_user.id] = {"formula": None, "text": text}
+        await message.answer(
+            f"📄 Я нашёл следующий текст на картинке:\n\n{text}\n\n"
+            "Если хочешь, я могу ещё попробовать описать, что изображено на картинке! 🔎",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="🔍 Описать содержимое",
+                        callback_data=f"describe_image:{message.message_id}"
+                    )]
+                ]
+            ),
+            **thread_kwargs(message)
+        )
+        return
+
+    # 4️⃣ Текста тоже нет — пытаемся распознать содержимое через Gemini
+    await notify_msg.edit_text("🔎 Пытаюсь понять, что изображено на картинке…")
+    description = await describe_image_with_gemini(img_bytes)
+
+    if description:
+        await message.answer(f"🖼️ Описание изображения:\n\n{description}", **thread_kwargs(message))
     else:
-        # ➡ Если формулы нет — пробуем распознать обычный текст
-        text = await recognize_text(img_bytes)
-
-        if text:
-            await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
-            user_images_text[message.from_user.id] = {"formula": None, "text": text}
-            await message.answer(
-                f"📄 Я нашёл следующий текст на картинке:\n\n{text}\n\nТеперь можешь задать вопрос по картинке!",
-                **thread_kwargs(message)
-            )
-        else:
-            await notify_msg.edit_text("✅ Картинка получена, но текста не обнаружено")
-            user_images_text[message.from_user.id] = {"formula": None, "text": None}
-            await message.answer(
-                "Картинка считана.\nТеперь можешь задать вопрос по содержимому изображения!",
-                **thread_kwargs(message)
-            )
+        await message.answer("❌ Не удалось распознать содержимое изображения.", **thread_kwargs(message))
 
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice_message(message: Message):
@@ -3096,6 +3120,38 @@ async def ask_edit_reminder(callback: CallbackQuery, state: FSMContext):
 
     else:
         await callback.message.answer("Такого напоминания нет.")
+
+@dp.callback_query(F.data.startswith("describe_image:"))
+async def describe_image_callback(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        msg_id = int(callback.data.split(":")[1])
+        # Пытаемся найти сообщение
+        msg = await bot.get_message(chat_id=callback.message.chat.id, message_id=msg_id)
+        file_id = msg.photo[-1].file_id if msg.photo else msg.document.file_id
+        tg_file = await bot.get_file(file_id)
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
+
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url) as r:
+                img_bytes = await r.read()
+
+        description = await describe_image_with_gemini(img_bytes)
+
+        if description:
+            await callback.message.answer(f"🖼️ Описание изображения:\n\n{description}", **thread_kwargs(callback.message))
+        else:
+            await callback.message.answer("❌ Не удалось распознать содержимое изображения.", **thread_kwargs(callback.message))
+
+        # ➡️ Удаляем кнопку "Описать содержимое"
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.exception(f"[describe_image_callback] Ошибка: {e}")
+        await callback.message.answer("❌ Ошибка при описании изображения.")
 
 @dp.message(ReminderEdit.waiting_for_new_text)
 async def edit_reminder_text(message: Message, state: FSMContext):
