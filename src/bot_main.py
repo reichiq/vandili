@@ -3620,18 +3620,21 @@ async def show_notes(uid: int, callback: CallbackQuery = None, message: Message 
     ])
     await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons, **thread_kwargs(message)))
 
-async def show_reminders(uid: int, callback: CallbackQuery = None):
+async def show_reminders(uid: int, message: Message = None, callback: CallbackQuery = None):
     # Удаляем устаревшие напоминания
     now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
     global reminders
     reminders = [r for r in reminders if not (r[0] == uid and r[1] <= now_utc)]
     save_reminders()
-    
+
     user_rem = [(i, r) for i, r in enumerate(reminders) if r[0] == uid]
+
+    target_kwargs = thread_kwargs(message or (callback.message if callback else None))
+
     if callback:
         try:
             await callback.message.delete()
-        except:
+        except Exception:
             pass
 
     if not user_rem:
@@ -3639,8 +3642,14 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
             [InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add")],
             [InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")]
         ])
-        await bot.send_message(uid, "📭 У тебя пока нет напоминаний.", reply_markup=keyboard, **thread_kwargs(message))
+        await bot.send_message(
+            uid,
+            "📭 У тебя пока нет напоминаний.",
+            reply_markup=keyboard,
+            **target_kwargs
+        )
         return
+
     text = "<b>Твои напоминания:</b>\n"
     buttons = []
     for i, (real_i, (_, dt, msg)) in enumerate(user_rem):
@@ -3650,6 +3659,7 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
             InlineKeyboardButton(text=f"✏️ {i+1}", callback_data=f"reminder_edit:{i}"),
             InlineKeyboardButton(text=f"🗑 {i+1}", callback_data=f"reminder_delete:{i}")
         ])
+
     buttons.append([
         InlineKeyboardButton(text="➕ Добавить", callback_data="reminder_add"),
         InlineKeyboardButton(text="🧹 Удалить все", callback_data="reminder_delete_all")
@@ -3657,7 +3667,14 @@ async def show_reminders(uid: int, callback: CallbackQuery = None):
     buttons.append([
         InlineKeyboardButton(text="❌ Закрыть", callback_data="reminder_close")
     ])
-    await bot.send_message(uid, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons, **thread_kwargs(message)))
+
+    await bot.send_message(
+        uid,
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+        **target_kwargs
+    )
 
 async def show_dialogues(callback: CallbackQuery):
     if not dialogues:
