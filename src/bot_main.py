@@ -1272,11 +1272,17 @@ def split_text_for_tts(text: str, max_bytes: int = 4800) -> list[str]:
     return chunks
 
 # ---------------------- Функция для отправки голосового ответа ---------------------- #
-async def send_voice_message(chat_id: int, text: str, lang: str = "en-US", message: Message | None = None):
+async def send_voice_message(chat_id: int, text: str, lang: str = "", message: Message | None = None):
     client = texttospeech.TextToSpeechClient()
     clean_text = clean_for_tts(text)
 
-    # теперь разбиваем по байтам, а не по символам
+    # автоопределение языка по содержимому текста
+    if not lang:
+        if re.search(r'[а-яА-ЯёЁ]', clean_text):  # если есть кириллица
+            lang = "ru-RU"
+        else:
+            lang = "en-US"
+
     chunks = split_text_for_tts(clean_text)
 
     for i, chunk in enumerate(chunks):
@@ -1317,7 +1323,7 @@ async def send_voice_message(chat_id: int, text: str, lang: str = "en-US", messa
             chat_id=chat_id,
             voice=FSInputFile(out_path, filename=f"voice_part_{i+1}.ogg")
         )
-        await asyncio.sleep(1.2)  # немного подождём между отправками
+        await asyncio.sleep(1.2)
         os.remove(out_path)
 
 async def generate_voice_snippet(text: str, lang_code: str) -> str:
