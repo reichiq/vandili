@@ -3676,68 +3676,24 @@ async def show_dialogues(callback: CallbackQuery):
     await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
 @dp.message()
-async def handle_all_messages(message: Message):
-    user_input = (message.text or "").strip()
-    uid = message.from_user.id
-    cid = message.chat.id
-
-    # --- Проверка на запрос с озвучкой: ---
-    if re.search(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", user_input, re.IGNORECASE):
-        # Если это ответ на сообщение — озвучим его напрямую
-        if message.reply_to_message and message.reply_to_message.text:
-            target = message.reply_to_message.text
-            voice_lang = "ru-RU" if detect_lang(target) == "ru" else "en-US"
-            await message.reply("🎧 Озвучиваю...", **thread_kwargs(message))
-            await send_voice_message(message.chat.id, target, voice_lang, message=message)
-            return
-
-        # Иначе генерируем ответ и озвучиваем
-        cleaned = re.sub(r"(прочитай это|озвучь голосом|ответь голосом|ответь войсом)", "", user_input, flags=re.IGNORECASE).strip()
-        if not cleaned:
-            await message.reply("❌ Напиши, что озвучить.", **thread_kwargs(message))
-            return
-
-        await message.reply("🎤 Генерирую ответ и озвучиваю...", **thread_kwargs(message))
-
-        try:
-            response = await model.generate_content_async([{"role": "user", "parts": [cleaned]}])
-            reply_text = response.text.strip()
-
-            # --------------- (ИЗМЕНЕНО) Очистим лишние символы. ---------------
-            # Хочешь, можешь поместить это внутрь send_voice_message, 
-            # но проще отфильтровать прямо здесь:
-            reply_text = re.sub(r"[*_`]+", "", reply_text)
-
-            lang = detect_lang(reply_text)
-            voice_lang = "ru-RU" if lang == "ru" else "en-US"
-            await send_voice_message(message.chat.id, reply_text, voice_lang, message=message)
-        except Exception as e:
-            logging.exception("[BOT] Ошибка при генерации и озвучке:")
-            await message.reply("❌ Не удалось сгенерировать или озвучить.", **thread_kwargs(message))
-        return
-
-    # --- Обычная обработка всех остальных сообщений ---
-    await _handle_all_messages_core(message, user_input, uid, cid)
 async def _handle_all_messages_core(message: Message, user_input: str, uid: int, cid: int):
     _register_message_stats(message)
     all_chat_ids.add(message.chat.id)
     uid = message.from_user.id
     cid = message.chat.id
 
-    # ─────────── Обработка новостей от пользователя ───────────
     lower_input = user_input.lower()
+
     if "новости" in lower_input or lower_input.startswith("новости") or "последние новости" in lower_input:
         snippets = web_search(user_input)
         if snippets:
-            await message.answer(
-                f"⚡ Вот что нашёл в Google по запросу «{user_input}»:\n{snippets}",
-                **thread_kwargs(message)
-            )
+            await message.answer(f"⚡ Вот что нашёл в Google по запросу «{user_input}»:\n{snippets}", **thread_kwargs(message))
         else:
             await message.answer("❌ Не удалось найти новости в Google.", **thread_kwargs(message))
         return
 
-    voice_response_requested = False  # исправление UnboundLocalError
+    voice_response_requested = False
+
     if uid in pending_note_or_reminder:
         data = pending_note_or_reminder.pop(uid)
         if data["type"] == "note":
@@ -3755,7 +3711,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                 await message.answer("Не удалось найти заметку для редактирования.", **thread_kwargs(message))
             return
 
-    # Если админ отвечает на сообщение поддержки
     if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if (message.chat.id, original_id) in support_reply_map:
@@ -3776,42 +3731,37 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                     text_preview = message.text or "[медиа]"
                     await bot.send_message(
                         chat_id=ADMIN_ID,
-                        text=(
-                            f"👁 <b>{sender_name}</b> {sender_username} ответил <b>{user_name}</b> {user_username}:\n\n"
-                            f"{escape(text_preview, **thread_kwargs(message))}"
-                        )
+                        text=f"👁 <b>{sender_name}</b> {sender_username} ответил <b>{user_name}</b> {user_username}:\n\n{escape(text_preview)}",
+                        parse_mode="HTML"
                     )
             except Exception as e:
                 logging.exception(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
-    # Если пользователь только что нажал кнопку "Написать в поддержку"
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
             caption = message.caption or user_input or "[Без текста]"
             username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
-            content = (f"\u2728 <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} "
-                       f"(id: <code>{uid}</code>):\n\n{caption}")
-            sent_msg = None
+            content = f"✨ <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} (id: <code>{uid}</code>):\n\n{caption}"
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         photo_bytes = await resp.read()
-                sent_msg = await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg", **thread_kwargs(message)), caption=content)
+                await bot.send_photo(chat_id=ADMIN_ID, photo=BufferedInputFile(photo_bytes, filename="image.jpg"), caption=content, parse_mode="HTML")
             elif message.video:
                 file = await bot.get_file(message.video.file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
                         video_bytes = await resp.read()
-                sent_msg = await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4", **thread_kwargs(message)), caption=content)
+                await bot.send_video(chat_id=ADMIN_ID, video=BufferedInputFile(video_bytes, filename="video.mp4"), caption=content, parse_mode="HTML")
             else:
                 for support_id in SUPPORT_IDS:
                     try:
-                        sent_msg = await bot.send_message(chat_id=support_id, text=content, **thread_kwargs(message))
+                        sent_msg = await bot.send_message(chat_id=support_id, text=content, parse_mode="HTML")
                         support_reply_map[(sent_msg.chat.id, sent_msg.message_id)] = uid
                         save_support_map()
                     except Exception as e:
@@ -3822,25 +3772,18 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer("Произошла ошибка при отправке сообщения в поддержку.", **thread_kwargs(message))
         return
 
-    # Если бот отключён в группе
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
-
         lower_text = user_input.lower()
         mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
-        reply_to_bot = (
-            message.reply_to_message
-            and message.reply_to_message.from_user
-            and message.reply_to_message.from_user.id == BOT_ID
-        )
+        reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID)
         username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
         if not (mentioned or reply_to_bot or username_mentioned):
             return
         if mentioned:
             user_input = clean_user_input(user_input)
 
-    # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
@@ -3856,17 +3799,15 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer("⚠️ Не удалось извлечь текст из файла.", **thread_kwargs(message))
         return
 
-    # Проверка запроса на ответ голосом
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     if voice_regex.search(user_input):
         voice_response_requested = True
         user_input = voice_regex.sub("", user_input)
-    
+
     lower_input = user_input.lower()
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # Новый блок для запроса курса валют
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
         amount_str, raw_from, raw_to = exchange_match.groups()
@@ -3876,7 +3817,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             amount = 1.0
         from_lemma = normalize_currency_rus(raw_from)
         to_lemma = normalize_currency_rus(raw_to)
-        
         if from_lemma in CURRENCY_SYNONYMS and to_lemma in CURRENCY_SYNONYMS:
             from_code = CURRENCY_SYNONYMS[from_lemma]
             to_code = CURRENCY_SYNONYMS[to_lemma]
@@ -3888,7 +3828,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                     await message.answer(exchange_text, **thread_kwargs(message))
                 return
 
-    # Блок погоды
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
@@ -3896,9 +3835,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         days_part = weather_match.group(2)
         week_flag = weather_match.group(3)
         mode_flag = re.search(r"(завтра|послезавтра)", lower_input)
-
         city_norm = normalize_city_name(city_raw)
-
         if week_flag:
             days = 7
             mode = ""
@@ -3908,7 +3845,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         else:
             days = int(days_part) if days_part else 1
             mode = ""
-
         weather_info = await get_weather_info(city_norm, days, mode)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
@@ -3918,21 +3854,20 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(weather_info, **thread_kwargs(message))
         return
 
-    # Проверка на вопрос по файлу
     if uid in user_documents:
         file_content = user_documents[uid]
-        prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
-                            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-                            f"Ответь чётко и кратко, основываясь на содержимом файла.")
+        prompt_with_file = (
+            f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
+            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
+            "Ответь чётко и кратко, основываясь на содержимом файла."
+        )
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
-
         if voice_response_requested:
             await send_voice_message(cid, gemini_text, message=message)
         else:
             await message.answer(gemini_text, **thread_kwargs(message))
         return
 
-    # --- Проверка: есть ли описание изображения для пользователя ---
     user_data = user_images_text.get(uid)
     if user_data and "text" in user_data:
         user_data.pop("text", None)
@@ -3945,11 +3880,19 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             f"{user_input}\n\n"
             "Ответь чётко и по делу, учитывая описание изображения."
         )
-
+        # Отправляем временное сообщение "Понимаю ваш вопрос..."
+        processing_msg = await message.answer(
+            "🔍 Понимаю ваш вопрос. Формулирую ответ, учитывая описание изображения...",
+            **thread_kwargs(message)
+        )
         gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
-
         user_images_text[uid]["description"] = None
-
+        # Удаляем временное сообщение
+        try:
+            await processing_msg.delete()
+        except Exception:
+            pass
+        
         if gemini_text:
             await message.answer(gemini_text, **thread_kwargs(message))
         else:
