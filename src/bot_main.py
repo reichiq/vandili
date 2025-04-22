@@ -3154,6 +3154,7 @@ async def ask_edit_reminder(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("describe_image:"))
 async def describe_image_callback(callback: CallbackQuery):
     await callback.answer()
+    await callback.message.answer("🔎 Описываю изображение, пожалуйста, подожди…", **thread_kwargs(callback.message))
     try:
         uid = callback.from_user.id
         user_data = user_images_text.get(uid)
@@ -3919,6 +3920,8 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
 
     # --- Проверка: есть ли описание изображения для пользователя ---
     user_data = user_images_text.get(uid)
+    if user_data and "text" in user_data:
+        user_data.pop("text", None)
     if user_data and user_data.get("description"):
         description = user_data["description"]
         prompt = (
