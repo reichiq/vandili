@@ -1591,7 +1591,7 @@ async def show_reminders_command(message: Message):
         ])
         await message.answer("Эта команда доступна только в личных сообщениях.", reply_markup=keyboard)
         return
-    await show_reminders(message.chat.id)
+    await show_reminders(message.chat.id, message)
 
 @dp.message(Command("learn_en"))
 async def cmd_learn_en(message: Message):
@@ -3525,7 +3525,7 @@ async def handle_notes_button(message: Message):
 
 @dp.message(F.text == "⏰ Мои напоминания")
 async def handle_reminders_button(message: Message):
-    await show_reminders(message.chat.id)
+    await show_reminders(message.chat.id, message=message)
 
 @dp.message(F.text == "🇬🇧 Изучение английского")
 async def handle_learn_button(message: Message):
@@ -3683,7 +3683,9 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
     cid = message.chat.id
 
     lower_input = user_input.lower()
+    voice_response_requested = False
 
+    # ─────────── Обработка новостей ───────────
     if "новости" in lower_input or lower_input.startswith("новости") or "последние новости" in lower_input:
         snippets = web_search(user_input)
         if snippets:
@@ -3692,25 +3694,25 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer("❌ Не удалось найти новости в Google.", **thread_kwargs(message))
         return
 
-    voice_response_requested = False
-
+    # ─────────── Обработка напоминаний / заметок ───────────
     if uid in pending_note_or_reminder:
         data = pending_note_or_reminder.pop(uid)
         if data["type"] == "note":
             user_notes[uid].append(user_input)
             save_notes()
-            await show_notes(uid)
+            await show_notes(uid, message=message)
             return
         elif data["type"] == "edit_note":
             index = data.get("index")
             if index is not None and 0 <= index < len(user_notes.get(uid, [])):
                 user_notes[uid][index] = user_input
                 save_notes()
-                await show_notes(uid)
+                await show_notes(uid, message=message)
             else:
                 await message.answer("Не удалось найти заметку для редактирования.", **thread_kwargs(message))
             return
 
+    # ─────────── Ответ админа на поддержку ───────────
     if message.from_user.id in SUPPORT_IDS and message.reply_to_message:
         original_id = message.reply_to_message.message_id
         if (message.chat.id, original_id) in support_reply_map:
@@ -3738,12 +3740,14 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                 logging.exception(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
 
+    # ─────────── Новый запрос в поддержку ───────────
     if uid in support_mode_users:
         support_mode_users.discard(uid)
         try:
             caption = message.caption or user_input or "[Без текста]"
             username_part = f" (@{message.from_user.username})" if message.from_user.username else ""
             content = f"✨ <b>Новое сообщение в поддержку</b> от <b>{message.from_user.full_name}</b>{username_part} (id: <code>{uid}</code>):\n\n{caption}"
+
             if message.photo:
                 file = await bot.get_file(message.photo[-1].file_id)
                 url = f"https://api.telegram.org/file/bot{TOKEN}/{file.file_path}"
@@ -3766,24 +3770,26 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                         save_support_map()
                     except Exception as e:
                         logging.exception(f"[BOT] Не удалось отправить сообщение в поддержку ({support_id}): {e}")
-            await message.answer("Сообщение отправлено в поддержку.", **thread_kwargs(message))
+
+            await message.answer("✅ Сообщение отправлено в поддержку.", **thread_kwargs(message))
         except Exception as e:
             logging.exception(f"[BOT] Ошибка при пересылке в поддержку: {e}")
-            await message.answer("Произошла ошибка при отправке сообщения в поддержку.", **thread_kwargs(message))
+            await message.answer("❌ Произошла ошибка при отправке сообщения в поддержку.", **thread_kwargs(message))
         return
 
+    # ─────────── Проверка упоминания бота в группе ───────────
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if cid in disabled_chats:
             return
-        lower_text = user_input.lower()
-        mentioned = any(keyword in lower_text for keyword in ["вай", "vai", "вэй"])
+        mentioned = any(keyword in lower_input for keyword in ["вай", "vai", "вэй"])
         reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID)
-        username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_text
+        username_mentioned = BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in lower_input
         if not (mentioned or reply_to_bot or username_mentioned):
             return
         if mentioned:
             user_input = clean_user_input(user_input)
 
+    # ─────────── Обработка файла пользователя ───────────
     if message.document:
         stats["files_received"] += 1
         file = await bot.get_file(message.document.file_id)
@@ -3799,15 +3805,13 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer("⚠️ Не удалось извлечь текст из файла.", **thread_kwargs(message))
         return
 
+    # ─────────── Обработка голосового запроса ───────────
     voice_regex = re.compile(r"(ответь\s+(войсом|голосом)|голосом\s+ответь)", re.IGNORECASE)
     if voice_regex.search(user_input):
         voice_response_requested = True
         user_input = voice_regex.sub("", user_input)
 
-    lower_input = user_input.lower()
-
-    logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
-
+    # ─────────── Курс валют ───────────
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
         amount_str, raw_from, raw_to = exchange_match.groups()
@@ -3828,6 +3832,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                     await message.answer(exchange_text, **thread_kwargs(message))
                 return
 
+    # ─────────── Погода ───────────
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
@@ -3854,13 +3859,10 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(weather_info, **thread_kwargs(message))
         return
 
+    # ─────────── Работа с файлом пользователя ───────────
     if uid in user_documents:
         file_content = user_documents[uid]
-        prompt_with_file = (
-            f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
-            f"Теперь пользователь задаёт вопрос:\n\n{user_input}\n\n"
-            "Ответь чётко и кратко, основываясь на содержимом файла."
-        )
+        prompt_with_file = f"Пользователь отправил файл:\n\n{file_content}\n\nТеперь он задаёт вопрос:\n\n{user_input}\n\nОтветь чётко."
         gemini_text = await generate_and_send_gemini_response(cid, prompt_with_file, False, "", "")
         if voice_response_requested:
             await send_voice_message(cid, gemini_text, message=message)
@@ -3868,36 +3870,32 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(gemini_text, **thread_kwargs(message))
         return
 
+    # ─────────── Работа с описанием изображения ───────────
     user_data = user_images_text.get(uid)
     if user_data and "text" in user_data:
         user_data.pop("text", None)
     if user_data and user_data.get("description"):
         description = user_data["description"]
         prompt = (
-            f"Пользователь загрузил изображение, которое было описано так:\n\n"
+            f"Пользователь загрузил изображение, описание:\n\n"
             f"{description}\n\n"
-            f"Теперь пользователь задаёт вопрос:\n\n"
+            f"Теперь он задаёт вопрос:\n\n"
             f"{user_input}\n\n"
-            "Ответь чётко и по делу, учитывая описание изображения."
+            "Ответь чётко и по делу."
         )
-        # Отправляем временное сообщение "Понимаю ваш вопрос..."
-        processing_msg = await message.answer(
-            "🔍 Понимаю ваш вопрос. Формулирую ответ, учитывая описание изображения...",
-            **thread_kwargs(message)
-        )
+        processing_msg = await message.answer("🔎 Думаю над ответом, подожди секунду…", **thread_kwargs(message))
         gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
         user_images_text[uid]["description"] = None
-        # Удаляем временное сообщение
         try:
             await processing_msg.delete()
         except Exception:
             pass
-        
         if gemini_text:
             await message.answer(gemini_text, **thread_kwargs(message))
         else:
             await message.answer("❌ Не удалось получить ответ.", **thread_kwargs(message))
         return
+
 
     # Все остальные запросы
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
