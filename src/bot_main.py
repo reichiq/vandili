@@ -2938,31 +2938,28 @@ async def handle_formula_image(message: Message):
 
     if latex and len(latex) < 300 and not latex.lower().startswith("\\begin") and is_valid_latex(latex) and is_real_formula(latex):
         await notify_msg.edit_text("✅ Изображение обработано (формула найдена)")
-        user_images_text[message.from_user.id] = {"formula": latex, "text": None}
+        user_images_text[message.from_user.id] = {
+            "formula": latex,
+            "text": None,
+            "image_file_id": file_id  # сохраняем file_id
+        }
 
-        if is_valid_latex(latex):
+        try:
+            png_path = latex_to_png(latex)
             try:
-                png_path = latex_to_png(latex)
-                try:
-                    await bot.send_photo(
-                        chat_id=message.chat.id,
-                        photo=FSInputFile(png_path, "formula.png"),
-                        caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
-                                 "Спроси что‑нибудь об этом!"),
-                        parse_mode="HTML",
-                        **thread_kwargs(message)
-                    )
-                finally:
-                    os.remove(png_path)
-            except Exception:
-                await message.answer(
-                    f"⚠️ Формула получена, но при попытке визуализации возникла ошибка:\n\n<code>{latex}</code>",
+                await bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=FSInputFile(png_path, "formula.png"),
+                    caption=(f"Я вижу это 👆\n<code>{latex}</code>\n\n"
+                             "Спроси что‑нибудь об этом!"),
                     parse_mode="HTML",
                     **thread_kwargs(message)
                 )
-        else:
+            finally:
+                os.remove(png_path)
+        except Exception:
             await message.answer(
-                f"⚠️ Формула получена, но она выглядит странно и не может быть визуализирована:\n\n<code>{latex}</code>",
+                f"⚠️ Формула получена, но при попытке визуализации возникла ошибка:\n\n<code>{latex}</code>",
                 parse_mode="HTML",
                 **thread_kwargs(message)
             )
@@ -2973,7 +2970,11 @@ async def handle_formula_image(message: Message):
 
     if text:
         await notify_msg.edit_text("✅ Изображение обработано (текст распознан)")
-        user_images_text[message.from_user.id] = {"formula": None, "text": text}
+        user_images_text[message.from_user.id] = {
+            "formula": None,
+            "text": text,
+            "image_file_id": file_id  # сохраняем file_id даже если только текст
+        }
         await message.answer(
             f"📄 Я нашёл следующий текст на картинке:\n\n{text}\n\n"
             "Если хочешь, я могу ещё попробовать описать, что изображено на картинке! 🔎",
@@ -2994,6 +2995,11 @@ async def handle_formula_image(message: Message):
     description = await describe_image_with_gemini(img_bytes)
 
     if description:
+        user_images_text[message.from_user.id] = {
+            "formula": None,
+            "text": None,
+            "image_file_id": file_id  # сохраняем даже если распознали только через vision
+        }
         await message.answer(f"🖼️ Описание изображения:\n\n{description}", **thread_kwargs(message))
     else:
         await message.answer("❌ Не удалось распознать содержимое изображения.", **thread_kwargs(message))
@@ -3140,8 +3146,12 @@ async def describe_image_callback(callback: CallbackQuery):
     try:
         uid = callback.from_user.id
         user_data = user_images_text.get(uid)
-        if not user_data or "image_file_id" not in user_data:
-            await callback.message.answer("❌ Нет изображения для описания.", **thread_kwargs(callback.message))
+
+        if not user_data or not user_data.get("image_file_id"):
+            await callback.message.answer(
+                "❌ Нет изображения для описания.",
+                **thread_kwargs(callback.message)
+            )
             return
 
         file_id = user_data["image_file_id"]
@@ -3150,14 +3160,29 @@ async def describe_image_callback(callback: CallbackQuery):
 
         async with aiohttp.ClientSession() as sess:
             async with sess.get(url) as r:
+                if r.status != 200:
+                    await callback.message.answer(
+                        "❌ Не удалось скачать изображение.",
+                        **thread_kwargs(callback.message)
+                    )
+                    return
                 img_bytes = await r.read()
 
         description = await describe_image_with_gemini(img_bytes)
 
         if description:
-            await callback.message.answer(f"🖼️ Описание изображения:\n\n{description}", **thread_kwargs(callback.message))
+            await callback.message.answer(
+                f"🖼️ Описание изображения:\n\n{description}\n\n"
+                "✍️ Теперь можешь задать вопрос об этом изображении!",
+                **thread_kwargs(callback.message)
+            )
+            # Помечаем, что пользователь теперь может спрашивать про изображение
+            user_images_text[uid]["description"] = description.strip()
         else:
-            await callback.message.answer("❌ Не удалось распознать содержимое изображения.", **thread_kwargs(callback.message))
+            await callback.message.answer(
+                "❌ Не удалось распознать содержимое изображения.",
+                **thread_kwargs(callback.message)
+            )
 
         # ➡️ Удаляем кнопку "Описать содержимое"
         try:
@@ -3167,7 +3192,10 @@ async def describe_image_callback(callback: CallbackQuery):
 
     except Exception as e:
         logging.exception(f"[describe_image_callback] Ошибка: {e}")
-        await callback.message.answer("❌ Ошибка при описании изображения.", **thread_kwargs(callback.message))
+        await callback.message.answer(
+            "❌ Ошибка при описании изображения.",
+            **thread_kwargs(callback.message)
+        )
 
 @dp.message(ReminderEdit.waiting_for_new_text)
 async def edit_reminder_text(message: Message, state: FSMContext):
@@ -3727,7 +3755,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                             f"{escape(text_preview, **thread_kwargs(message))}"
                         )
                     )
-                    
             except Exception as e:
                 logging.exception(f"[BOT] Ошибка при отправке ответа админа пользователю: {e}")
         return
@@ -3787,7 +3814,6 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         if mentioned:
             user_input = clean_user_input(user_input)
 
-
     # Если пользователь отправил документ
     if message.document:
         stats["files_received"] += 1
@@ -3814,7 +3840,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
 
     logging.info(f"[DEBUG] cid={cid}, text='{user_input}'")
 
-    # Новый блок для запроса курса валют, использующий универсальное регулярное выражение
+    # Новый блок для запроса курса валют
     exchange_match = EXCHANGE_PATTERN.search(lower_input)
     if exchange_match:
         amount_str, raw_from, raw_to = exchange_match.groups()
@@ -3823,12 +3849,11 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         except ValueError:
             amount = 1.0
         from_lemma = normalize_currency_rus(raw_from)
-        to_lemma   = normalize_currency_rus(raw_to)
+        to_lemma = normalize_currency_rus(raw_to)
         
         if from_lemma in CURRENCY_SYNONYMS and to_lemma in CURRENCY_SYNONYMS:
             from_code = CURRENCY_SYNONYMS[from_lemma]
-            to_code   = CURRENCY_SYNONYMS[to_lemma]
-            
+            to_code = CURRENCY_SYNONYMS[to_lemma]
             exchange_text = await get_exchange_rate(amount, from_code, to_code)
             if exchange_text:
                 if voice_response_requested:
@@ -3837,17 +3862,17 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
                     await message.answer(exchange_text, **thread_kwargs(message))
                 return
 
-    # Исправленная обработка запроса погоды с использованием WeatherAPI
+    # Блок погоды
     weather_pattern = r"погода(?:\s+в)?\s+([a-zа-яё\-\s]+?)(?:\s+(?:на\s+(\d+)\s+дн(?:я|ей)|на\s+(неделю)|завтра|послезавтра))?$"
     weather_match = re.search(weather_pattern, lower_input, re.IGNORECASE)
     if weather_match:
         city_raw = weather_match.group(1).strip()
         days_part = weather_match.group(2)
         week_flag = weather_match.group(3)
-        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)  # отдельным поиском
-        
+        mode_flag = re.search(r"(завтра|послезавтра)", lower_input)
+
         city_norm = normalize_city_name(city_raw)
-        
+
         if week_flag:
             days = 7
             mode = ""
@@ -3857,7 +3882,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
         else:
             days = int(days_part) if days_part else 1
             mode = ""
-        
+
         weather_info = await get_weather_info(city_norm, days, mode)
         if not weather_info:
             weather_info = "Не удалось получить данные о погоде."
@@ -3867,7 +3892,7 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(weather_info, **thread_kwargs(message))
         return
 
-    # Проверка на вопрос по файлу (исправленная позиция, после return)
+    # Проверка на вопрос по файлу
     if uid in user_documents:
         file_content = user_documents[uid]
         prompt_with_file = (f"Пользователь отправил файл со следующим содержимым:\n\n{file_content}\n\n"
@@ -3881,7 +3906,29 @@ async def _handle_all_messages_core(message: Message, user_input: str, uid: int,
             await message.answer(gemini_text, **thread_kwargs(message))
         return
 
-    # Все остальные запросы идут сюда:
+    # --- Проверка: есть ли описание изображения для пользователя ---
+    user_data = user_images_text.get(uid)
+    if user_data and user_data.get("description"):
+        description = user_data["description"]
+        prompt = (
+            f"Пользователь загрузил изображение, которое было описано так:\n\n"
+            f"{description}\n\n"
+            f"Теперь пользователь задаёт вопрос:\n\n"
+            f"{user_input}\n\n"
+            "Ответь чётко и по делу, учитывая описание изображения."
+        )
+
+        gemini_text = await generate_and_send_gemini_response(cid, prompt, False, "", "")
+
+        user_images_text[uid]["description"] = None
+
+        if gemini_text:
+            await message.answer(gemini_text, **thread_kwargs(message))
+        else:
+            await message.answer("❌ Не удалось получить ответ.", **thread_kwargs(message))
+        return
+
+    # Все остальные запросы
     gemini_text = await handle_msg(message, user_input, voice_response_requested)
     if not gemini_text:
         return
