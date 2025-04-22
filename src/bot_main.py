@@ -710,6 +710,19 @@ def is_valid_latex(latex_code: str) -> bool:
         plt.close(fig)
         return False
 
+def is_real_formula(latex: str) -> bool:
+    """
+    Проверяет, настоящая ли это формула, а не случайный мусор.
+    """
+    if not latex:
+        return False
+    if len(latex) < 5:
+        return False
+    suspicious_symbols = ["\\zeta", "\\eta", "\\alpha", "\\beta", "\\gamma", "\\delta"]
+    if any(sym in latex.lower() for sym in suspicious_symbols) and len(latex) < 20:
+        return False
+    return True
+
 # --- Рендер LaTeX в PNG (для превью) ---
 import matplotlib
 matplotlib.use("Agg")          # отключаем GUI‑бэкэнд
@@ -2923,7 +2936,7 @@ async def handle_formula_image(message: Message):
     # 2️⃣ Пытаемся распознать формулу
     latex = await recognize_formula(img_bytes)
 
-    if latex and len(latex) < 300 and not latex.lower().startswith("\\begin"):
+    if latex and len(latex) < 300 and not latex.lower().startswith("\\begin") and is_valid_latex(latex):
         await notify_msg.edit_text("✅ Изображение обработано (формула найдена)")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
 
