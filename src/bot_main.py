@@ -2936,7 +2936,7 @@ async def handle_formula_image(message: Message):
     # 2️⃣ Пытаемся распознать формулу
     latex = await recognize_formula(img_bytes)
 
-    if latex and len(latex) < 300 and not latex.lower().startswith("\\begin") and is_valid_latex(latex):
+    if latex and len(latex) < 300 and not latex.lower().startswith("\\begin") and is_valid_latex(latex) and is_real_formula(latex):
         await notify_msg.edit_text("✅ Изображение обработано (формула найдена)")
         user_images_text[message.from_user.id] = {"formula": latex, "text": None}
 
