@@ -723,15 +723,29 @@ def is_valid_latex(latex_code: str) -> bool:
 
 def is_real_formula(latex: str) -> bool:
     """
-    Проверяет, настоящая ли это формула, а не случайный мусор.
+    Проверяет, является ли LaTeX действительно похожим на нормальную математическую формулу.
+    Отбрасывает короткий мусор вроде текстовых обрывков или странных команд.
     """
     if not latex:
         return False
-    if len(latex) < 5:
+
+    # Если слишком мало буквенно-цифровых символов
+    if len(re.findall(r'[a-zA-Z0-9]', latex)) < 4:
         return False
-    suspicious_symbols = ["\\zeta", "\\eta", "\\alpha", "\\beta", "\\gamma", "\\delta"]
-    if any(sym in latex.lower() for sym in suspicious_symbols) and len(latex) < 20:
+
+    # Если очень мало математических символов (дроби, корни, суммы и т.п.)
+    math_tokens = ["\\frac", "\\sqrt", "\\sum", "\\int", "\\lim", "\\sin", "\\cos", "\\tan", "+", "-", "=", "\\times", "\\cdot", "\\leq", "\\geq"]
+    if not any(token in latex for token in math_tokens):
         return False
+
+    # Если слишком много странных команд (например textcircled)
+    if latex.lower().count("\\textcircled") > 2:
+        return False
+
+    # Если почти весь latex — это команды \text
+    if latex.count("\\text") >= 2 and len(latex) < 60:
+        return False
+
     return True
 
 # --- Рендер LaTeX в PNG (для превью) ---
