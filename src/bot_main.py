@@ -2875,11 +2875,27 @@ async def handle_timezone_setting(message: Message):
 @dp.message(F.photo | F.document.mime_type.in_({"image/png", "image/jpeg"}))
 async def handle_formula_image(message: Message):
     """
-    1. Скачиваем файл
-    2. Пытаемся распознать формулу
-    3. Если формулы нет — распознаём обычный текст
-    4. Кладём в кэш + показываем результат
+    1. Проверяем: стоит ли обрабатывать изображение
+    2. Скачиваем файл
+    3. Пытаемся распознать формулу
+    4. Если формулы нет — распознаём обычный текст
+    5. Кладём в кэш + показываем результат
     """
+    # ➡️ Проверка: нужно ли обрабатывать изображение
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        is_called = False
+
+        if message.caption:
+            normalized_caption = message.caption.lower()
+            if any(name in normalized_caption for name in ["вай", "vai"]):
+                is_called = True
+
+        if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID:
+            is_called = True
+
+        if not is_called:
+            return  # В группе и бот не был позван — игнорируем
+
     # 0️⃣ Сообщаем пользователю, что начали обработку
     notify_msg = await message.answer("🔄 Обрабатываю изображение, пожалуйста, подождите…", **thread_kwargs(message))
 
