@@ -684,15 +684,26 @@ async def recognize_formula(image_bytes: bytes) -> str | None:
     return None
 
 # Функция для описания изображения через Gemini
-async def describe_image_with_gemini(image_bytes: bytes) -> str:
-    import base64
-    b64_img = base64.b64encode(image_bytes).decode()
+async def describe_image_with_gemini(img_bytes: bytes) -> str | None:
+    prompt = (
+        "Ты — опытный русскоязычный помощник.\n"
+        "Твоя задача: кратко и понятно описать, что изображено на картинке.\n\n"
+        "- Пиши только на русском языке.\n"
+        "- Описывай предмет или сцену коротко, ясно и без лишней воды.\n"
+        "- Если видно текст на картинке — упомяни его в описании.\n"
+        "- Если это технический объект — уточни его назначение.\n"
+        "- Если не можешь точно определить, скажи, что изображено примерно.\n\n"
+        "Вот картинка:"
+    )
 
-    response = model.generate_content([
-        {"mime_type": "image/png", "data": b64_img}
-    ], generation_config={"temperature": 0.4})
-
-    return response.text.strip()
+    try:
+        response = await model.generate_content_async(
+            [{"role": "user", "parts": [{"mime_type": "image/png", "data": img_bytes}, {"text": prompt}]}]
+        )
+        return response.text.strip()
+    except Exception as e:
+        logging.exception(f"[describe_image_with_gemini] Ошибка: {e}")
+        return None
 
 def is_valid_latex(latex_code: str) -> bool:
     """
