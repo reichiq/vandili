@@ -4164,7 +4164,6 @@ async def handle_msg(
         text = user_data.get("text")
 
         if formula:
-            # Если есть формула — работаем по старой логике (шаги)
             await message.answer("🔄 Обрабатываю вашу формулу…", **thread_kwargs(message))
 
             if not user_input:
@@ -4247,6 +4246,7 @@ async def handle_msg(
                 if all_latex:
                     final_latex = all_latex[-1].strip()
                     if final_latex not in {l for l, _, _ in steps}:
+                        final_img = None
                         try:
                             final_img = latex_to_png(_sanitize_for_png(final_latex))
                             await bot.send_photo(
@@ -4256,8 +4256,11 @@ async def handle_msg(
                                 parse_mode="HTML",
                                 reply_to_message_id=message.message_id
                             )
+                        except Exception as e:
+                            logging.exception(f"[handle_msg] Ошибка при генерации итогового изображения LaTeX: {e}")
                         finally:
-                            os.remove(final_img)
+                            if final_img and os.path.exists(final_img):
+                                os.remove(final_img)
 
                 if step_imgs:
                     try:
@@ -4313,7 +4316,6 @@ async def handle_msg(
             return
 
         elif text:
-            # Если обычный текст (НЕ формула) — обработать как текст
             user_input = text
             await message.answer("✅ Текст считан с изображения. Отвечаю…", **thread_kwargs(message))
         else:
@@ -4327,7 +4329,6 @@ async def handle_msg(
 
     lower_inp = user_input.lower()
 
-    # --- имя бота ---
     if any(nc in lower_inp for nc in NAME_COMMANDS):
         answer = "Меня зовут <b>VAI</b>! 🤖"
         return await (
@@ -4335,7 +4336,6 @@ async def handle_msg(
             else message.answer(answer)
         )
 
-    # --- информация о создателе ---
     if any(ic in lower_inp for ic in INFO_COMMANDS):
         reply_text = random.choice(OWNER_REPLIES)
         return await (
@@ -4343,7 +4343,6 @@ async def handle_msg(
             else message.answer(reply_text)
         )
 
-    # --- «покажи …» (Unsplash) ---
     show_image, rus_word, image_en, leftover = parse_russian_show_request(user_input)
     if show_image and rus_word:
         leftover = re.sub(r"\b(вай|vai)\b", "", leftover, flags=re.IGNORECASE).strip()
@@ -4355,17 +4354,14 @@ async def handle_msg(
         image_en, UNSPLASH_ACCESS_KEY
     ) if show_image else None
 
-    # ответ Gemini
     gemini_text = await generate_and_send_gemini_response(
         cid, full_prompt, show_image, rus_word, leftover
     )
 
-    # --- если нужен voice‑ответ ---
     if voice_response_requested:
         await send_voice_message(cid, gemini_text or "Нет ответа.", message=message)
         return
 
-    # --- отправляем результат ---
     if image_url:
         async with aiohttp.ClientSession() as sess:
             async with sess.get(image_url) as r:
