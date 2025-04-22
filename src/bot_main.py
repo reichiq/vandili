@@ -3138,10 +3138,13 @@ async def ask_edit_reminder(callback: CallbackQuery, state: FSMContext):
 async def describe_image_callback(callback: CallbackQuery):
     await callback.answer()
     try:
-        msg_id = int(callback.data.split(":")[1])
-        # Пытаемся найти сообщение
-        msg = await bot.get_message(chat_id=callback.message.chat.id, message_id=msg_id)
-        file_id = msg.photo[-1].file_id if msg.photo else msg.document.file_id
+        uid = callback.from_user.id
+        user_data = user_images_text.get(uid)
+        if not user_data or "image_file_id" not in user_data:
+            await callback.message.answer("❌ Нет изображения для описания.", **thread_kwargs(callback.message))
+            return
+
+        file_id = user_data["image_file_id"]
         tg_file = await bot.get_file(file_id)
         url = f"https://api.telegram.org/file/bot{TOKEN}/{tg_file.file_path}"
 
@@ -3164,7 +3167,7 @@ async def describe_image_callback(callback: CallbackQuery):
 
     except Exception as e:
         logging.exception(f"[describe_image_callback] Ошибка: {e}")
-        await callback.message.answer("❌ Ошибка при описании изображения.")
+        await callback.message.answer("❌ Ошибка при описании изображения.", **thread_kwargs(callback.message))
 
 @dp.message(ReminderEdit.waiting_for_new_text)
 async def edit_reminder_text(message: Message, state: FSMContext):
