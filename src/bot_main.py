@@ -3158,7 +3158,7 @@ async def describe_image_callback(callback: CallbackQuery):
         uid = callback.from_user.id
         user_data = user_images_text.get(uid)
 
-        if not user_data or not user_data.get("image_file_id"):
+        if not user_data or "image_file_id" not in user_data:
             await callback.message.answer(
                 "❌ Нет изображения для описания.",
                 **thread_kwargs(callback.message)
@@ -3172,6 +3172,7 @@ async def describe_image_callback(callback: CallbackQuery):
         async with aiohttp.ClientSession() as sess:
             async with sess.get(url) as r:
                 if r.status != 200:
+                    logging.error(f"Не удалось скачать файл: статус {r.status}")
                     await callback.message.answer(
                         "❌ Не удалось скачать изображение.",
                         **thread_kwargs(callback.message)
@@ -3182,20 +3183,19 @@ async def describe_image_callback(callback: CallbackQuery):
         description = await describe_image_with_gemini(img_bytes)
 
         if description:
+            user_images_text[uid]["description"] = description.strip()
             await callback.message.answer(
-                f"🖼️ Описание изображения:\n\n{description}\n\n"
-                "✍️ Теперь можешь задать вопрос об этом изображении!",
+                f"🖼️ <b>Описание изображения:</b>\n\n{description}\n\n"
+                "🟡 Теперь можешь задать вопрос об этом изображении!",
+                parse_mode="HTML",
                 **thread_kwargs(callback.message)
             )
-            # Помечаем, что пользователь теперь может спрашивать про изображение
-            user_images_text[uid]["description"] = description.strip()
         else:
             await callback.message.answer(
                 "❌ Не удалось распознать содержимое изображения.",
                 **thread_kwargs(callback.message)
             )
 
-        # ➡️ Удаляем кнопку "Описать содержимое"
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
